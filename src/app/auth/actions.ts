@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 function getString(formData: FormData, key: string) {
@@ -11,18 +12,23 @@ function getString(formData: FormData, key: string) {
 export async function signIn(formData: FormData) {
   const email = getString(formData, "email");
   const password = getString(formData, "password");
-  const supabase = await createServerSupabaseClient();
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password
-  });
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
 
-  if (error) {
-    redirect(`/login?message=${encodeURIComponent(error.message)}`);
+    if (error) {
+      redirect(`/login?message=${encodeURIComponent(error.message)}`);
+    }
+
+    redirect("/panel");
+  } catch (error) {
+    if (isRedirectError(error)) throw error;
+    redirect(`/login?message=${encodeURIComponent(error instanceof Error ? error.message : "No se pudo iniciar sesion.")}`);
   }
-
-  redirect("/panel");
 }
 
 export async function signUp(formData: FormData) {
@@ -30,24 +36,28 @@ export async function signUp(formData: FormData) {
   const password = getString(formData, "password");
   const fullName = getString(formData, "full_name");
   const phone = getString(formData, "phone");
-  const supabase = await createServerSupabaseClient();
-
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        full_name: fullName,
-        phone
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          phone
+        }
       }
+    });
+
+    if (error) {
+      redirect(`/login?message=${encodeURIComponent(error.message)}`);
     }
-  });
 
-  if (error) {
-    redirect(`/login?message=${encodeURIComponent(error.message)}`);
+    redirect("/panel");
+  } catch (error) {
+    if (isRedirectError(error)) throw error;
+    redirect(`/login?message=${encodeURIComponent(error instanceof Error ? error.message : "No se pudo crear la cuenta.")}`);
   }
-
-  redirect("/panel");
 }
 
 export async function signOut() {

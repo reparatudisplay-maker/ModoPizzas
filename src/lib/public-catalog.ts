@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { fallbackCatalog } from "@/lib/menu-data";
+import { getSupabaseEnv } from "@/lib/supabase-server";
 import type { Combo, PizzaExtra, PizzaFlavor, PizzaSize, PublicCatalog, SiteSettings } from "@/types/modo-pizzas";
 
 type DbSiteSettings = {
@@ -50,8 +51,7 @@ type DbComboItem = {
 };
 
 function getPublicSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const { url, publishableKey: key } = getSupabaseEnv();
 
   if (!url || !key) {
     return null;
