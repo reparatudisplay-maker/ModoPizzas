@@ -1,7 +1,8 @@
 "use client";
 
 import { MessageCircle, Minus, Plus, ReceiptText, ShoppingCart } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { createWebOrder } from "@/app/orders/actions";
 import { fallbackCatalog } from "@/lib/menu-data";
 import { formatCop } from "@/lib/format";
 import { calculatePizzaLineTotal, calculatePizzaUnitPrice } from "@/lib/order-pricing";
@@ -44,6 +45,7 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
   const [orderKind, setOrderKind] = useState<OrderKind>("delivery");
   const [customer, setCustomer] = useState<CustomerDraft>(initialCustomer);
   const [warning, setWarning] = useState("");
+  const [isPending, startTransition] = useTransition();
 
   const draftUnitPrice = useMemo(() => calculatePizzaUnitPrice(draft, priceOptions), [draft, priceOptions]);
   const cartTotal = useMemo(
@@ -108,9 +110,23 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
       return;
     }
 
-    window.localStorage.setItem("modo-pizzas-last-order", recentSignature);
-    window.localStorage.setItem("modo-pizzas-last-order-time", String(Date.now()));
-    window.open(buildWhatsappUrl({ pizzas, customer, orderKind, catalog }), "_blank", "noopener,noreferrer");
+    startTransition(async () => {
+      try {
+        await createWebOrder({
+          pizzas,
+          customer,
+          orderKind,
+          catalog
+        });
+
+        window.localStorage.setItem("modo-pizzas-last-order", recentSignature);
+        window.localStorage.setItem("modo-pizzas-last-order-time", String(Date.now()));
+        setWarning("Pedido web guardado. Te llevamos a WhatsApp para confirmar.");
+        window.open(buildWhatsappUrl({ pizzas, customer, orderKind, catalog }), "_blank", "noopener,noreferrer");
+      } catch (error) {
+        setWarning(error instanceof Error ? error.message : "No pudimos guardar el pedido. Intenta de nuevo.");
+      }
+    });
   }
 
   return (
@@ -128,6 +144,8 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
           <a href="#promos">Promos</a>
           <a href="#operacion">Operacion</a>
           <a href="#legal">Legal</a>
+          <a href="/login">Entrar</a>
+          <a href="/panel">Panel</a>
         </nav>
       </header>
 
@@ -386,8 +404,13 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
             <strong>{formatCop(cartTotal)}</strong>
           </div>
 
-          <button className="primary-button" disabled={!siteSettings.whatsappEnabled} type="button" onClick={openWhatsapp}>
-            <MessageCircle size={18} /> {siteSettings.whatsappButtonText}
+          <button
+            className="primary-button"
+            disabled={!siteSettings.whatsappEnabled || isPending}
+            type="button"
+            onClick={openWhatsapp}
+          >
+            <MessageCircle size={18} /> {isPending ? "Guardando pedido..." : siteSettings.whatsappButtonText}
           </button>
           <button className="ghost-button" type="button">
             <ReceiptText size={18} /> Vista recibo/comanda
