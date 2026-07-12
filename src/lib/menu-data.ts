@@ -1,4 +1,4 @@
-import type { Combo, PizzaExtra, PizzaFlavor, PizzaSize, SiteSettings } from "@/types/modo-pizzas";
+import type { Combo, PizzaExtra, PizzaFlavor, PizzaSize, PublicCatalog, SiteSettings } from "@/types/modo-pizzas";
 
 export const siteSettings: SiteSettings = {
   businessName: "ModoPizzas",
@@ -76,3 +76,12 @@ export const combos: Combo[] = [
     items: ["2 pizzas personales", "Borde normal"]
   }
 ];
+
+export const fallbackCatalog: PublicCatalog = {
+  siteSettings,
+  pizzaSizes,
+  pizzaFlavors,
+  crusts,
+  extras,
+  combos
+};

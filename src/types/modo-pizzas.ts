@@ -68,3 +68,12 @@ export type SiteSettings = {
   whatsappButtonText: string;
   businessName: string;
 };
+
+export type PublicCatalog = {
+  siteSettings: SiteSettings;
+  pizzaSizes: PizzaSize[];
+  pizzaFlavors: PizzaFlavor[];
+  crusts: PizzaExtra[];
+  extras: PizzaExtra[];
+  combos: Combo[];
+};

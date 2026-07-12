@@ -2,11 +2,11 @@
 
 import { MessageCircle, Minus, Plus, ReceiptText, ShoppingCart } from "lucide-react";
 import { useMemo, useState } from "react";
-import { crusts, extras, pizzaFlavors, pizzaSizes, siteSettings, combos } from "@/lib/menu-data";
+import { fallbackCatalog } from "@/lib/menu-data";
 import { formatCop } from "@/lib/format";
 import { calculatePizzaLineTotal, calculatePizzaUnitPrice } from "@/lib/order-pricing";
 import { buildWhatsappUrl } from "@/lib/whatsapp";
-import type { CustomerDraft, OrderKind, OrderPizza } from "@/types/modo-pizzas";
+import type { CustomerDraft, OrderKind, OrderPizza, PublicCatalog } from "@/types/modo-pizzas";
 
 const initialCustomer: CustomerDraft = {
   name: "",
@@ -16,30 +16,39 @@ const initialCustomer: CustomerDraft = {
   deliveryNotes: ""
 };
 
-function createPizzaDraft(): OrderPizza {
+function createPizzaDraft(catalog: PublicCatalog): OrderPizza {
   return {
     id: crypto.randomUUID(),
-    sizeId: "mediana",
-    flavorAId: "hawaiana",
+    sizeId: catalog.pizzaSizes.find((size) => size.id === "mediana")?.id ?? catalog.pizzaSizes[0]?.id ?? "mediana",
+    flavorAId: catalog.pizzaFlavors.find((flavor) => flavor.id === "hawaiana")?.id ?? catalog.pizzaFlavors[0]?.id ?? "hawaiana",
     flavorBId: "",
-    crustId: "normal",
+    crustId: catalog.crusts.find((crust) => crust.id === "normal")?.id ?? catalog.crusts[0]?.id ?? "normal",
     extraIds: [],
     quantity: 1,
     notes: ""
   };
 }
 
-export function PublicOrderingApp() {
-  const [draft, setDraft] = useState<OrderPizza>(() => createPizzaDraft());
+export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: PublicCatalog }) {
+  const { siteSettings, pizzaSizes, pizzaFlavors, crusts, extras, combos } = catalog;
+  const priceOptions = useMemo(
+    () => ({
+      flavors: pizzaFlavors,
+      crustOptions: crusts,
+      extraOptions: extras
+    }),
+    [crusts, extras, pizzaFlavors]
+  );
+  const [draft, setDraft] = useState<OrderPizza>(() => createPizzaDraft(catalog));
   const [pizzas, setPizzas] = useState<OrderPizza[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("delivery");
   const [customer, setCustomer] = useState<CustomerDraft>(initialCustomer);
   const [warning, setWarning] = useState("");
 
-  const draftUnitPrice = useMemo(() => calculatePizzaUnitPrice(draft), [draft]);
+  const draftUnitPrice = useMemo(() => calculatePizzaUnitPrice(draft, priceOptions), [draft, priceOptions]);
   const cartTotal = useMemo(
-    () => pizzas.reduce((sum, pizza) => sum + calculatePizzaLineTotal(pizza), 0),
-    [pizzas]
+    () => pizzas.reduce((sum, pizza) => sum + calculatePizzaLineTotal(pizza, priceOptions), 0),
+    [pizzas, priceOptions]
   );
 
   const canSend =
@@ -68,7 +77,7 @@ export function PublicOrderingApp() {
     }
 
     setPizzas((current) => [...current, draft]);
-    setDraft(createPizzaDraft());
+    setDraft(createPizzaDraft(catalog));
     setWarning("");
   }
 
@@ -101,7 +110,7 @@ export function PublicOrderingApp() {
 
     window.localStorage.setItem("modo-pizzas-last-order", recentSignature);
     window.localStorage.setItem("modo-pizzas-last-order-time", String(Date.now()));
-    window.open(buildWhatsappUrl({ pizzas, customer, orderKind }), "_blank", "noopener,noreferrer");
+    window.open(buildWhatsappUrl({ pizzas, customer, orderKind, catalog }), "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -300,7 +309,7 @@ export function PublicOrderingApp() {
                 <div className="cart-line" key={pizza.id}>
                   <header>
                     <strong>{size}</strong>
-                    <span>{formatCop(calculatePizzaLineTotal(pizza))}</span>
+                    <span>{formatCop(calculatePizzaLineTotal(pizza, priceOptions))}</span>
                   </header>
                   <small>{flavorB ? `${flavorA} / ${flavorB}` : flavorA}</small>
                   <div>

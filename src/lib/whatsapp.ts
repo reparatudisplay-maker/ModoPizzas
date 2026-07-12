@@ -1,7 +1,7 @@
-import { crusts, extras, pizzaFlavors, pizzaSizes, siteSettings } from "@/lib/menu-data";
+import { fallbackCatalog } from "@/lib/menu-data";
 import { formatCop } from "@/lib/format";
 import { calculatePizzaLineTotal } from "@/lib/order-pricing";
-import type { CustomerDraft, OrderKind, OrderPizza } from "@/types/modo-pizzas";
+import type { CustomerDraft, OrderKind, OrderPizza, PublicCatalog } from "@/types/modo-pizzas";
 
 function labelForOrderKind(kind: OrderKind) {
   if (kind === "delivery") return "Domicilio";
@@ -13,8 +13,10 @@ export function buildWhatsappUrl(params: {
   pizzas: OrderPizza[];
   customer: CustomerDraft;
   orderKind: OrderKind;
+  catalog?: PublicCatalog;
 }) {
-  const { pizzas, customer, orderKind } = params;
+  const { pizzas, customer, orderKind, catalog = fallbackCatalog } = params;
+  const { crusts, extras, pizzaFlavors, pizzaSizes, siteSettings } = catalog;
   const lines = [
     `Hola, quiero confirmar este pedido en ${siteSettings.businessName}:`,
     "",
@@ -49,11 +51,26 @@ export function buildWhatsappUrl(params: {
       crust ? `   Borde: ${crust}` : "",
       selectedExtras ? `   Adiciones: ${selectedExtras}` : "",
       pizza.notes ? `   Notas: ${pizza.notes}` : "",
-      `   Subtotal: ${formatCop(calculatePizzaLineTotal(pizza))}`
+      `   Subtotal: ${formatCop(
+        calculatePizzaLineTotal(pizza, {
+          flavors: pizzaFlavors,
+          crustOptions: crusts,
+          extraOptions: extras
+        })
+      )}`
     );
   });
 
-  const total = pizzas.reduce((sum, pizza) => sum + calculatePizzaLineTotal(pizza), 0);
+  const total = pizzas.reduce(
+    (sum, pizza) =>
+      sum +
+      calculatePizzaLineTotal(pizza, {
+        flavors: pizzaFlavors,
+        crustOptions: crusts,
+        extraOptions: extras
+      }),
+    0
+  );
   lines.push("", `Total: ${formatCop(total)}`);
 
   const message = encodeURIComponent(lines.filter(Boolean).join("\n"));
