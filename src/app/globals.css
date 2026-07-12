@@ -593,6 +593,10 @@ a {
   margin-bottom: 16px;
 }
 
+.panel-shortcut {
+  padding: 16px clamp(16px, 3vw, 40px) 0;
+}
+
 .thermal {
   margin: 0 auto;
   border: 1px solid var(--border);

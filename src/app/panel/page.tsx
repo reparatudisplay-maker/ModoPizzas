@@ -36,6 +36,7 @@ type PanelOrder = {
 };
 
 const staffRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
+const orderCreatorRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 const nextStatuses = ["confirmed", "in_kitchen", "in_preparation", "prepared", "on_the_way", "delivered", "cancelled"];
 const assignableRoles = ["cliente", "vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"];
 
@@ -67,6 +68,7 @@ export default async function PanelPage() {
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
   const roleNames = roles?.map((item) => item.role) ?? [];
   const canOperate = roleNames.some((role) => staffRoles.has(role));
+  const canCreateOrders = roleNames.some((role) => orderCreatorRoles.has(role));
   const isAdmin = roleNames.includes("admin_sistema");
   const isManager = isAdmin || roleNames.includes("gerente");
 
@@ -102,6 +104,11 @@ export default async function PanelPage() {
           <Link className="ghost-button" href="/">
             Inicio
           </Link>
+          {canCreateOrders ? (
+            <Link className="ghost-button" href="/panel/nuevo-pedido">
+              Nuevo pedido
+            </Link>
+          ) : null}
           <h1 className="section-title">Panel ModoPizzas</h1>
           <p className="section-copy">Pedidos web, cocina, caja y domicilios empiezan aqui.</p>
         </div>

@@ -2,7 +2,7 @@
 
 import { MessageCircle, Minus, Plus, ReceiptText, ShoppingCart } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
-import { createWebOrder } from "@/app/orders/actions";
+import { createStaffOrder, createWebOrder } from "@/app/orders/actions";
 import { fallbackCatalog } from "@/lib/menu-data";
 import { formatCop } from "@/lib/format";
 import { calculatePizzaLineTotal, calculatePizzaUnitPrice } from "@/lib/order-pricing";
@@ -30,7 +30,12 @@ function createPizzaDraft(catalog: PublicCatalog): OrderPizza {
   };
 }
 
-export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: PublicCatalog }) {
+type PublicOrderingAppProps = {
+  catalog?: PublicCatalog;
+  mode?: "public" | "staff";
+};
+
+export function PublicOrderingApp({ catalog = fallbackCatalog, mode = "public" }: PublicOrderingAppProps) {
   const { siteSettings, pizzaSizes, pizzaFlavors, crusts, extras, combos } = catalog;
   const priceOptions = useMemo(
     () => ({
@@ -46,6 +51,7 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
   const [customer, setCustomer] = useState<CustomerDraft>(initialCustomer);
   const [warning, setWarning] = useState("");
   const [isPending, startTransition] = useTransition();
+  const isStaffMode = mode === "staff";
 
   const draftUnitPrice = useMemo(() => calculatePizzaUnitPrice(draft, priceOptions), [draft, priceOptions]);
   const cartTotal = useMemo(
@@ -94,7 +100,7 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
     );
   }
 
-  function openWhatsapp() {
+  function finishOrder() {
     if (!canSend) {
       setWarning("Para domicilio necesitamos nombre, telefono y direccion. Para recoger o local son opcionales.");
       return;
@@ -105,19 +111,28 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
     const lastTime = Number(window.localStorage.getItem("modo-pizzas-last-order-time") ?? 0);
     const isRepeated = lastSignature === recentSignature && Date.now() - lastTime < 120000;
 
-    if (isRepeated) {
+    if (!isStaffMode && isRepeated) {
       setWarning("Parece que este pedido ya fue enviado hace poco. Espera un momento antes de repetirlo.");
       return;
     }
 
     startTransition(async () => {
       try {
-        await createWebOrder({
-          pizzas,
-          customer,
-          orderKind,
-          catalog
-        });
+        if (isStaffMode) {
+          const result = await createStaffOrder({
+            pizzas,
+            customer,
+            orderKind,
+            catalog
+          });
+
+          setPizzas([]);
+          setCustomer(initialCustomer);
+          setWarning(`Pedido interno creado. ID: ${result.id}`);
+          return;
+        }
+
+        await createWebOrder({ pizzas, customer, orderKind, catalog });
 
         window.localStorage.setItem("modo-pizzas-last-order", recentSignature);
         window.localStorage.setItem("modo-pizzas-last-order-time", String(Date.now()));
@@ -154,8 +169,9 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
           <section id="menu">
             <h1 className="section-title">Arma tu pedido</h1>
             <p className="section-copy">
-              Elige tamano, sabor, mitad y mitad, borde y adiciones. Si la pizza es mitad y mitad, el sistema cobra el
-              sabor de mayor precio.
+              {isStaffMode
+                ? "Crea pedidos de caja, local, recoger o domicilio usando el mismo calculo de precios del menu publico."
+                : "Elige tamano, sabor, mitad y mitad, borde y adiciones. Si la pizza es mitad y mitad, el sistema cobra el sabor de mayor precio."}
             </p>
 
             <div className="menu-grid">
@@ -315,7 +331,9 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
           {warning ? <p className="alert">{warning}</p> : null}
 
           {pizzas.length === 0 ? (
-            <p className="muted">Agrega una pizza para generar el resumen de WhatsApp.</p>
+            <p className="muted">
+              {isStaffMode ? "Agrega una pizza para crear el pedido interno." : "Agrega una pizza para generar el resumen de WhatsApp."}
+            </p>
           ) : (
             pizzas.map((pizza) => {
               const flavorA = pizzaFlavors.find((flavor) => flavor.id === pizza.flavorAId)?.name;
@@ -406,15 +424,18 @@ export function PublicOrderingApp({ catalog = fallbackCatalog }: { catalog?: Pub
 
           <button
             className="primary-button"
-            disabled={!siteSettings.whatsappEnabled || isPending}
+            disabled={(!isStaffMode && !siteSettings.whatsappEnabled) || isPending}
             type="button"
-            onClick={openWhatsapp}
+            onClick={finishOrder}
           >
-            <MessageCircle size={18} /> {isPending ? "Guardando pedido..." : siteSettings.whatsappButtonText}
+            {isStaffMode ? <ReceiptText size={18} /> : <MessageCircle size={18} />}
+            {isPending ? "Guardando pedido..." : isStaffMode ? "Crear pedido interno" : siteSettings.whatsappButtonText}
           </button>
-          <button className="ghost-button" type="button">
-            <ReceiptText size={18} /> Vista recibo/comanda
-          </button>
+          {isStaffMode ? null : (
+            <button className="ghost-button" type="button">
+              <ReceiptText size={18} /> Vista recibo/comanda
+            </button>
+          )}
         </aside>
       </div>
     </section>

@@ -13,6 +13,10 @@ type CreateWebOrderInput = {
   catalog: PublicCatalog;
 };
 
+type CreateStaffOrderInput = CreateWebOrderInput & {
+  paymentMethod?: "pending" | "cash" | "transfer" | "card" | "cash_on_delivery";
+};
+
 function requireDeliveryData(orderKind: OrderKind, customer: CustomerDraft) {
   if (orderKind !== "delivery") return;
   if (!customer.name || !customer.phone || !customer.address) {
@@ -85,6 +89,81 @@ export async function createWebOrder(input: CreateWebOrderInput) {
     if (orderError.code === "23505") {
       throw new Error("Parece que este pedido ya fue enviado hace poco.");
     }
+    throw new Error(orderError.message);
+  }
+
+  const orderItems = input.pizzas.map((pizza) => ({
+    order_id: orderId,
+    item_kind: "pizza",
+    size_id: null,
+    flavor_a_id: null,
+    flavor_b_id: null,
+    crust_extra_id: null,
+    quantity: pizza.quantity,
+    unit_price_cop: calculatePizzaUnitPrice(pizza, priceOptions),
+    line_total_cop: calculatePizzaLineTotal(pizza, priceOptions),
+    notes: JSON.stringify({
+      sizeId: pizza.sizeId,
+      flavorAId: pizza.flavorAId,
+      flavorBId: pizza.flavorBId || null,
+      crustId: pizza.crustId || null,
+      extraIds: pizza.extraIds,
+      notes: pizza.notes || ""
+    })
+  }));
+
+  const { error: itemsError } = await supabase.from("order_items").insert(orderItems);
+  if (itemsError) {
+    throw new Error(itemsError.message);
+  }
+
+  revalidatePath("/panel");
+  return {
+    id: orderId
+  };
+}
+
+export async function createStaffOrder(input: CreateStaffOrderInput) {
+  requireDeliveryData(input.orderKind, input.customer);
+
+  if (input.pizzas.length === 0) {
+    throw new Error("Agrega al menos una pizza.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Debes iniciar sesion.");
+  }
+
+  const priceOptions = {
+    flavors: input.catalog.pizzaFlavors,
+    crustOptions: input.catalog.crusts,
+    extraOptions: input.catalog.extras
+  };
+  const subtotal = input.pizzas.reduce((sum, pizza) => sum + calculatePizzaLineTotal(pizza, priceOptions), 0);
+  const orderId = randomUUID();
+
+  const { error: orderError } = await supabase.from("orders").insert({
+    id: orderId,
+    kind: input.orderKind,
+    status: "confirmed",
+    auth_user_id: null,
+    created_by: user.id,
+    customer_name: input.customer.name || null,
+    customer_phone: input.customer.phone || null,
+    delivery_address: input.orderKind === "delivery" ? input.customer.address : null,
+    delivery_neighborhood: input.orderKind === "delivery" ? input.customer.neighborhood || null : null,
+    delivery_notes: input.orderKind === "delivery" ? input.customer.deliveryNotes || null : null,
+    subtotal_cop: subtotal,
+    total_cop: subtotal,
+    payment_method: input.paymentMethod ?? (input.orderKind === "delivery" ? "cash_on_delivery" : "pending")
+  });
+
+  if (orderError) {
     throw new Error(orderError.message);
   }
 
