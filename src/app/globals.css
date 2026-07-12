@@ -576,6 +576,133 @@ a {
   display: inline-flex;
 }
 
+.print-links,
+.print-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.print-page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.print-actions {
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.thermal {
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: #111111;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.receipt-58 {
+  width: 58mm;
+  padding: 4mm;
+  font-size: 11px;
+}
+
+.label-80x130 {
+  width: 80mm;
+  min-height: 130mm;
+  padding: 5mm;
+  font-size: 13px;
+}
+
+.print-header,
+.print-footer {
+  text-align: center;
+}
+
+.print-header h1 {
+  margin: 0 0 4px;
+  font-size: 1.35em;
+}
+
+.print-header p,
+.print-footer p {
+  margin: 3px 0;
+}
+
+.print-meta,
+.print-totals {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.print-meta div,
+.print-totals div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.print-meta dt,
+.print-totals dt {
+  font-weight: 700;
+}
+
+.print-meta dd,
+.print-totals dd {
+  margin: 0;
+  text-align: right;
+}
+
+.print-customer {
+  display: grid;
+  gap: 3px;
+  border-top: 1px dashed #555555;
+  border-bottom: 1px dashed #555555;
+  padding: 8px 0;
+}
+
+.print-items,
+.label-items {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.print-items {
+  list-style: none;
+}
+
+.print-items li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  border-bottom: 1px dashed #777777;
+  padding-bottom: 7px;
+}
+
+.print-items li div,
+.label-items li {
+  display: grid;
+  gap: 3px;
+}
+
+.label-items {
+  padding-left: 18px;
+}
+
+.label-items li {
+  border-bottom: 1px dashed #777777;
+  padding-bottom: 9px;
+}
+
+.grand-total {
+  border-top: 1px solid #111111;
+  padding-top: 6px;
+  font-size: 1.15em;
+}
+
 @media (max-width: 980px) {
   .workspace,
   .ops-layout,
@@ -614,5 +741,40 @@ a {
 
   .status-form {
     justify-content: flex-start;
+  }
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .topbar,
+  .print-actions {
+    display: none !important;
+  }
+
+  .print-page {
+    min-height: auto;
+    padding: 0;
+  }
+
+  .thermal {
+    border: 0;
+    box-shadow: none;
+    margin: 0;
+  }
+
+  .receipt-58 {
+    width: 58mm;
+  }
+
+  .label-80x130 {
+    width: 80mm;
+    min-height: 130mm;
   }
 }

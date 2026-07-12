@@ -258,6 +258,14 @@ export default async function PanelPage() {
 
               <footer className="order-footer">
                 <strong>Total {formatCop(order.total_cop)}</strong>
+                <div className="print-links">
+                  <Link className="ghost-button" href={`/panel/pedidos/${order.id}/recibo`}>
+                    Recibo
+                  </Link>
+                  <Link className="ghost-button" href={`/panel/pedidos/${order.id}/comanda`}>
+                    Comanda
+                  </Link>
+                </div>
                 <form action={updateOrderStatus} className="status-form">
                   <input name="order_id" type="hidden" value={order.id} />
                   <select defaultValue={order.status} name="status">
