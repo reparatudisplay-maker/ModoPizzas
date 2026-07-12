@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { assignUserRole, removeUserRole, updateSiteSettings } from "@/app/admin/actions";
 import { signOut } from "@/app/auth/actions";
 import { updateOrderStatus } from "@/app/orders/actions";
 import { formatCop } from "@/lib/format";
@@ -36,6 +37,7 @@ type PanelOrder = {
 
 const staffRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const nextStatuses = ["confirmed", "in_kitchen", "in_preparation", "prepared", "on_the_way", "delivered", "cancelled"];
+const assignableRoles = ["cliente", "vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"];
 
 function parseSnapshot(value: string | null): OrderItemSnapshot {
   if (!value) return {};
@@ -65,16 +67,33 @@ export default async function PanelPage() {
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
   const roleNames = roles?.map((item) => item.role) ?? [];
   const canOperate = roleNames.some((role) => staffRoles.has(role));
+  const isAdmin = roleNames.includes("admin_sistema");
+  const isManager = isAdmin || roleNames.includes("gerente");
 
-  const { data: orders, error } = canOperate
-    ? await supabase
+  const [{ data: orders, error }, { data: settings }, { data: profiles }] = await Promise.all([
+    canOperate
+      ? supabase
         .from("orders")
         .select(
           "id, order_number, kind, status, customer_name, customer_phone, delivery_address, delivery_neighborhood, total_cop, created_at, order_items(id, quantity, unit_price_cop, line_total_cop, notes)"
         )
         .order("created_at", { ascending: false })
         .limit(30)
-    : { data: null, error: null };
+      : Promise.resolve({ data: null, error: null }),
+    isManager
+      ? supabase
+          .from("site_settings")
+          .select("business_name, whatsapp_number, whatsapp_enabled, whatsapp_button_text")
+          .single()
+      : Promise.resolve({ data: null, error: null }),
+    isAdmin
+      ? supabase
+          .from("profiles")
+          .select("id, full_name, phone, user_roles(role)")
+          .order("created_at", { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: null, error: null })
+  ]);
 
   return (
     <main className="panel-page">
@@ -120,6 +139,79 @@ export default async function PanelPage() {
 
       {error ? <p className="alert">{error.message}</p> : null}
 
+      {isManager && settings ? (
+        <section className="admin-grid">
+          <form action={updateSiteSettings} className="form-panel">
+            <h2>Ajustes publicos</h2>
+            <div className="field">
+              <label htmlFor="business_name">Nombre del negocio</label>
+              <input defaultValue={settings.business_name} id="business_name" name="business_name" />
+            </div>
+            <div className="field">
+              <label htmlFor="whatsapp_number">WhatsApp</label>
+              <input defaultValue={settings.whatsapp_number} id="whatsapp_number" name="whatsapp_number" />
+            </div>
+            <div className="field">
+              <label htmlFor="whatsapp_button_text">Texto del boton</label>
+              <input
+                defaultValue={settings.whatsapp_button_text}
+                id="whatsapp_button_text"
+                name="whatsapp_button_text"
+              />
+            </div>
+            <label className="check-option">
+              <input defaultChecked={settings.whatsapp_enabled} name="whatsapp_enabled" type="checkbox" />
+              <span>WhatsApp activo</span>
+            </label>
+            <button className="primary-button" type="submit">
+              Guardar ajustes
+            </button>
+          </form>
+
+          {isAdmin ? (
+            <section className="form-panel">
+              <h2>Roles de usuarios</h2>
+              <div className="role-list">
+                {profiles?.map((profile) => {
+                  const profileRoles = profile.user_roles?.map((roleRow) => roleRow.role) ?? [];
+                  return (
+                    <article className="role-row" key={profile.id}>
+                      <div>
+                        <strong>{profile.full_name || "Sin nombre"}</strong>
+                        <small>{profile.phone || profile.id}</small>
+                        <span className="muted">{profileRoles.length ? profileRoles.join(", ") : "sin rol"}</span>
+                      </div>
+                      <form action={assignUserRole} className="status-form">
+                        <input name="user_id" type="hidden" value={profile.id} />
+                        <select name="role">
+                          {assignableRoles.map((role) => (
+                            <option key={role} value={role}>
+                              {role}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="primary-button" type="submit">
+                          Asignar
+                        </button>
+                      </form>
+                      {profileRoles.map((role) => (
+                        <form action={removeUserRole} className="inline-form" key={role}>
+                          <input name="user_id" type="hidden" value={profile.id} />
+                          <input name="role" type="hidden" value={role} />
+                          <button className="ghost-button" type="submit">
+                            Quitar {role}
+                          </button>
+                        </form>
+                      ))}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+        </section>
+      ) : null}
+
       {canOperate ? (
         <section className="panel-list">
           {(orders as PanelOrder[] | null)?.map((order) => (
@@ -128,7 +220,7 @@ export default async function PanelPage() {
                 <div>
                   <h2>Pedido #{order.order_number}</h2>
                   <p className="muted">
-                    {orderKindLabel(order.kind)} · {new Date(order.created_at).toLocaleString("es-CO")}
+                    {orderKindLabel(order.kind)} - {new Date(order.created_at).toLocaleString("es-CO")}
                   </p>
                 </div>
                 <span className="badge">{order.status}</span>
@@ -139,7 +231,7 @@ export default async function PanelPage() {
                 <span>Telefono: {order.customer_phone || "No registrado"}</span>
                 {order.kind === "delivery" ? (
                   <span>
-                    Envio: {order.delivery_address} {order.delivery_neighborhood ? `· ${order.delivery_neighborhood}` : ""}
+                    Envio: {order.delivery_address} {order.delivery_neighborhood ? `- ${order.delivery_neighborhood}` : ""}
                   </span>
                 ) : null}
               </div>
@@ -154,9 +246,9 @@ export default async function PanelPage() {
                       </span>
                       <small>
                         {snapshot.flavorAId}
-                        {snapshot.flavorBId ? ` / ${snapshot.flavorBId}` : ""} · borde {snapshot.crustId ?? "normal"}
-                        {snapshot.extraIds?.length ? ` · extras ${snapshot.extraIds.join(", ")}` : ""}
-                        {snapshot.notes ? ` · ${snapshot.notes}` : ""}
+                        {snapshot.flavorBId ? ` / ${snapshot.flavorBId}` : ""} - borde {snapshot.crustId ?? "normal"}
+                        {snapshot.extraIds?.length ? ` - extras ${snapshot.extraIds.join(", ")}` : ""}
+                        {snapshot.notes ? ` - ${snapshot.notes}` : ""}
                       </small>
                       <strong>{formatCop(item.line_total_cop)}</strong>
                     </li>
