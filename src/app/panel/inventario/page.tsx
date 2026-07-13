@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { registerExpense, registerPurchase, saveInventoryItem, saveSupplier } from "@/app/admin/actions";
+import { PanelShell } from "@/components/panel-shell";
 import { formatCop, formatNumber } from "@/lib/format";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -216,7 +217,8 @@ export default async function InventoryPage() {
   }
 
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const canManage = roles?.some((item) => managerRoles.has(item.role)) ?? false;
+  const roleNames = roles?.map((item) => item.role) ?? [];
+  const canManage = roleNames.some((role) => managerRoles.has(role));
   if (!canManage) {
     notFound();
   }
@@ -241,15 +243,13 @@ export default async function InventoryPage() {
   const error = itemsResult.error ?? suppliersResult.error ?? purchasesResult.error ?? expensesResult.error;
 
   return (
-    <main className="panel-page">
-      <header className="panel-header">
-        <div>
-          <Link className="ghost-button" href="/panel">
-            Volver al panel
-          </Link>
-          <h1 className="section-title">Inventario y contabilidad basica</h1>
-          <p className="section-copy">Registra insumos en gramos, kilos, mililitros, litros o unidades; compras y gastos en COP.</p>
-        </div>
+    <PanelShell
+      active="inventario"
+      roleNames={roleNames}
+      subtitle="Registra insumos en gramos, kilos, mililitros, litros o unidades; compras y gastos en COP."
+      title="Inventario y contabilidad basica"
+      userEmail={user.email ?? "usuario"}
+      actions={
         <div className="print-links">
           <Link className="ghost-button" href="/panel/proveedores">
             Proveedores
@@ -258,8 +258,8 @@ export default async function InventoryPage() {
             Menu
           </Link>
         </div>
-      </header>
-
+      }
+    >
       <section className="metrics-grid">
         <div className="metric-card">
           <span>Insumos</span>
@@ -343,6 +343,6 @@ export default async function InventoryPage() {
           <p className="muted">Gastos recientes: {formatCop(recentExpenses)}</p>
         </article>
       </section>
-    </main>
+    </PanelShell>
   );
 }

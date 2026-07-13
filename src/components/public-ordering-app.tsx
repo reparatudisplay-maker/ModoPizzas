@@ -146,23 +146,25 @@ export function PublicOrderingApp({ catalog = fallbackCatalog, mode = "public" }
 
   return (
     <section className="app-shell" id="pedido">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">MP</div>
-          <div>
-            <strong>{siteSettings.businessName}</strong>
-            <span>Pedidos web y operacion interna</span>
+      {isStaffMode ? null : (
+        <header className="topbar">
+          <div className="brand">
+            <div className="brand-mark">MP</div>
+            <div>
+              <strong>{siteSettings.businessName}</strong>
+              <span>Pedidos web y operacion interna</span>
+            </div>
           </div>
-        </div>
-        <nav className="nav-links" aria-label="Navegacion principal">
-          <a href="#menu">Menu</a>
-          <a href="#promos">Promos</a>
-          <a href="#operacion">Operacion</a>
-          <a href="#legal">Legal</a>
-          <a href="/login">Entrar</a>
-          <a href="/panel">Panel</a>
-        </nav>
-      </header>
+          <nav className="nav-links" aria-label="Navegacion principal">
+            <a href="#menu">Menu</a>
+            <a href="#promos">Promos</a>
+            <a href="#operacion">Operacion</a>
+            <a href="#legal">Legal</a>
+            <a href="/login">Entrar</a>
+            <a href="/panel">Panel</a>
+          </nav>
+        </header>
+      )}
 
       <div className="workspace">
         <div>

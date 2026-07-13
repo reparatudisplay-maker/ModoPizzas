@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { PanelShell } from "@/components/panel-shell";
 import { PublicOrderingApp } from "@/components/public-ordering-app";
 import { getPublicCatalog } from "@/lib/public-catalog";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -19,7 +20,8 @@ export default async function NewPanelOrderPage() {
   }
 
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const canCreateOrders = roles?.some((item) => creatorRoles.has(item.role)) ?? false;
+  const roleNames = roles?.map((item) => item.role) ?? [];
+  const canCreateOrders = roleNames.some((role) => creatorRoles.has(role));
 
   if (!canCreateOrders) {
     notFound();
@@ -28,13 +30,19 @@ export default async function NewPanelOrderPage() {
   const catalog = await getPublicCatalog();
 
   return (
-    <main>
-      <div className="panel-shortcut">
+    <PanelShell
+      active="pedidos"
+      roleNames={roleNames}
+      subtitle="Crea pedidos internos para caja, local, recoger o domicilio."
+      title="Nuevo pedido"
+      userEmail={user.email ?? "usuario"}
+      actions={
         <Link className="ghost-button" href="/panel">
-          Volver al panel
+          Pedidos
         </Link>
-      </div>
+      }
+    >
       <PublicOrderingApp catalog={catalog} mode="staff" />
-    </main>
+    </PanelShell>
   );
 }

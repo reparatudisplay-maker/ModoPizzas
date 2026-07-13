@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { saveCombo, savePizzaExtra, savePizzaFlavor, savePizzaSize } from "@/app/admin/actions";
+import { PanelShell } from "@/components/panel-shell";
 import { formatCop } from "@/lib/format";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -296,7 +297,8 @@ export default async function MenuAdminPage({ searchParams }: MenuPageProps) {
   }
 
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const canManageMenu = roles?.some((item) => managerRoles.has(item.role)) ?? false;
+  const roleNames = roles?.map((item) => item.role) ?? [];
+  const canManageMenu = roleNames.some((role) => managerRoles.has(role));
   if (!canManageMenu) {
     notFound();
   }
@@ -317,20 +319,18 @@ export default async function MenuAdminPage({ searchParams }: MenuPageProps) {
   const error = sizesResult.error ?? flavorsResult.error ?? pricesResult.error ?? extrasResult.error ?? combosResult.error;
 
   return (
-    <main className="panel-page">
-      <header className="panel-header">
-        <div>
-          <Link className="ghost-button" href="/panel">
-            Volver al panel
-          </Link>
-          <h1 className="section-title">Gestion de menu</h1>
-          <p className="section-copy">Administra tamanos, sabores, precios, bordes, adiciones y promociones publicas.</p>
-        </div>
+    <PanelShell
+      active="menu"
+      roleNames={roleNames}
+      subtitle="Administra tamanos, sabores, precios, bordes, adiciones y promociones publicas."
+      title="Gestion de menu"
+      userEmail={user.email ?? "usuario"}
+      actions={
         <Link className="primary-button" href="/panel/nuevo-pedido">
           Crear pedido
         </Link>
-      </header>
-
+      }
+    >
       <SectionTabs active={section} />
 
       {error ? <p className="alert">{error.message}</p> : null}
@@ -370,6 +370,6 @@ export default async function MenuAdminPage({ searchParams }: MenuPageProps) {
           ))}
         </section>
       ) : null}
-    </main>
+    </PanelShell>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { saveSupplier } from "@/app/admin/actions";
+import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 type Supplier = {
@@ -65,7 +66,8 @@ export default async function SuppliersPage() {
   }
 
   const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const canManage = roles?.some((item) => managerRoles.has(item.role)) ?? false;
+  const roleNames = roles?.map((item) => item.role) ?? [];
+  const canManage = roleNames.some((role) => managerRoles.has(role));
   if (!canManage) {
     notFound();
   }
@@ -75,24 +77,18 @@ export default async function SuppliersPage() {
   const activeCount = suppliers.filter((supplier) => supplier.is_active).length;
 
   return (
-    <main className="panel-page">
-      <header className="panel-header">
-        <div>
-          <nav className="panel-nav" aria-label="Navegacion de proveedores">
-            <Link className="ghost-button" href="/panel">
-              Panel
-            </Link>
-            <Link className="ghost-button" href="/panel/inventario">
-              Inventario
-            </Link>
-          </nav>
-          <h1 className="section-title">Proveedores</h1>
-          <p className="section-copy">
-            Este es un dato maestro: primero crea proveedores, luego registra compras de insumos asociadas a ellos.
-          </p>
-        </div>
-      </header>
-
+    <PanelShell
+      active="proveedores"
+      roleNames={roleNames}
+      subtitle="Dato maestro para compras: primero crea proveedores, luego registra compras de insumos asociadas."
+      title="Proveedores"
+      userEmail={user.email ?? "usuario"}
+      actions={
+        <Link className="ghost-button" href="/panel/inventario">
+          Inventario
+        </Link>
+      }
+    >
       <section className="metrics-grid">
         <div className="metric-card">
           <span>Total proveedores</span>
@@ -146,6 +142,6 @@ export default async function SuppliersPage() {
           ))}
         </div>
       </section>
-    </main>
+    </PanelShell>
   );
 }
