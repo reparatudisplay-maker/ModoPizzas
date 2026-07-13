@@ -114,6 +114,11 @@ export default async function PanelPage() {
               Menu
             </Link>
           ) : null}
+          {isManager ? (
+            <Link className="ghost-button" href="/panel/inventario">
+              Inventario
+            </Link>
+          ) : null}
           <h1 className="section-title">Panel ModoPizzas</h1>
           <p className="section-copy">Pedidos web, cocina, caja y domicilios empiezan aqui.</p>
         </div>

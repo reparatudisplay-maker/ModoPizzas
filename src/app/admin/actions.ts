@@ -21,6 +21,12 @@ function getInteger(formData: FormData, key: string, fallback = 0) {
   return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
 }
 
+function getDecimal(formData: FormData, key: string, fallback = 0) {
+  const value = getString(formData, key).replace(/\./g, "").replace(/,/g, ".");
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
 function getBoolean(formData: FormData, key: string) {
   return formData.get(key) === "on";
 }
@@ -53,6 +59,16 @@ function revalidateMenu() {
   revalidatePath("/panel");
   revalidatePath("/panel/menu");
   revalidatePath("/panel/nuevo-pedido");
+}
+
+function revalidateInventory() {
+  revalidatePath("/panel");
+  revalidatePath("/panel/inventario");
+}
+
+function getStockUnit(formData: FormData, key = "unit") {
+  const value = getString(formData, key);
+  return ["g", "kg", "ml", "l", "unit"].includes(value) ? value : "unit";
 }
 
 export async function updateSiteSettings(formData: FormData) {
@@ -222,6 +238,158 @@ export async function saveCombo(formData: FormData) {
   }
 
   revalidateMenu();
+}
+
+export async function saveInventoryItem(formData: FormData) {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const payload = {
+    sku: getOptionalString(formData, "sku"),
+    name: getString(formData, "name"),
+    unit: getStockUnit(formData),
+    current_quantity: getDecimal(formData, "current_quantity", 0),
+    average_cost_cop: getDecimal(formData, "average_cost_cop", 0),
+    is_active: getBoolean(formData, "is_active")
+  };
+
+  const query = id
+    ? supabase.from("inventory_items").update(payload).eq("id", id)
+    : supabase.from("inventory_items").insert(payload);
+  const { error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidateInventory();
+}
+
+export async function saveSupplier(formData: FormData) {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const payload = {
+    name: getString(formData, "name"),
+    phone: getOptionalString(formData, "phone"),
+    notes: getOptionalString(formData, "notes"),
+    is_active: getBoolean(formData, "is_active")
+  };
+
+  const query = id ? supabase.from("suppliers").update(payload).eq("id", id) : supabase.from("suppliers").insert(payload);
+  const { error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidateInventory();
+}
+
+export async function registerPurchase(formData: FormData) {
+  const inventoryItemId = getString(formData, "inventory_item_id");
+  const quantity = getDecimal(formData, "quantity", 0);
+  const unitCost = getDecimal(formData, "unit_cost_cop", 0);
+  const lineTotal = Math.round(quantity * unitCost * 100) / 100;
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Debes iniciar sesion.");
+  }
+
+  const { data: item, error: itemError } = await supabase
+    .from("inventory_items")
+    .select("id, unit, current_quantity, average_cost_cop")
+    .eq("id", inventoryItemId)
+    .single();
+
+  if (itemError) {
+    throw new Error(itemError.message);
+  }
+
+  const { data: purchase, error: purchaseError } = await supabase
+    .from("purchases")
+    .insert({
+      supplier_id: getOptionalString(formData, "supplier_id"),
+      purchased_by: user.id,
+      total_cop: lineTotal,
+      notes: getOptionalString(formData, "notes")
+    })
+    .select("id")
+    .single();
+
+  if (purchaseError) {
+    throw new Error(purchaseError.message);
+  }
+
+  const { error: lineError } = await supabase.from("purchase_items").insert({
+    purchase_id: purchase.id,
+    inventory_item_id: inventoryItemId,
+    quantity,
+    unit: item.unit,
+    unit_cost_cop: unitCost,
+    line_total_cop: lineTotal
+  });
+
+  if (lineError) {
+    throw new Error(lineError.message);
+  }
+
+  const currentQuantity = Number(item.current_quantity ?? 0);
+  const currentAverage = Number(item.average_cost_cop ?? 0);
+  const nextQuantity = currentQuantity + quantity;
+  const nextAverage =
+    nextQuantity > 0 ? Math.round(((currentQuantity * currentAverage + lineTotal) / nextQuantity) * 100) / 100 : unitCost;
+
+  const { error: updateError } = await supabase
+    .from("inventory_items")
+    .update({
+      current_quantity: nextQuantity,
+      average_cost_cop: nextAverage
+    })
+    .eq("id", inventoryItemId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  await supabase.from("inventory_movements").insert({
+    inventory_item_id: inventoryItemId,
+    movement_kind: "purchase",
+    quantity_delta: quantity,
+    unit: item.unit,
+    source_table: "purchases",
+    source_id: purchase.id,
+    note: getOptionalString(formData, "notes"),
+    created_by: user.id
+  });
+
+  revalidateInventory();
+}
+
+export async function registerExpense(formData: FormData) {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Debes iniciar sesion.");
+  }
+
+  const { error } = await supabase.from("expenses").insert({
+    category: getString(formData, "category"),
+    description: getString(formData, "description"),
+    amount_cop: getDecimal(formData, "amount_cop", 0),
+    paid_by: user.id
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidateInventory();
 }
 
 export async function assignUserRole(formData: FormData) {

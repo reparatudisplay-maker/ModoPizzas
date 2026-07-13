@@ -626,6 +626,46 @@ a {
   padding: 10px 0;
 }
 
+.inventory-lists {
+  margin-top: 16px;
+}
+
+.data-list {
+  display: grid;
+  gap: 8px;
+}
+
+.data-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  padding: 10px;
+}
+
+.data-row summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.data-row summary span,
+.static-row span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.data-row .compact-card {
+  margin-top: 10px;
+  background: var(--panel);
+}
+
+.static-row {
+  display: grid;
+  gap: 4px;
+}
+
 .print-links,
 .print-actions {
   display: flex;
