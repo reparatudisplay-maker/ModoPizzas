@@ -633,19 +633,20 @@ a {
   backdrop-filter: blur(16px);
 }
 
-.worker-sidebar details {
+.worker-sidebar > details {
   width: 70px;
   height: 100%;
   padding: 14px 10px;
   transition: width 180ms ease;
 }
 
-.worker-sidebar details[open] {
+.worker-sidebar > details[open] {
   width: 250px;
 }
 
-.worker-sidebar summary,
+.worker-sidebar > details > summary,
 .worker-nav a,
+.worker-submenu > summary,
 .worker-logout {
   display: flex;
   align-items: center;
@@ -657,7 +658,7 @@ a {
   text-decoration: none;
 }
 
-.worker-sidebar summary {
+.worker-sidebar > details > summary {
   justify-content: center;
   cursor: pointer;
   list-style: none;
@@ -669,22 +670,24 @@ a {
   display: none;
 }
 
-.worker-sidebar summary span,
+.worker-sidebar > details > summary span,
+.worker-submenu span,
 .worker-nav span,
 .worker-logout span,
 .worker-brand div {
   display: none;
 }
 
-.worker-sidebar details[open] summary {
+.worker-sidebar > details[open] > summary {
   justify-content: flex-start;
   padding: 0 12px;
 }
 
-.worker-sidebar details[open] summary span,
-.worker-sidebar details[open] .worker-nav span,
-.worker-sidebar details[open] .worker-logout span,
-.worker-sidebar details[open] .worker-brand div {
+.worker-sidebar > details[open] > summary span,
+.worker-sidebar > details[open] .worker-nav span,
+.worker-sidebar > details[open] .worker-submenu span,
+.worker-sidebar > details[open] .worker-logout span,
+.worker-sidebar > details[open] .worker-brand div {
   display: block;
 }
 
@@ -715,6 +718,7 @@ a {
 }
 
 .worker-nav a,
+.worker-submenu > summary,
 .worker-logout {
   justify-content: center;
   padding: 0 12px;
@@ -722,15 +726,47 @@ a {
 }
 
 .worker-sidebar details[open] .worker-nav a,
+.worker-sidebar details[open] .worker-submenu > summary,
 .worker-sidebar details[open] .worker-logout {
   justify-content: flex-start;
 }
 
 .worker-nav a:hover,
 .worker-nav a.active,
+.worker-submenu > summary:hover,
+.worker-submenu > summary.active,
 .worker-logout:hover {
   border-color: var(--border);
   background: color-mix(in srgb, var(--secondary) 12%, var(--panel));
+}
+
+.worker-submenu {
+  display: grid;
+  gap: 6px;
+}
+
+.worker-submenu > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.worker-submenu > div {
+  display: grid;
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.worker-sidebar > details:not([open]) .worker-submenu > div {
+  display: none;
+}
+
+.worker-submenu .submenu-chevron {
+  margin-left: auto;
+  transition: transform 160ms ease;
+}
+
+.worker-submenu[open] .submenu-chevron {
+  transform: rotate(180deg);
 }
 
 .worker-logout {
@@ -1087,6 +1123,11 @@ a {
   gap: 14px;
 }
 
+.module-stack {
+  display: grid;
+  gap: 18px;
+}
+
 .compact-card {
   display: grid;
   gap: 12px;
@@ -1115,6 +1156,94 @@ a {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   padding: 10px 0;
+}
+
+.recipe-editor {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.compact-recipe-editor {
+  max-height: none;
+}
+
+.recipe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, 0.35fr) minmax(112px, 0.35fr);
+  gap: 8px;
+}
+
+.recipe-row input,
+.recipe-row select {
+  min-width: 0;
+}
+
+.pizza-summary-table {
+  min-width: 900px;
+}
+
+.pizza-summary-table td,
+.pizza-summary-table th {
+  border: 1px solid var(--border);
+  padding: 0;
+  text-align: center;
+}
+
+.pizza-summary-table th {
+  padding: 10px;
+}
+
+.summary-cell-link {
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  color: var(--foreground);
+  padding: 10px;
+  text-decoration: none;
+}
+
+.summary-cell-link:hover {
+  background: var(--panel-strong);
+}
+
+.recipe-add-button {
+  justify-self: start;
+}
+
+.recipe-add-button svg {
+  flex: 0 0 auto;
+}
+
+.recipe-calculation {
+  align-self: start;
+  display: grid;
+  gap: 14px;
+}
+
+.pizza-management-table {
+  min-width: 860px;
+}
+
+.pizza-management-table td {
+  padding: 10px 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.pizza-management-table td:last-child {
+  color: var(--muted);
+}
+
+.center-actions {
+  justify-content: center;
+}
+
+.summary-cell-link span,
+.summary-cell-link small {
+  color: var(--muted);
 }
 
 .inventory-lists {
@@ -1150,6 +1279,194 @@ a {
 .data-row .compact-card {
   margin-top: 10px;
   background: var(--panel);
+}
+
+.split-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 8px;
+}
+
+.split-input input,
+.split-input select {
+  min-width: 0;
+}
+
+.linked-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.linked-field select {
+  min-width: 0;
+}
+
+.form-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.form-actions .primary-button,
+.form-actions .ghost-button {
+  min-height: 42px;
+}
+
+.autocomplete-field {
+  position: relative;
+}
+
+.autocomplete-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+}
+
+.autocomplete-option {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.autocomplete-option:hover,
+.autocomplete-option:focus-visible,
+.autocomplete-option.active {
+  background: var(--panel-strong);
+}
+
+.section-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.section-title-row h2 {
+  margin: 0;
+}
+
+.table-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.table-filters input,
+.table-filters select {
+  min-height: 38px;
+  width: min(190px, 100%);
+}
+
+.data-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.data-table {
+  width: 100%;
+  min-width: 1160px;
+  border-collapse: collapse;
+  padding: 8px;
+}
+
+.data-table th {
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 10px 12px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.data-table td {
+  border: 1px solid var(--border);
+  padding: 0;
+}
+
+.table-details summary {
+  display: grid;
+  grid-template-columns: 110px 110px 1.2fr 1.1fr 1fr 120px 130px 120px 1.3fr;
+  gap: 0;
+  align-items: center;
+  background: var(--panel);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.table-details summary:hover {
+  background: var(--panel-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.table-details summary span {
+  color: var(--muted);
+  text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-details summary > * {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--border);
+  padding: 10px 12px;
+}
+
+.table-details summary > :first-child {
+  border-left: 0;
+}
+
+.table-details summary strong {
+  color: var(--accent);
+  font-size: 1rem;
+  text-align: center;
+}
+
+.row-actions {
+  gap: 6px;
+}
+
+.row-actions form {
+  display: flex;
+}
+
+.danger-button:hover {
+  border-color: color-mix(in srgb, #dc2626 55%, var(--border));
+  color: #dc2626;
+}
+
+.inline-edit-card {
+  margin: 0 10px 12px;
 }
 
 .static-row {
@@ -1354,6 +1671,30 @@ a {
   .form-grid,
   .metrics-grid,
   .auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-title-row,
+  .table-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-filters input,
+  .table-filters select,
+  .table-filters button {
+    width: 100%;
+  }
+
+  .split-input {
+    grid-template-columns: 1fr;
+  }
+
+  .linked-field {
+    grid-template-columns: 1fr;
+  }
+
+  .form-actions {
     grid-template-columns: 1fr;
   }
 
