@@ -250,9 +250,14 @@ export default async function InventoryPage() {
           <h1 className="section-title">Inventario y contabilidad basica</h1>
           <p className="section-copy">Registra insumos en gramos, kilos, mililitros, litros o unidades; compras y gastos en COP.</p>
         </div>
-        <Link className="primary-button" href="/panel/menu">
-          Menu
-        </Link>
+        <div className="print-links">
+          <Link className="ghost-button" href="/panel/proveedores">
+            Proveedores
+          </Link>
+          <Link className="primary-button" href="/panel/menu">
+            Menu
+          </Link>
+        </div>
       </header>
 
       <section className="metrics-grid">

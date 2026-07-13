@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Bike, ChefHat, ClipboardList, Package, Plus, Settings, Store } from "lucide-react";
+import { Bike, ChefHat, ClipboardList, Package, Plus, Settings, Store, Truck } from "lucide-react";
 import { assignUserRole, removeUserRole, updateSiteSettings } from "@/app/admin/actions";
 import { signOut } from "@/app/auth/actions";
 import { updateOrderStatus } from "@/app/orders/actions";
@@ -145,6 +145,11 @@ export default async function PanelPage() {
               </Link>
             ) : null}
             {isManager ? (
+              <Link className="ghost-button" href="/panel/proveedores">
+                <Truck size={16} /> Proveedores
+              </Link>
+            ) : null}
+            {isManager ? (
               <Link className="ghost-button" href="/panel/inventario">
                 <Package size={16} /> Inventario
               </Link>
@@ -196,6 +201,18 @@ export default async function PanelPage() {
             </header>
             <p>Los pedidos a domicilio muestran nombre, telefono, direccion y estado para el mensajero.</p>
           </article>
+          {isManager ? (
+            <article className="module-card">
+              <header>
+                <h2>Proveedores</h2>
+                <span className="badge">maestro</span>
+              </header>
+              <p>Registra contactos de compra antes de cargar facturas, insumos y movimientos de inventario.</p>
+              <Link className="module-link" href="/panel/proveedores">
+                Abrir proveedores
+              </Link>
+            </article>
+          ) : null}
         </section>
       ) : null}
 

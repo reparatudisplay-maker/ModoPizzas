@@ -64,6 +64,7 @@ function revalidateMenu() {
 function revalidateInventory() {
   revalidatePath("/panel");
   revalidatePath("/panel/inventario");
+  revalidatePath("/panel/proveedores");
 }
 
 function getStockUnit(formData: FormData, key = "unit") {
