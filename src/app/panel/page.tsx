@@ -109,6 +109,11 @@ export default async function PanelPage() {
               Nuevo pedido
             </Link>
           ) : null}
+          {isManager ? (
+            <Link className="ghost-button" href="/panel/menu">
+              Menu
+            </Link>
+          ) : null}
           <h1 className="section-title">Panel ModoPizzas</h1>
           <p className="section-copy">Pedidos web, cocina, caja y domicilios empiezan aqui.</p>
         </div>

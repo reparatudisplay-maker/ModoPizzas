@@ -576,6 +576,56 @@ a {
   display: inline-flex;
 }
 
+.section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.active-tab {
+  border-color: var(--secondary);
+  background: color-mix(in srgb, var(--secondary) 14%, var(--panel));
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 14px;
+}
+
+.compact-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+}
+
+.compact-card > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.price-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+
 .print-links,
 .print-actions {
   display: flex;
