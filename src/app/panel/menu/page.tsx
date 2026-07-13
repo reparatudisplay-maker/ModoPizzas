@@ -8,6 +8,8 @@ type MenuPageProps = {
   searchParams: Promise<{ section?: string }>;
 };
 
+export const dynamic = "force-dynamic";
+
 type PizzaSizeRow = {
   id: string;
   code: string;

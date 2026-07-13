@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Bike, ChartNoAxesCombined, ChefHat, ClipboardList, Package, Printer, ShieldCheck, UserCog } from "lucide-react";
 import { formatCop, formatNumber } from "@/lib/format";
 
@@ -5,43 +6,50 @@ const modules = [
   {
     title: "Vendedor / Caja",
     icon: ClipboardList,
+    href: "/panel",
     text: "Crea pedidos, confirma WhatsApp, cancela segun estado, imprime recibo POS 58mm y etiqueta 80x130mm."
   },
   {
     title: "Cocina",
     icon: ChefHat,
+    href: "/panel",
     text: "Ve pedidos confirmados y marca en cocina, en preparacion y preparado con aviso para vendedor o mesero."
   },
   {
     title: "Domicilios",
     icon: Bike,
+    href: "/panel",
     text: "Lista pedidos asignados con nombre, telefono, direccion y resumen. Marca en camino y entregado."
   },
   {
     title: "Inventario",
     icon: Package,
+    href: "/panel/inventario",
     text: "Ingredientes, productos, compras con decimales, unidades en g, kg, ml y L, y descuentos por receta."
   },
   {
     title: "Reportes",
     icon: ChartNoAxesCombined,
+    href: "/panel/inventario",
     text: "Ventas diarias, cierre de caja, gastos, compras, margen estimado y rentabilidad basica."
   },
   {
     title: "Administracion",
     icon: UserCog,
+    href: "/panel",
     text: "Roles, permisos, numero de WhatsApp, promociones, colores, pagina publica y ajustes tecnicos."
   }
 ];
 
 const statuses = [
+  "recibido",
   "confirmado",
   "en_cocina",
   "en_preparacion",
   "preparado",
   "en_camino",
   "entregado",
-  "cerrado"
+  "cancelado"
 ];
 
 export function OperationsDashboard() {
@@ -96,6 +104,9 @@ export function OperationsDashboard() {
                   </span>
                 </header>
                 <p>{module.text}</p>
+                <a className="module-link" href={module.href}>
+                  Abrir modulo
+                </a>
               </article>
             );
           })}
@@ -107,13 +118,13 @@ export function OperationsDashboard() {
           <ShieldCheck size={24} /> Paginas legales y seguridad
         </h2>
         <div className="legal-list">
-          <a href="#">Acerca de</a>
-          <a href="#">Politica de Tratamiento de Datos</a>
-          <a href="#">Terminos y Condiciones</a>
-          <a href="#">Reversion de Pagos</a>
-          <a href="#">Politica de Alergenos</a>
-          <a href="#">Sugerencias y Reclamos</a>
-          <a href="#">Aviso de privacidad</a>
+          <Link href="/legal/acerca-de">Acerca de</Link>
+          <Link href="/legal/tratamiento-de-datos">Politica de Tratamiento de Datos</Link>
+          <Link href="/legal/terminos-condiciones">Terminos y Condiciones</Link>
+          <Link href="/legal/reversion-pagos">Reversion de Pagos</Link>
+          <Link href="/legal/alergenos">Politica de Alergenos</Link>
+          <Link href="/legal/sugerencias-reclamos">Sugerencias y Reclamos</Link>
+          <Link href="/legal/aviso-privacidad">Aviso de privacidad</Link>
           <a href="https://www.sic.gov.co/" rel="noreferrer" target="_blank">
             Super. Ind y Comercio SIC
           </a>

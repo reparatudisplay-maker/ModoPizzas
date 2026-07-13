@@ -6,6 +6,8 @@ type PrintPageProps = {
   params: Promise<{ id: string }>;
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function KitchenLabelPage({ params }: PrintPageProps) {
   const { id } = await params;
   const { order, settings } = await getPrintableOrder(id);

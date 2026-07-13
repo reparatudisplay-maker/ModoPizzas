@@ -17,7 +17,8 @@ export default async function LoginPage({
           </Link>
           <h1 className="section-title">Entrar a ModoPizzas</h1>
           <p className="section-copy">
-            Usa una cuenta para acceder al panel interno. El primer usuario registrado queda como administrador inicial.
+            Usa una cuenta para acceder al panel interno. La pizzeria no requiere confirmacion por correo; si Supabase la
+            pide, falta apagar esa opcion en Auth.
           </p>
           {message ? <p className="alert">{message}</p> : null}
         </div>

@@ -166,8 +166,24 @@ export function PublicOrderingApp({ catalog = fallbackCatalog, mode = "public" }
 
       <div className="workspace">
         <div>
+          <section className="order-hero" aria-label="Resumen del servicio">
+            <div>
+              <p className="eyebrow">Pedidos en COP, sin decimales en caja</p>
+              <h1>Pizza armada rapido, pedido claro para cocina.</h1>
+              <p>
+                Configura tamano, sabores, borde y adiciones. Para mitad y mitad se cobra el sabor de mayor precio.
+              </p>
+            </div>
+            <div className="service-strip" aria-label="Opciones de servicio">
+              <span>Domicilio</span>
+              <span>Recoger</span>
+              <span>Local sin mesa</span>
+              <span>WhatsApp configurable</span>
+            </div>
+          </section>
+
           <section id="menu">
-            <h1 className="section-title">Arma tu pedido</h1>
+            <h2 className="section-title">Arma tu pedido</h2>
             <p className="section-copy">
               {isStaffMode
                 ? "Crea pedidos de caja, local, recoger o domicilio usando el mismo calculo de precios del menu publico."
@@ -432,7 +448,7 @@ export function PublicOrderingApp({ catalog = fallbackCatalog, mode = "public" }
             {isPending ? "Guardando pedido..." : isStaffMode ? "Crear pedido interno" : siteSettings.whatsappButtonText}
           </button>
           {isStaffMode ? null : (
-            <button className="ghost-button" type="button">
+            <button className="ghost-button full-button" type="button">
               <ReceiptText size={18} /> Vista recibo/comanda
             </button>
           )}

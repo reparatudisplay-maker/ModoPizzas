@@ -41,6 +41,8 @@ type Expense = {
 const managerRoles = new Set(["gerente", "admin_sistema"]);
 const stockUnits = ["g", "kg", "ml", "l", "unit"];
 
+export const dynamic = "force-dynamic";
+
 function unitLabel(unit: string) {
   if (unit === "unit") return "unidad";
   return unit;

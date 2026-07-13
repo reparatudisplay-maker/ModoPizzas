@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Bike, ChefHat, ClipboardList, Package, Plus, Settings, Store } from "lucide-react";
 import { assignUserRole, removeUserRole, updateSiteSettings } from "@/app/admin/actions";
 import { signOut } from "@/app/auth/actions";
 import { updateOrderStatus } from "@/app/orders/actions";
@@ -40,6 +41,19 @@ const orderCreatorRoles = new Set(["vendedor", "mesero", "gerente", "admin_siste
 const nextStatuses = ["confirmed", "in_kitchen", "in_preparation", "prepared", "on_the_way", "delivered", "cancelled"];
 const assignableRoles = ["cliente", "vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"];
 
+export const dynamic = "force-dynamic";
+
+const statusLabels: Record<string, string> = {
+  sent_to_whatsapp: "WhatsApp",
+  confirmed: "Confirmado",
+  in_kitchen: "Cocina",
+  in_preparation: "Preparacion",
+  prepared: "Preparado",
+  on_the_way: "En camino",
+  delivered: "Entregado",
+  cancelled: "Cancelado"
+};
+
 function parseSnapshot(value: string | null): OrderItemSnapshot {
   if (!value) return {};
   try {
@@ -53,6 +67,10 @@ function orderKindLabel(kind: PanelOrder["kind"]) {
   if (kind === "delivery") return "Domicilio";
   if (kind === "pickup") return "Recoger";
   return "Local";
+}
+
+function statusLabel(status: string) {
+  return statusLabels[status] ?? status;
 }
 
 export default async function PanelPage() {
@@ -101,26 +119,37 @@ export default async function PanelPage() {
     <main className="panel-page">
       <header className="panel-header">
         <div>
-          <Link className="ghost-button" href="/">
-            Inicio
-          </Link>
-          {canCreateOrders ? (
-            <Link className="ghost-button" href="/panel/nuevo-pedido">
-              Nuevo pedido
-            </Link>
-          ) : null}
-          {isManager ? (
-            <Link className="ghost-button" href="/panel/menu">
-              Menu
-            </Link>
-          ) : null}
-          {isManager ? (
-            <Link className="ghost-button" href="/panel/inventario">
-              Inventario
-            </Link>
-          ) : null}
           <h1 className="section-title">Panel ModoPizzas</h1>
           <p className="section-copy">Pedidos web, cocina, caja y domicilios empiezan aqui.</p>
+          <nav className="panel-nav" aria-label="Modulos del panel">
+            <Link className="ghost-button" href="/">
+              <Store size={16} /> Web publica
+            </Link>
+            {canCreateOrders ? (
+              <Link className="primary-button" href="/panel/nuevo-pedido">
+                <Plus size={16} /> Nuevo pedido
+              </Link>
+            ) : null}
+            <a className="ghost-button" href="#pedidos">
+              <ClipboardList size={16} /> Pedidos
+            </a>
+            <a className="ghost-button" href="#cocina">
+              <ChefHat size={16} /> Cocina
+            </a>
+            <a className="ghost-button" href="#domicilios">
+              <Bike size={16} /> Domicilios
+            </a>
+            {isManager ? (
+              <Link className="ghost-button" href="/panel/menu">
+                <Settings size={16} /> Menu
+              </Link>
+            ) : null}
+            {isManager ? (
+              <Link className="ghost-button" href="/panel/inventario">
+                <Package size={16} /> Inventario
+              </Link>
+            ) : null}
+          </nav>
         </div>
         <form action={signOut}>
           <button className="ghost-button" type="submit">
@@ -143,6 +172,32 @@ export default async function PanelPage() {
           <strong>{orders?.length ?? 0}</strong>
         </div>
       </section>
+
+      {canOperate ? (
+        <section className="module-grid panel-modules" aria-label="Resumen de modulos activos">
+          <article className="module-card" id="pedidos">
+            <header>
+              <h2>Vendedor / Caja</h2>
+              <span className="badge">activo</span>
+            </header>
+            <p>Recibe pedidos web, crea pedidos internos, actualiza estados e imprime recibo o comanda.</p>
+          </article>
+          <article className="module-card" id="cocina">
+            <header>
+              <h2>Cocina</h2>
+              <span className="badge">preparacion</span>
+            </header>
+            <p>Filtra mentalmente los pedidos confirmados, en cocina y en preparacion desde la lista principal.</p>
+          </article>
+          <article className="module-card" id="domicilios">
+            <header>
+              <h2>Domicilios</h2>
+              <span className="badge">entrega</span>
+            </header>
+            <p>Los pedidos a domicilio muestran nombre, telefono, direccion y estado para el mensajero.</p>
+          </article>
+        </section>
+      ) : null}
 
       {!canOperate ? (
         <section className="form-panel">
@@ -230,7 +285,7 @@ export default async function PanelPage() {
       ) : null}
 
       {canOperate ? (
-        <section className="panel-list">
+        <section className="panel-list" aria-label="Pedidos recientes">
           {(orders as PanelOrder[] | null)?.map((order) => (
             <article className="order-card" key={order.id}>
               <header>
@@ -240,7 +295,7 @@ export default async function PanelPage() {
                     {orderKindLabel(order.kind)} - {new Date(order.created_at).toLocaleString("es-CO")}
                   </p>
                 </div>
-                <span className="badge">{order.status}</span>
+                <span className={`badge status-badge status-${order.status}`}>{statusLabel(order.status)}</span>
               </header>
 
               <div className="order-details">
@@ -288,7 +343,7 @@ export default async function PanelPage() {
                   <select defaultValue={order.status} name="status">
                     {nextStatuses.map((status) => (
                       <option key={status} value={status}>
-                        {status}
+                        {statusLabel(status)}
                       </option>
                     ))}
                   </select>

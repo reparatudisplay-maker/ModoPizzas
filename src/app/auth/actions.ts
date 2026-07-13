@@ -11,7 +11,7 @@ function getString(formData: FormData, key: string) {
 
 function authMessage(message: string) {
   if (message.toLowerCase().includes("email not confirmed")) {
-    return "El correo aun no esta confirmado. Revisa el correo de confirmacion o pide al administrador confirmar la cuenta.";
+    return "La cuenta quedo pendiente porque Supabase Auth aun tiene activa la confirmacion de correo. Desactiva Confirm email en Authentication > Providers > Email y confirma este usuario desde el administrador.";
   }
 
   return message;
@@ -64,7 +64,7 @@ export async function signUp(formData: FormData) {
     if (!data.session) {
       redirect(
         `/login?message=${encodeURIComponent(
-          "Cuenta creada. Si Supabase solicita confirmacion de correo, revisa tu email antes de entrar."
+          "Cuenta creada. Si no puedes entrar de inmediato, desactiva Confirm email en Supabase Auth y confirma el usuario pendiente."
         )}`
       );
     }

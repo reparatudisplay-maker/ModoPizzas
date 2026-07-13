@@ -6,6 +6,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 const creatorRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 
+export const dynamic = "force-dynamic";
+
 export default async function NewPanelOrderPage() {
   const supabase = await createServerSupabaseClient();
   const {
