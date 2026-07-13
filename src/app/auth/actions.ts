@@ -9,6 +9,14 @@ function getString(formData: FormData, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function authMessage(message: string) {
+  if (message.toLowerCase().includes("email not confirmed")) {
+    return "El correo aun no esta confirmado. Revisa el correo de confirmacion o pide al administrador confirmar la cuenta.";
+  }
+
+  return message;
+}
+
 export async function signIn(formData: FormData) {
   const email = getString(formData, "email");
   const password = getString(formData, "password");
@@ -21,7 +29,7 @@ export async function signIn(formData: FormData) {
     });
 
     if (error) {
-      redirect(`/login?message=${encodeURIComponent(error.message)}`);
+      redirect(`/login?message=${encodeURIComponent(authMessage(error.message))}`);
     }
 
     redirect("/panel");
@@ -38,7 +46,7 @@ export async function signUp(formData: FormData) {
   const phone = getString(formData, "phone");
   try {
     const supabase = await createServerSupabaseClient();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -50,7 +58,15 @@ export async function signUp(formData: FormData) {
     });
 
     if (error) {
-      redirect(`/login?message=${encodeURIComponent(error.message)}`);
+      redirect(`/login?message=${encodeURIComponent(authMessage(error.message))}`);
+    }
+
+    if (!data.session) {
+      redirect(
+        `/login?message=${encodeURIComponent(
+          "Cuenta creada. Si Supabase solicita confirmacion de correo, revisa tu email antes de entrar."
+        )}`
+      );
     }
 
     redirect("/panel");
