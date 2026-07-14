@@ -216,6 +216,11 @@ a {
   color: var(--foreground);
 }
 
+.active-icon-button {
+  border-color: var(--secondary);
+  background: color-mix(in srgb, var(--secondary) 14%, var(--panel));
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.6fr);
@@ -1313,6 +1318,38 @@ a {
   min-height: 42px;
 }
 
+.form-status {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.form-status.success {
+  border-color: color-mix(in srgb, #16a34a 42%, var(--border));
+  background: color-mix(in srgb, #16a34a 12%, var(--panel));
+  color: color-mix(in srgb, #16a34a 70%, var(--foreground));
+  animation: status-fade-out 1800ms ease forwards;
+}
+
+.form-status.error {
+  border-color: color-mix(in srgb, #dc2626 48%, var(--border));
+  background: color-mix(in srgb, #dc2626 10%, var(--panel));
+  color: color-mix(in srgb, #dc2626 76%, var(--foreground));
+}
+
+@keyframes status-fade-out {
+  0%,
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
 .autocomplete-field {
   position: relative;
 }
@@ -1364,15 +1401,57 @@ a {
 
 .table-filters {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: 8px;
+}
+
+.purchase-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.purchase-list-header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.add-purchase-button {
+  min-height: 38px;
+  white-space: nowrap;
 }
 
 .table-filters input,
 .table-filters select {
   min-height: 38px;
   width: min(190px, 100%);
+}
+
+.purchase-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  overflow-x: auto;
+}
+
+.purchase-tabs a {
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  color: var(--muted);
+  font-weight: 800;
+  padding: 9px 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.purchase-tabs a.active-tab {
+  background: color-mix(in srgb, var(--secondary) 14%, var(--panel));
+  border-color: var(--secondary);
+  color: var(--text);
 }
 
 .data-table-wrap {
@@ -1387,6 +1466,10 @@ a {
   min-width: 1160px;
   border-collapse: collapse;
   padding: 8px;
+}
+
+.purchase-table {
+  min-width: 1420px;
 }
 
 .data-table th {
@@ -1405,9 +1488,127 @@ a {
   padding: 0;
 }
 
+.inventory-toolbar-row {
+  align-items: center;
+}
+
+.inventory-table {
+  min-width: 980px;
+}
+
+.product-table {
+  min-width: 980px;
+}
+
+.inventory-table td,
+.product-table td,
+.compact-data-table td {
+  color: var(--muted);
+  padding: 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.product-table td strong {
+  color: var(--text);
+}
+
+.inventory-table td:first-child {
+  text-align: left;
+}
+
+.inventory-table td:first-child strong {
+  color: var(--text);
+  display: block;
+}
+
+.inventory-table td:first-child span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.86rem;
+  margin-top: 3px;
+}
+
+.stock-pill {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 800;
+  justify-content: center;
+  min-width: 94px;
+  padding: 6px 10px;
+}
+
+.stock-pill.ok {
+  background: color-mix(in srgb, #1f8f5f 14%, var(--panel));
+  border-color: color-mix(in srgb, #1f8f5f 28%, var(--border));
+  color: #1f6d4c;
+}
+
+.stock-pill.warning {
+  background: color-mix(in srgb, #d79a18 18%, var(--panel));
+  border-color: color-mix(in srgb, #d79a18 30%, var(--border));
+  color: #8a5a00;
+}
+
+.stock-pill.danger {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  color: var(--accent);
+}
+
+.inventory-detail-panel {
+  margin-top: 16px;
+}
+
+.detail-header-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.inventory-detail-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.inventory-detail-grid article {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.inventory-detail-grid h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.compact-data-table {
+  min-width: 760px;
+}
+
+.origin-cell {
+  align-items: center;
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+}
+
+.origin-cell strong {
+  color: var(--text);
+}
+
+.origin-cell small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .table-details summary {
   display: grid;
-  grid-template-columns: 110px 110px 1.2fr 1.1fr 1fr 120px 130px 120px 1.3fr;
+  grid-template-columns: 110px 105px 130px 1.2fr 130px 115px 1.1fr 1fr 120px 110px 1.3fr;
   gap: 0;
   align-items: center;
   background: var(--panel);
@@ -1467,6 +1668,77 @@ a {
 
 .inline-edit-card {
   margin: 0 10px 12px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 17, 15, 0.52);
+  padding: 18px;
+}
+
+.modal-panel {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
+}
+
+.purchase-modal {
+  display: grid;
+  gap: 0;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 14px;
+}
+
+.modal-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.modal-header span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.modal-panel .compact-card {
+  border: 0;
+  border-radius: 0;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segmented-control button {
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.segmented-control button.active {
+  border-color: var(--secondary);
+  background: color-mix(in srgb, var(--secondary) 16%, var(--panel));
 }
 
 .static-row {
@@ -1675,15 +1947,30 @@ a {
   }
 
   .section-title-row,
-  .table-filters {
+  .table-filters,
+  .purchase-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .inventory-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .table-filters input,
   .table-filters select,
-  .table-filters button {
+  .table-filters button,
+  .add-purchase-button {
     width: 100%;
+  }
+
+  .modal-backdrop {
+    align-items: start;
+    padding: 10px;
+  }
+
+  .segmented-control {
+    grid-template-columns: 1fr;
   }
 
   .split-input {

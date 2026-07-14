@@ -33,7 +33,7 @@ type PanelShellProps = {
     | "domicilios"
     | "proveedores"
     | "inventario"
-    | "insumos"
+    | "productos"
     | "compras"
     | "gastos"
     | "marcas"
@@ -57,7 +57,7 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
     { key: "domicilios", href: "/panel/domicilios", label: "Domicilios", icon: Bike, show: true }
   ];
   const masterLinks = [
-    { key: "insumos", href: "/panel/insumos", label: "Productos", icon: Package, show: isManager },
+    { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: isManager },
     { key: "categorias", href: "/panel/categorias", label: "Categorias", icon: Tags, show: isManager },
     { key: "marcas", href: "/panel/marcas", label: "Marcas", icon: Tags, show: isManager },
     { key: "proveedores", href: "/panel/proveedores", label: "Proveedores", icon: Truck, show: isManager }
@@ -65,7 +65,7 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
   const inventoryLinks = [
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
     { key: "gastos", href: "/panel/gastos", label: "Gastos", icon: WalletCards, show: isManager },
-    { key: "inventario", href: "/panel/inventario", label: "Resumen inv.", icon: Package, show: isManager }
+    { key: "inventario", href: "/panel/inventario", label: "Inventario/Stock", icon: Package, show: isManager }
   ];
   const adminLinks = [
     { key: "pizzas", href: "/panel/pizzas", label: "Pizzas", icon: Pizza, show: isManager },

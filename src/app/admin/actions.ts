@@ -6,6 +6,11 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 const validRoles = new Set(["cliente", "vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 
+export type FormActionState = {
+  status: "idle" | "success" | "error";
+  message: string;
+};
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -66,6 +71,7 @@ function revalidateMenu() {
 function revalidateInventory() {
   revalidatePath("/panel");
   revalidatePath("/panel/inventario");
+  revalidatePath("/panel/productos");
   revalidatePath("/panel/insumos");
   revalidatePath("/panel/compras");
   revalidatePath("/panel/gastos");
@@ -82,6 +88,56 @@ function getStockUnit(formData: FormData, key = "unit") {
 function getOptionalStockUnit(formData: FormData, key: string) {
   const value = getString(formData, key);
   return ["g", "kg", "ml", "l", "unit"].includes(value) ? value : null;
+}
+
+function getInventoryItemKind(formData: FormData, key = "item_kind") {
+  const value = getString(formData, key);
+  if (value === "ingredient" || value === "sale_product" || value === "supply") return value;
+  return "";
+}
+
+function normalizeSkuName(value: string) {
+  const normalized = value
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  return normalized.padEnd(3, "X").slice(0, 3);
+}
+
+function upperText(value: string | null) {
+  return value ? value.toUpperCase() : null;
+}
+
+function presentationCode(quantity: number, unit: string) {
+  const normalizedQuantity = new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 3,
+    useGrouping: false
+  })
+    .format(quantity)
+    .replace(",", "");
+  const normalizedUnit = unit === "unit" ? "UND" : unit.toUpperCase();
+  return `${normalizedQuantity}${normalizedUnit}`;
+}
+
+function buildReferenceSku(name: string, quantity: number, unit: string) {
+  return `${normalizeSkuName(name)}${presentationCode(quantity, unit)}`;
+}
+
+function normalizeReferenceSku(value: string | null) {
+  if (!value) return null;
+  const normalized = value
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "");
+  return normalized || null;
+}
+
+function canonicalStockUnit(unit: string) {
+  if (unit === "kg" || unit === "g") return "g";
+  if (unit === "l" || unit === "ml") return "ml";
+  return "unit";
 }
 
 function convertStockQuantity(quantity: number, fromUnit: string, toUnit: string) {
@@ -387,37 +443,34 @@ export async function saveCombo(formData: FormData) {
   revalidateMenu();
 }
 
-export async function saveInventoryItem(formData: FormData) {
+export async function saveInventoryItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getOptionalString(formData, "id");
   const supabase = await createServerSupabaseClient();
+  const itemKind = getInventoryItemKind(formData);
+  if (!itemKind) {
+    return { status: "error", message: "Selecciona un tipo de producto." };
+  }
   const payload: {
     name: string;
     unit: string;
+    item_kind: "ingredient" | "sale_product" | "supply";
     is_active: boolean;
-    sku?: string | null;
     category_id?: string | null;
-    presentation_quantity?: number | null;
-    presentation_unit?: string | null;
+    presentation_quantity: number | null;
+    presentation_unit: string | null;
     current_quantity?: number;
     average_cost_cop?: number;
   } = {
     name: getString(formData, "name"),
-    unit: getStockUnit(formData),
-    is_active: getBoolean(formData, "is_active")
+    unit: itemKind === "sale_product" ? "unit" : getStockUnit(formData),
+    item_kind: itemKind,
+    is_active: getBoolean(formData, "is_active"),
+    presentation_quantity: null,
+    presentation_unit: null
   };
-
-  if (formData.has("sku")) {
-    payload.sku = getOptionalString(formData, "sku");
-  }
 
   if (formData.has("category_id")) {
     payload.category_id = getOptionalString(formData, "category_id");
-  }
-
-  if (formData.has("presentation_quantity")) {
-    const presentationQuantity = getDecimal(formData, "presentation_quantity", 0);
-    payload.presentation_quantity = presentationQuantity > 0 ? presentationQuantity : null;
-    payload.presentation_unit = presentationQuantity > 0 ? getStockUnit(formData, "presentation_unit") : null;
   }
 
   if (formData.has("current_quantity")) {
@@ -428,16 +481,23 @@ export async function saveInventoryItem(formData: FormData) {
     payload.average_cost_cop = getDecimal(formData, "average_cost_cop", 0);
   }
 
-  const query = id
-    ? supabase.from("inventory_items").update(payload).eq("id", id)
-    : supabase.from("inventory_items").insert(payload);
-  const { error } = await query;
+  if (id) {
+    const { error } = await supabase.from("inventory_items").update(payload).eq("id", id);
+    if (error) {
+      return { status: "error", message: error.message };
+    }
 
-  if (error) {
-    throw new Error(error.message);
+    revalidateInventory();
+    return { status: "success", message: "Guardado correctamente" };
+  }
+
+  const insertResult = await supabase.from("inventory_items").insert(payload).select("id").single();
+  if (insertResult.error) {
+    return { status: "error", message: insertResult.error.message };
   }
 
   revalidateInventory();
+  return { status: "success", message: "Guardado correctamente" };
 }
 
 export async function saveProductCategory(formData: FormData) {
@@ -503,41 +563,136 @@ export async function saveBrand(formData: FormData) {
   revalidateInventory();
 }
 
-export async function registerPurchase(formData: FormData) {
+async function resolvePurchaseInventoryItem(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  masterItemId: string,
+  purchaseKind: string,
+  presentationQuantity: number,
+  presentationUnit: string,
+  referenceSku: string | null
+) {
+  const { data: masterItem, error: masterItemError } = await supabase
+    .from("inventory_items")
+    .select("id, name, sku, unit, item_kind, category_id, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .eq("id", masterItemId)
+    .single();
+
+  if (masterItemError) {
+    throw new Error(masterItemError.message);
+  }
+
+  if (purchaseKind === "ingredient") {
+    return masterItem;
+  }
+
+  const referenceName = masterItem.name.toUpperCase();
+  const legacyReferenceName = `${masterItem.name} ${presentationCode(presentationQuantity, presentationUnit)}`.toUpperCase();
+  const { data: existingReference, error: existingReferenceError } = await supabase
+    .from("inventory_items")
+    .select("id, name, sku, unit, item_kind, category_id, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .eq("item_kind", purchaseKind)
+    .eq("presentation_quantity", presentationQuantity)
+    .eq("presentation_unit", presentationUnit)
+    .in("name", [referenceName, legacyReferenceName])
+    .maybeSingle();
+
+  if (existingReferenceError) {
+    throw new Error(existingReferenceError.message);
+  }
+
+  if (existingReference) {
+    return existingReference;
+  }
+
+  const sku = normalizeReferenceSku(referenceSku) ?? buildReferenceSku(masterItem.name, presentationQuantity, presentationUnit);
+  const { data: duplicateSku, error: duplicateSkuError } = await supabase
+    .from("inventory_items")
+    .select("id")
+    .ilike("sku", sku)
+    .limit(1)
+    .maybeSingle();
+
+  if (duplicateSkuError) {
+    throw new Error(duplicateSkuError.message);
+  }
+
+  if (duplicateSku) {
+    throw new Error(`Ya existe un producto con el SKU ${sku}.`);
+  }
+
+  const insertResult = await supabase
+    .from("inventory_items")
+    .insert({
+      name: referenceName,
+      sku,
+      unit: "unit",
+      item_kind: purchaseKind,
+      category_id: masterItem.category_id,
+      presentation_quantity: presentationQuantity,
+      presentation_unit: presentationUnit,
+      is_active: true,
+      current_quantity: 0,
+      average_cost_cop: 0
+    })
+    .select("id, name, sku, unit, item_kind, category_id, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .single();
+
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message);
+  }
+
+  return insertResult.data;
+}
+
+export async function registerPurchase(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const purchaseId = getOptionalString(formData, "purchase_id");
-  const inventoryItemId = getString(formData, "inventory_item_id");
+  let inventoryItemId = getString(formData, "inventory_item_id");
+  const purchaseKind = getInventoryItemKind(formData, "purchase_kind");
   const enteredQuantity = getDecimal(formData, "quantity", 0);
   const presentationQuantity = getDecimal(formData, "presentation_quantity", 0);
   const presentationUnit = getStockUnit(formData, "presentation_unit");
   const lineTotal = getInteger(formData, "total_paid_cop", getInteger(formData, "unit_cost_cop", 0));
   const purchaseDate = getString(formData, "purchase_date");
+  const expirationDate = getOptionalString(formData, "expiration_date");
+  const referenceSku = normalizeReferenceSku(getOptionalString(formData, "reference_sku"));
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
 
   if (!user) {
-    throw new Error("Debes iniciar sesion.");
+    return { status: "error", message: "Debes iniciar sesion." };
   }
 
-  const { data: item, error: itemError } = await supabase
-    .from("inventory_items")
-    .select("id, unit, current_quantity, average_cost_cop")
-    .eq("id", inventoryItemId)
-    .single();
-
-  if (itemError) {
-    throw new Error(itemError.message);
+  if (!purchaseKind) {
+    return { status: "error", message: "Selecciona una seccion de compra." };
   }
 
   if (purchaseId) {
     await reversePurchaseStock(supabase, purchaseId, user.id);
   }
 
-  const quantity =
-    presentationQuantity > 0
-      ? convertStockQuantity(enteredQuantity * presentationQuantity, presentationUnit, item.unit)
-      : convertStockQuantity(enteredQuantity, "unit", item.unit);
+  let quantity = 0;
+  let item: {
+    id: string;
+    unit: string;
+    current_quantity?: number | string | null;
+    average_cost_cop?: number | string | null;
+  };
+  let previousItemUnit = "unit";
+  try {
+    item = await resolvePurchaseInventoryItem(supabase, inventoryItemId, purchaseKind, presentationQuantity, presentationUnit, referenceSku);
+    inventoryItemId = item.id;
+    previousItemUnit = item.unit;
+    const targetUnit = purchaseKind === "ingredient" ? canonicalStockUnit(presentationUnit) : "unit";
+    quantity =
+      purchaseKind === "sale_product" || purchaseKind === "supply"
+        ? convertStockQuantity(enteredQuantity, "unit", targetUnit)
+        : convertStockQuantity(enteredQuantity, presentationUnit, targetUnit);
+    item.unit = targetUnit;
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo resolver el producto de inventario." };
+  }
   const unitCost = quantity > 0 ? Math.round((lineTotal / quantity) * 100) / 100 : 0;
 
   const purchasePayload = {
@@ -545,7 +700,7 @@ export async function registerPurchase(formData: FormData) {
       brand_id: getOptionalString(formData, "brand_id"),
       purchased_by: user.id,
       total_cop: lineTotal,
-      notes: getOptionalString(formData, "notes"),
+      notes: upperText(getOptionalString(formData, "notes")),
       purchased_at: purchaseDate ? `${purchaseDate}T12:00:00-05:00` : new Date().toISOString()
     };
   const purchaseResult = purchaseId
@@ -559,20 +714,31 @@ export async function registerPurchase(formData: FormData) {
   const purchaseError = purchaseResult.error;
 
   if (purchaseError) {
-    throw new Error(purchaseError.message);
+    return { status: "error", message: purchaseError.message };
   }
   if (!purchase) {
-    throw new Error("No se pudo guardar la compra.");
+    return { status: "error", message: "No se pudo guardar la compra." };
   }
 
   if (purchaseId) {
     const { error: deleteLineError } = await supabase.from("purchase_items").delete().eq("purchase_id", purchaseId);
     if (deleteLineError) {
-      throw new Error(deleteLineError.message);
+      return { status: "error", message: deleteLineError.message };
     }
   }
 
-  const { error: lineError } = await supabase.from("purchase_items").insert({
+  const purchaseLinePayload: {
+    purchase_id: string;
+    inventory_item_id: string;
+    purchased_quantity: number;
+    quantity: number;
+    unit: string;
+    presentation_quantity: number | null;
+    presentation_unit: string | null;
+    unit_cost_cop: number;
+    line_total_cop: number;
+    expiration_date?: string;
+  } = {
     purchase_id: purchase.id,
     inventory_item_id: inventoryItemId,
     purchased_quantity: enteredQuantity,
@@ -582,13 +748,20 @@ export async function registerPurchase(formData: FormData) {
     presentation_unit: presentationQuantity > 0 ? presentationUnit : null,
     unit_cost_cop: unitCost,
     line_total_cop: lineTotal
-  });
+  };
 
-  if (lineError) {
-    throw new Error(lineError.message);
+  if (expirationDate) {
+    purchaseLinePayload.expiration_date = expirationDate;
   }
 
-  const currentQuantity = Number(item.current_quantity ?? 0);
+  const { error: lineError } = await supabase.from("purchase_items").insert(purchaseLinePayload);
+
+  if (lineError) {
+    return { status: "error", message: lineError.message };
+  }
+
+  const storedUnit = item.unit;
+  const currentQuantity = convertStockQuantity(Number(item.current_quantity ?? 0), previousItemUnit, storedUnit);
   const currentAverage = Number(item.average_cost_cop ?? 0);
   const nextQuantity = currentQuantity + quantity;
   const nextAverage =
@@ -597,13 +770,14 @@ export async function registerPurchase(formData: FormData) {
   const { error: updateError } = await supabase
     .from("inventory_items")
     .update({
+      unit: storedUnit,
       current_quantity: nextQuantity,
       average_cost_cop: nextAverage
     })
     .eq("id", inventoryItemId);
 
   if (updateError) {
-    throw new Error(updateError.message);
+    return { status: "error", message: updateError.message };
   }
 
   await supabase.from("inventory_movements").insert({
@@ -613,14 +787,12 @@ export async function registerPurchase(formData: FormData) {
     unit: item.unit,
     source_table: "purchases",
     source_id: purchase.id,
-    note: getOptionalString(formData, "notes"),
+    note: upperText(getOptionalString(formData, "notes")),
     created_by: user.id
   });
 
   revalidateInventory();
-  if (purchaseId) {
-    redirect("/panel/compras");
-  }
+  return { status: "success", message: "Guardado correctamente" };
 }
 
 async function reversePurchaseStock(
@@ -700,6 +872,90 @@ export async function deletePurchase(formData: FormData) {
   }
 
   revalidateInventory();
+}
+
+export async function registerInventoryAdjustment(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const inventoryItemId = getString(formData, "inventory_item_id");
+  const adjustmentKind = getString(formData, "adjustment_kind") === "adjustment_out" ? "adjustment_out" : "adjustment_in";
+  const enteredQuantity = getDecimal(formData, "quantity", 0);
+  const enteredUnit = getStockUnit(formData, "unit");
+  const reason = getString(formData, "reason");
+  const observation = getOptionalString(formData, "observation");
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { status: "error", message: "Debes iniciar sesion." };
+  }
+
+  if (!inventoryItemId) {
+    return { status: "error", message: "Selecciona un producto." };
+  }
+
+  if (enteredQuantity <= 0) {
+    return { status: "error", message: "La cantidad debe ser mayor a cero." };
+  }
+
+  if (!reason) {
+    return { status: "error", message: "El motivo es obligatorio." };
+  }
+
+  const { data: item, error: itemError } = await supabase
+    .from("inventory_items")
+    .select("id, unit, current_quantity, average_cost_cop")
+    .eq("id", inventoryItemId)
+    .single();
+
+  if (itemError) {
+    return { status: "error", message: itemError.message };
+  }
+
+  let convertedQuantity = 0;
+  try {
+    convertedQuantity = convertStockQuantity(enteredQuantity, enteredUnit, item.unit);
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "La unidad elegida no es compatible." };
+  }
+
+  const currentQuantity = Number(item.current_quantity ?? 0);
+  const quantityDelta = adjustmentKind === "adjustment_out" ? -convertedQuantity : convertedQuantity;
+  const nextQuantity = currentQuantity + quantityDelta;
+
+  if (nextQuantity < 0) {
+    return { status: "error", message: "El ajuste no puede dejar el stock en negativo." };
+  }
+
+  const note = observation ? `Motivo: ${reason}\nObservacion: ${observation}` : `Motivo: ${reason}`;
+  const { error: movementError } = await supabase.from("inventory_movements").insert({
+    inventory_item_id: inventoryItemId,
+    movement_kind: adjustmentKind,
+    quantity_delta: quantityDelta,
+    unit: item.unit,
+    source_table: "inventory_adjustments",
+    note,
+    created_by: user.id
+  });
+
+  if (movementError) {
+    return { status: "error", message: movementError.message };
+  }
+
+  const { error: updateError } = await supabase
+    .from("inventory_items")
+    .update({
+      current_quantity: nextQuantity,
+      average_cost_cop: Number(item.average_cost_cop ?? 0)
+    })
+    .eq("id", inventoryItemId);
+
+  if (updateError) {
+    return { status: "error", message: updateError.message };
+  }
+
+  revalidateInventory();
+  return { status: "success", message: "Ajuste registrado correctamente" };
 }
 
 export async function updatePurchaseMeta(formData: FormData) {

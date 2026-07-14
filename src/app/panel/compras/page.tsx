@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { Pencil, Trash2 } from "lucide-react";
 import { deletePurchase } from "@/app/admin/actions";
 import { PanelShell } from "@/components/panel-shell";
-import { type EditablePurchase, PurchaseForm } from "@/components/purchase-form";
+import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { formatCop } from "@/lib/format";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -11,6 +11,7 @@ type InventoryItem = {
   id: string;
   name: string;
   unit: "g" | "kg" | "ml" | "l" | "unit";
+  item_kind?: "ingredient" | "sale_product" | "supply";
   presentation_quantity: number | null;
   presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
   is_active: boolean;
@@ -44,7 +45,15 @@ type Purchase = {
     unit: "g" | "kg" | "ml" | "l" | "unit";
     presentation_quantity: number | null;
     presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
-    inventory_items: { name: string } | null;
+    expiration_date: string | null;
+    inventory_items: {
+      id: string;
+      name: string;
+      sku: string | null;
+      item_kind: "ingredient" | "sale_product" | "supply" | null;
+      presentation_quantity: number | null;
+      presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
+    } | null;
   }>;
 };
 
@@ -55,6 +64,7 @@ type PurchasePageProps = {
     periodo?: string;
     edit?: string;
     q?: string;
+    tipo?: string;
   }>;
 };
 
@@ -84,8 +94,8 @@ function getPeriodStart(period: string) {
 }
 
 function unitLabel(unit: string) {
-  if (unit === "unit") return "unidad";
-  return unit;
+  if (unit === "unit") return "UND";
+  return unit.toUpperCase();
 }
 
 function formatQuantity(value: number, unit: string) {
@@ -95,9 +105,32 @@ function formatQuantity(value: number, unit: string) {
   return `${formatted} ${unitLabel(unit)}`;
 }
 
+function presentationCode(quantity: number, unit: string) {
+  return formatQuantity(quantity, unit).replace(/\s/g, "");
+}
+
+function internalCode(id?: string | null) {
+  return id ? id.slice(0, 8).toUpperCase() : "-";
+}
+
 function getPurchaseProduct(purchase: Purchase) {
   const item = purchase.purchase_items[0];
-  return item?.inventory_items?.name ?? "Sin producto";
+  const product = item?.inventory_items;
+  if (!product) return "Sin producto";
+  if (!item.presentation_quantity || !item.presentation_unit) return product.name;
+  const suffix = presentationCode(Number(item.presentation_quantity), item.presentation_unit);
+  return product.name.replace(new RegExp(`\\s+${suffix}$`, "i"), "");
+}
+
+function kindLabel(kind?: string | null) {
+  if (kind === "ingredient") return "Ingrediente";
+  if (kind === "sale_product") return "Producto para venta";
+  if (kind === "supply") return "Insumo";
+  return "Sin tipo";
+}
+
+function getPurchaseKind(purchase: Purchase) {
+  return purchase.purchase_items[0]?.inventory_items?.item_kind ?? "";
 }
 
 function getPurchaseQuantity(purchase: Purchase) {
@@ -115,13 +148,22 @@ function getPurchasePresentation(purchase: Purchase) {
   return formatQuantity(Number(item.presentation_quantity), item.presentation_unit);
 }
 
+function getPurchaseSku(purchase: Purchase) {
+  return purchase.purchase_items[0]?.inventory_items?.sku ?? "-";
+}
+
+function getPurchaseCode(purchase: Purchase) {
+  return internalCode(purchase.purchase_items[0]?.inventory_items?.id);
+}
+
 function PurchaseFilters({
   suppliers,
   brands,
   currentSupplier,
   currentBrand,
   currentPeriod,
-  query
+  query,
+  suggestions
 }: {
   suppliers: Supplier[];
   brands: Brand[];
@@ -129,10 +171,16 @@ function PurchaseFilters({
   currentBrand: string;
   currentPeriod: string;
   query: string;
+  suggestions: string[];
 }) {
   return (
     <form className="table-filters">
-      <input defaultValue={query} name="q" placeholder="Buscar nota o marca" />
+      <input autoComplete="off" defaultValue={query} list="purchase-search-options" name="q" placeholder="Buscar compra" />
+      <datalist id="purchase-search-options">
+        {suggestions.map((suggestion) => (
+          <option key={suggestion} value={suggestion} />
+        ))}
+      </datalist>
       <select defaultValue={currentSupplier} name="proveedor">
         <option value="">Todos los proveedores</option>
         {suppliers.map((supplier) => (
@@ -168,6 +216,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const supplierFilter = params.proveedor ?? "";
   const brandFilter = params.marca ?? "";
   const periodFilter = params.periodo ?? "todos";
+  const kindFilter = params.tipo ?? "";
   const editId = params.edit ?? "";
   const periodStart = getPeriodStart(periodFilter);
   const query = params.q?.trim() ?? "";
@@ -190,7 +239,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   let purchasesQuery = supabase
     .from("purchases")
     .select(
-      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, inventory_items(name))"
+      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, item_kind, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
     .limit(60);
@@ -203,16 +252,17 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     purchasesQuery = purchasesQuery.eq("brand_id", brandFilter);
   }
 
-  if (query) {
-    purchasesQuery = purchasesQuery.ilike("notes", `%${query}%`);
-  }
-
   if (periodStart) {
     purchasesQuery = purchasesQuery.gte("purchased_at", periodStart);
   }
 
   const [itemsResult, suppliersResult, brandsResult, purchasesResult] = await Promise.all([
-    supabase.from("inventory_items").select("id, name, unit, presentation_quantity, presentation_unit, is_active").eq("is_active", true).order("name"),
+    supabase
+      .from("inventory_items")
+      .select("id, name, unit, item_kind, presentation_quantity, presentation_unit, is_active")
+      .eq("is_active", true)
+      .is("presentation_quantity", null)
+      .order("name"),
     supabase.from("suppliers").select("id, name, is_active").eq("is_active", true).order("name"),
     supabase.from("brands").select("id, name, is_active").eq("is_active", true).order("name"),
     purchasesQuery
@@ -235,10 +285,52 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
           presentation_unit: editLine.presentation_unit,
           total_cop: Number(editPurchaseSource.total_cop ?? 0),
           notes: editPurchaseSource.notes,
-          purchase_date: new Date(editPurchaseSource.purchased_at).toISOString().slice(0, 10)
+          purchase_date: new Date(editPurchaseSource.purchased_at).toISOString().slice(0, 10),
+          expiration_date: editLine.expiration_date
         }
       : null;
   const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesResult.error;
+  const normalizedQuery = query.toLowerCase();
+  const filteredPurchases = normalizedQuery
+    ? purchases.filter((purchase) =>
+        [
+          getPurchaseProduct(purchase),
+          purchase.suppliers?.name ?? "",
+          purchase.brands?.name ?? "",
+          purchase.notes ?? "",
+          new Date(purchase.purchased_at).toLocaleDateString("es-CO")
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery)
+      )
+    : purchases;
+  const kindFilteredPurchases = kindFilter ? filteredPurchases.filter((purchase) => getPurchaseKind(purchase) === kindFilter) : filteredPurchases;
+  const searchSuggestions = Array.from(
+    new Set(
+      purchases
+        .flatMap((purchase) => [
+          getPurchaseProduct(purchase),
+          purchase.suppliers?.name ?? "",
+          purchase.brands?.name ?? "",
+          kindLabel(getPurchaseKind(purchase)),
+          purchase.notes ?? ""
+        ])
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 40);
+  const tabBaseParams = new URLSearchParams();
+  if (query) tabBaseParams.set("q", query);
+  if (supplierFilter) tabBaseParams.set("proveedor", supplierFilter);
+  if (brandFilter) tabBaseParams.set("marca", brandFilter);
+  if (periodFilter !== "todos") tabBaseParams.set("periodo", periodFilter);
+  const tabHref = (kind: string) => {
+    const nextParams = new URLSearchParams(tabBaseParams);
+    if (kind) nextParams.set("tipo", kind);
+    const queryString = nextParams.toString();
+    return `/panel/compras${queryString ? `?${queryString}` : ""}`;
+  };
 
   return (
     <PanelShell
@@ -249,46 +341,63 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       userEmail={user.email ?? "usuario"}
     >
       {error ? <p className="alert">{error.message}</p> : null}
-      <section className="admin-grid">
-        <PurchaseForm
-          brands={brands}
-          editPurchase={editPurchase}
-          items={items}
-          key={editPurchase?.id ?? "new-purchase"}
-          suppliers={suppliers}
-        />
-      </section>
       <section className="form-panel">
-        <div className="section-title-row">
+        <div className="section-title-row purchase-list-header">
           <h2>Listado de compras</h2>
-          <PurchaseFilters
-            brands={brands}
-            currentBrand={brandFilter}
-            currentPeriod={periodFilter}
-            currentSupplier={supplierFilter}
-            query={query}
-            suppliers={suppliers}
-          />
+          <div className="purchase-toolbar">
+            <PurchaseFilters
+              brands={brands}
+              currentBrand={brandFilter}
+              currentPeriod={periodFilter}
+              currentSupplier={supplierFilter}
+              query={query}
+              suggestions={searchSuggestions}
+              suppliers={suppliers}
+            />
+            <PurchaseModal
+              brands={brands}
+              editPurchase={editPurchase}
+              items={items}
+              key={editPurchase?.id ?? "new-purchase"}
+              suppliers={suppliers}
+            />
+          </div>
         </div>
+        <nav aria-label="Secciones de compras" className="purchase-tabs">
+          <Link className={!kindFilter ? "active-tab" : ""} href={tabHref("")}>
+            Todos
+          </Link>
+          <Link className={kindFilter === "ingredient" ? "active-tab" : ""} href={tabHref("ingredient")}>
+            Ingredientes
+          </Link>
+          <Link className={kindFilter === "sale_product" ? "active-tab" : ""} href={tabHref("sale_product")}>
+            Productos
+          </Link>
+          <Link className={kindFilter === "supply" ? "active-tab" : ""} href={tabHref("supply")}>
+            Insumos
+          </Link>
+        </nav>
         <div className="data-table-wrap">
-          <table className="data-table">
+          <table className="data-table purchase-table">
             <thead>
               <tr>
                 <th>Acciones</th>
-                <th>Fecha</th>
+                <th>Codigo</th>
+                <th>SKU</th>
                 <th>Producto</th>
+                <th>Presentacion</th>
+                <th>Cantidad</th>
                 <th>Proveedor</th>
                 <th>Marca</th>
-                <th>Cantidad</th>
-                <th>Presentacion</th>
                 <th>Total</th>
+                <th>Fecha</th>
                 <th>Notas</th>
               </tr>
             </thead>
             <tbody>
-              {purchases.map((purchase) => (
+              {kindFilteredPurchases.map((purchase) => (
                 <tr key={purchase.id}>
-                  <td colSpan={9}>
+                  <td colSpan={11}>
                     <details className="table-details">
                       <summary>
                         <span className="row-actions">
@@ -302,13 +411,15 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
                             </button>
                           </form>
                         </span>
-                        <span>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</span>
+                        <span>{getPurchaseCode(purchase)}</span>
+                        <span>{getPurchaseSku(purchase)}</span>
                         <span>{getPurchaseProduct(purchase)}</span>
+                        <span>{getPurchasePresentation(purchase)}</span>
+                        <span>{getPurchaseQuantity(purchase)}</span>
                         <span>{purchase.suppliers?.name ?? "Sin proveedor"}</span>
                         <span>{purchase.brands?.name ?? "Sin marca"}</span>
-                        <span>{getPurchaseQuantity(purchase)}</span>
-                        <span>{getPurchasePresentation(purchase)}</span>
                         <strong>{formatCop(Number(purchase.total_cop))}</strong>
+                        <span>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</span>
                         <span>{purchase.notes || "Sin notas"}</span>
                       </summary>
                     </details>
@@ -317,7 +428,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
               ))}
             </tbody>
           </table>
-          {purchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}
+          {kindFilteredPurchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}
         </div>
       </section>
     </PanelShell>
