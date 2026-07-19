@@ -40,13 +40,14 @@ Antes de modificar código:
 1. Lee los archivos directamente relacionados.
 2. Revisa `package.json`.
 3. Revisa tipos, migraciones, componentes y utilidades reutilizables.
-4. Distingue:
+4. Antes de modificar un módulo, lee `modo-ui` y el skill específico del módulo si existe.
+5. Distingue:
    - existente;
    - parcial;
    - planificado;
    - no verificado.
-5. No inventes nombres de tablas, columnas, rutas, componentes ni scripts.
-6. Para tareas grandes, presenta primero un plan breve de 3 a 7 pasos.
+6. No inventes nombres de tablas, columnas, rutas, componentes ni scripts.
+7. Para tareas grandes, presenta primero un plan breve de 3 a 7 pasos.
 
 ## Límites
 

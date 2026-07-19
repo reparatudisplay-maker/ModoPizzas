@@ -12,6 +12,8 @@ type InventoryItem = {
   name: string;
   unit: "g" | "kg" | "ml" | "l" | "unit";
   item_kind?: "ingredient" | "sale_product" | "supply";
+  purchase_mode?: "total_weight" | "packages" | null;
+  brand_id?: string | null;
   presentation_quantity: number | null;
   presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
   is_active: boolean;
@@ -259,7 +261,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const [itemsResult, suppliersResult, brandsResult, purchasesResult] = await Promise.all([
     supabase
       .from("inventory_items")
-      .select("id, name, unit, item_kind, presentation_quantity, presentation_unit, is_active")
+      .select("id, name, unit, item_kind, purchase_mode, brand_id, presentation_quantity, presentation_unit, is_active")
       .eq("is_active", true)
       .is("presentation_quantity", null)
       .order("name"),

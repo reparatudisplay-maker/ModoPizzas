@@ -12,6 +12,8 @@ type InventoryItem = {
   name: string;
   unit: "g" | "kg" | "ml" | "l" | "unit";
   item_kind?: "ingredient" | "sale_product" | "supply";
+  purchase_mode?: "total_weight" | "packages" | null;
+  brand_id?: string | null;
   presentation_quantity: number | null;
   presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
   is_active: boolean;
@@ -29,14 +31,7 @@ type UnitOption = {
 };
 
 type PurchaseKind = "ingredient" | "sale_product" | "supply";
-
-const presentationUnitOptions: UnitOption[] = [
-  { value: "ml", label: "Mililitros" },
-  { value: "l", label: "Litros" },
-  { value: "g", label: "Gramos" },
-  { value: "kg", label: "Kilogramos" },
-  { value: "unit", label: "Unidad" }
-];
+type PurchaseMode = "total_weight" | "packages";
 
 const initialFormActionState: FormActionState = {
   status: "idle",
@@ -94,6 +89,12 @@ function uppercaseValue(value: string) {
   return value.toUpperCase();
 }
 
+function purchaseKindLabel(kind: PurchaseKind) {
+  if (kind === "ingredient") return "Ingrediente";
+  if (kind === "sale_product") return "Producto para venta";
+  return "Insumo";
+}
+
 function normalizeReferenceSku(value: string) {
   return value
     .toUpperCase()
@@ -121,16 +122,20 @@ function AutocompleteOrSelect({
   name,
   emptyLabel,
   options,
-  initialId
+  initialId,
+  value,
+  onChange
 }: {
   label: string;
   name: string;
   emptyLabel: string;
   options: LookupOption[];
   initialId?: string | null;
+  value?: string;
+  onChange?: (value: string) => void;
 }) {
   const initialOption = options.find((option) => option.id === initialId);
-  const [selectedId, setSelectedId] = useState(initialOption?.id ?? "");
+  const [internalSelectedId, setInternalSelectedId] = useState(initialOption?.id ?? "");
   const [query, setQuery] = useState(initialOption?.name ?? "");
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -141,16 +146,27 @@ function AutocompleteOrSelect({
   }, [options, query]);
   const selectOption = (option: LookupOption | null) => {
     setQuery(option?.name ?? "");
-    setSelectedId(option?.id ?? "");
+    if (onChange) onChange(option?.id ?? "");
+    setInternalSelectedId(option?.id ?? "");
     setIsOpen(false);
     setActiveIndex(0);
   };
+  const selectedId = value ?? internalSelectedId;
+  const selectedOption = options.find((option) => option.id === selectedId);
+  const visibleQuery = value !== undefined && !isOpen ? selectedOption?.name ?? "" : query;
 
   if (options.length <= 10) {
     return (
       <div className="field">
         <label>{label}</label>
-        <select defaultValue={initialId ?? ""} name={name}>
+        <select
+          name={name}
+          onChange={(event) => {
+            onChange?.(event.target.value);
+            setInternalSelectedId(event.target.value);
+          }}
+          value={selectedId}
+        >
           <option value="">{emptyLabel}</option>
           {options.map((option) => (
             <option key={option.id} value={option.id}>
@@ -171,7 +187,8 @@ function AutocompleteOrSelect({
         onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
         onChange={(event) => {
           setQuery(uppercaseValue(event.target.value));
-          setSelectedId("");
+          if (onChange) onChange("");
+          setInternalSelectedId("");
           setIsOpen(true);
           setActiveIndex(0);
         }}
@@ -198,7 +215,7 @@ function AutocompleteOrSelect({
           }
         }}
         placeholder={emptyLabel}
-        value={query}
+        value={visibleQuery}
       />
       <input name={name} type="hidden" value={selectedId} />
       {isOpen ? (
@@ -232,6 +249,104 @@ function AutocompleteOrSelect({
   );
 }
 
+function ProductAutocomplete({
+  items,
+  selectedItem,
+  onSelect
+}: {
+  items: InventoryItem[];
+  selectedItem?: InventoryItem;
+  onSelect: (item: InventoryItem | null) => void;
+}) {
+  const [query, setQuery] = useState(selectedItem?.name ?? "");
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return items.slice(0, 20);
+    return items.filter((item) => item.name.toLowerCase().includes(normalizedQuery)).slice(0, 20);
+  }, [items, query]);
+
+  function pickItem(item: InventoryItem) {
+    onSelect(item);
+    setQuery(item.name);
+    setIsOpen(false);
+    setActiveIndex(0);
+  }
+
+  return (
+    <div className="field autocomplete-field">
+      <label>Producto</label>
+      <div className="locked-input">
+        <input
+          autoComplete="off"
+          disabled={Boolean(selectedItem)}
+          name="inventory_item_label"
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => {
+            setQuery(uppercaseValue(event.target.value));
+            setIsOpen(true);
+            setActiveIndex(0);
+          }}
+          onFocus={() => setIsOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setIsOpen(true);
+              setActiveIndex((current) => Math.min(current + 1, filteredItems.length - 1));
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setActiveIndex((current) => Math.max(current - 1, 0));
+            }
+            if (event.key === "Enter" && filteredItems[activeIndex]) {
+              event.preventDefault();
+              pickItem(filteredItems[activeIndex]);
+            }
+            if (event.key === "Escape") {
+              setIsOpen(false);
+            }
+          }}
+          placeholder="Buscar producto registrado"
+          value={selectedItem?.name ?? query}
+        />
+        {selectedItem ? (
+          <button
+            aria-label="Limpiar producto"
+            className="clear-selection-button"
+            onClick={() => {
+              onSelect(null);
+              setQuery("");
+            }}
+            type="button"
+          >
+            <X size={15} />
+          </button>
+        ) : null}
+      </div>
+      <input name="inventory_item_id" required type="hidden" value={selectedItem?.id ?? ""} />
+      {isOpen && !selectedItem ? (
+        <div className="autocomplete-menu">
+          {filteredItems.length === 0 ? <div className="autocomplete-option muted-option">No hay productos registrados</div> : null}
+          {filteredItems.map((item, index) => (
+            <button
+              className={`autocomplete-option${index === activeIndex ? " active" : ""}`}
+              key={item.id}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pickItem(item);
+              }}
+              type="button"
+            >
+              {item.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PurchaseForm({
   items,
   suppliers,
@@ -250,38 +365,34 @@ export function PurchaseForm({
   const [totalPaid, setTotalPaid] = useState(editPurchase ? formatInteger(String(editPurchase.total_cop)) : "");
   const [notes, setNotes] = useState(editPurchase?.notes ?? "");
   const editItem = items.find((item) => item.id === editPurchase?.inventory_item_id);
-  const [purchaseKind, setPurchaseKind] = useState<PurchaseKind>(editItem?.item_kind ?? "ingredient");
-  const visibleItems = items.filter((item) => (item.item_kind ?? "ingredient") === purchaseKind);
-  const selectableItems = visibleItems;
-  const firstItem = selectableItems[0];
-  const [selectedItemId, setSelectedItemId] = useState(editPurchase?.inventory_item_id ?? firstItem?.id ?? "");
-  const selectedItem = selectableItems.find((item) => item.id === selectedItemId) ?? firstItem;
-  const [presentationQuantity, setPresentationQuantity] = useState(
-    editPurchase?.presentation_quantity
-      ? formatQuantity(String(editPurchase.presentation_quantity).replace(".", ","))
-      : selectedItem?.presentation_quantity
-        ? formatQuantity(String(selectedItem.presentation_quantity).replace(".", ","))
-        : ""
-  );
-  const unitOptions = purchaseKind === "ingredient" ? compatibleUnits(selectedItem?.unit ?? "unit") : presentationUnitOptions;
+  const [selectedItemId, setSelectedItemId] = useState(editPurchase?.inventory_item_id ?? "");
+  const selectableItems = items.filter((item) => item.is_active && item.presentation_quantity === null);
+  const selectedItem = selectableItems.find((item) => item.id === selectedItemId) ?? editItem;
+  const purchaseKind: PurchaseKind | null = selectedItem?.item_kind ?? null;
+  const selectedPurchaseMode: PurchaseMode = selectedItem?.purchase_mode === "packages" ? "packages" : "total_weight";
+  const unitOptions = compatibleUnits(selectedItem?.unit ?? "unit");
   const [presentationUnit, setPresentationUnit] = useState<InventoryItem["unit"]>(
     editPurchase?.presentation_unit ?? selectedItem?.presentation_unit ?? compatibleUnits(selectedItem?.unit ?? "unit")[0]?.value ?? "unit"
   );
   const [referenceSku, setReferenceSku] = useState("");
   const [referenceSkuEdited, setReferenceSkuEdited] = useState(false);
+  const [selectedBrandId, setSelectedBrandId] = useState(editPurchase?.brand_id ?? editItem?.brand_id ?? "");
+  const [packageContent, setPackageContent] = useState(
+    editPurchase?.presentation_quantity
+      ? formatQuantity(String(editPurchase.presentation_quantity).replace(".", ","))
+      : ""
+  );
 
   const referenceSkuPlaceholder =
-    purchaseKind === "ingredient" ? "" : referenceSkuSuggestion(selectedItem?.name ?? "", presentationQuantity, presentationUnit);
+    purchaseKind === "ingredient" ? "" : referenceSkuSuggestion(selectedItem?.name ?? "", packageContent, presentationUnit);
 
-  function resetSection(nextKind: PurchaseKind) {
-    setPurchaseKind(nextKind);
-    const nextItem = items.find((item) => (item.item_kind ?? "ingredient") === nextKind);
-    setSelectedItemId(nextItem?.id ?? "");
+  function handleProductSelect(item: InventoryItem | null) {
+    setSelectedItemId(item?.id ?? "");
+    setSelectedBrandId(item?.brand_id ?? "");
     setQuantity("");
-    setPresentationQuantity("");
-    setPresentationUnit(nextKind === "ingredient" ? compatibleUnits(nextItem?.unit ?? "unit")[0]?.value ?? "unit" : "ml");
-    setReferenceSku("");
-    setReferenceSkuEdited(false);
+    setPackageContent("");
+    setPresentationUnit(compatibleUnits(item?.unit ?? "unit")[0]?.value ?? "unit");
+    if (!referenceSkuEdited) setReferenceSku("");
   }
 
   useEffect(() => {
@@ -299,106 +410,90 @@ export function PurchaseForm({
         <span className="badge">Stock</span>
       </div>
       {editPurchase ? <input name="purchase_id" type="hidden" value={editPurchase.id} /> : null}
-      <input name="purchase_kind" type="hidden" value={purchaseKind} />
-      <div className="segmented-control" aria-label="Tipo de compra">
-        <button
-          aria-pressed={purchaseKind === "ingredient"}
-          className={purchaseKind === "ingredient" ? "active" : ""}
-          onClick={() => resetSection("ingredient")}
-          type="button"
-        >
-          Ingredientes
-        </button>
-        <button
-          aria-pressed={purchaseKind === "sale_product"}
-          className={purchaseKind === "sale_product" ? "active" : ""}
-          onClick={() => resetSection("sale_product")}
-          type="button"
-        >
-          Productos para venta
-        </button>
-        <button
-          aria-pressed={purchaseKind === "supply"}
-          className={purchaseKind === "supply" ? "active" : ""}
-          onClick={() => resetSection("supply")}
-          type="button"
-        >
-          Insumos
-        </button>
-      </div>
+      <input name="purchase_mode" type="hidden" value={selectedPurchaseMode} />
       <div className="form-grid">
-        <div className="field">
-          <label>{purchaseKind === "ingredient" ? "Ingrediente" : purchaseKind === "sale_product" ? "Producto maestro" : "Insumo maestro"}</label>
-          <select
-            name="inventory_item_id"
-            onChange={(event) => {
-              const nextItem = selectableItems.find((item) => item.id === event.target.value);
-              setSelectedItemId(event.target.value);
-              setPresentationUnit(
-                purchaseKind === "ingredient" ? compatibleUnits(nextItem?.unit ?? "unit")[0]?.value ?? "unit" : nextItem?.presentation_unit ?? "ml"
-              );
-              if (!referenceSkuEdited) setReferenceSku("");
-            }}
-            required
-            value={selectedItemId}
-          >
-            {selectableItems.length === 0 ? <option value="">No hay productos de este tipo</option> : null}
-            {selectableItems.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>{purchaseKind === "sale_product" ? "Cantidad de unidades" : "Cantidad"}</label>
-          <input name="purchase_unit" type="hidden" value={purchaseKind === "ingredient" ? presentationUnit : "unit"} />
-          <input
-            inputMode="decimal"
-            name="quantity"
-            onBlur={() => setQuantity((current) => formatQuantity(current))}
-            onChange={(event) => setQuantity(event.target.value.replace(/[^\d.,]/g, ""))}
-            placeholder="0"
-            required
-            type="text"
-            value={quantity}
-          />
-        </div>
-        {purchaseKind === "ingredient" ? (
+        <ProductAutocomplete items={selectableItems} onSelect={handleProductSelect} selectedItem={selectedItem} />
+        {selectedItem && purchaseKind ? (
           <div className="field">
-            <label>Unidad</label>
-            <select name="presentation_unit" onChange={(event) => setPresentationUnit(normalizeStockUnit(event.target.value))} value={presentationUnit}>
-              {unitOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <label>Tipo detectado</label>
+            <div className="detected-type-row">
+              <span className={`badge purchase-kind-badge kind-${purchaseKind}`}>{purchaseKindLabel(purchaseKind)}</span>
+            </div>
           </div>
-        ) : (
+        ) : null}
+        {selectedItem ? (
+          <div className="field">
+            <label>Forma de compra del producto</label>
+            <input disabled value={selectedPurchaseMode === "packages" ? "Unidad o Paquetes" : "Peso total"} />
+          </div>
+        ) : null}
+        {selectedItem && selectedPurchaseMode === "total_weight" ? (
+          <>
+            <div className="field">
+              <label>Peso/Volumen:</label>
+              <input name="purchase_unit" type="hidden" value={presentationUnit} />
+              <input
+                inputMode="decimal"
+                name="quantity"
+                onBlur={() => setQuantity((current) => formatQuantity(current))}
+                onChange={(event) => setQuantity(event.target.value.replace(/[^\d.,]/g, ""))}
+                placeholder="0"
+                required
+                type="text"
+                value={quantity}
+              />
+            </div>
+            <div className="field">
+              <label>Unidad</label>
+              <select name="presentation_unit" onChange={(event) => setPresentationUnit(normalizeStockUnit(event.target.value))} value={presentationUnit}>
+                {unitOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        ) : null}
+        {selectedItem && selectedPurchaseMode === "packages" ? (
+          <>
+          <div className="field">
+            <label>Cantidad por paquetes</label>
+            <input name="purchase_unit" type="hidden" value="unit" />
+            <input
+              inputMode="decimal"
+              name="quantity"
+              onBlur={() => setQuantity((current) => formatQuantity(current))}
+              onChange={(event) => setQuantity(event.target.value.replace(/[^\d.,]/g, ""))}
+              placeholder="0"
+              required
+              type="text"
+              value={quantity}
+            />
+          </div>
           <div className="field">
           <label>Presentacion</label>
           <div className="split-input">
             <input
               inputMode="decimal"
-              name="presentation_quantity"
-              onBlur={() => setPresentationQuantity((current) => formatQuantity(current))}
+              name="package_content_quantity"
+              onBlur={() => setPackageContent((current) => formatQuantity(current))}
               onChange={(event) => {
                 const nextValue = event.target.value.replace(/[^\d.,]/g, "");
-                setPresentationQuantity(nextValue);
+                setPackageContent(nextValue);
                 if (!referenceSkuEdited) setReferenceSku(referenceSkuSuggestion(selectedItem?.name ?? "", nextValue, presentationUnit));
               }}
               placeholder="Ej. 1,5"
               required
               type="text"
-              value={presentationQuantity}
+              value={packageContent}
             />
             <select
               name="presentation_unit"
               onChange={(event) => {
                 const nextUnit = normalizeStockUnit(event.target.value);
                 setPresentationUnit(nextUnit);
-                if (!referenceSkuEdited) setReferenceSku(referenceSkuSuggestion(selectedItem?.name ?? "", presentationQuantity, nextUnit));
+                if (!referenceSkuEdited) setReferenceSku(referenceSkuSuggestion(selectedItem?.name ?? "", packageContent, nextUnit));
               }}
               value={presentationUnit}
             >
@@ -410,8 +505,9 @@ export function PurchaseForm({
             </select>
           </div>
         </div>
-        )}
-        {purchaseKind !== "ingredient" ? (
+        </>
+        ) : null}
+        {selectedItem && purchaseKind !== "ingredient" && selectedPurchaseMode === "packages" ? (
           <div className="field">
             <label>SKU referencia</label>
             <input
@@ -425,32 +521,51 @@ export function PurchaseForm({
             />
           </div>
         ) : null}
-        <div className="field">
-          <label>Total pagado COP</label>
-          <input
-            inputMode="numeric"
-            name="total_paid_cop"
-            onChange={(event) => setTotalPaid(formatInteger(event.target.value))}
-            placeholder="$ 0"
-            required
-            type="text"
-            value={totalPaid}
-          />
-        </div>
-        <div className="field">
-          <label>Fecha compra</label>
-          <input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" />
-        </div>
-        <div className="field">
-          <label>Fecha vencimiento</label>
-          <input defaultValue={editPurchase?.expiration_date ?? ""} name="expiration_date" type="date" />
-        </div>
-        <div className="field full">
-          <label>Notas</label>
-          <input name="notes" onChange={(event) => setNotes(uppercaseValue(event.target.value))} placeholder="Factura, observaciones, lote" value={notes} />
-        </div>
-        <AutocompleteOrSelect emptyLabel="Sin marca" initialId={editPurchase?.brand_id} label="Marca" name="brand_id" options={brands} />
-        <AutocompleteOrSelect emptyLabel="Sin proveedor" initialId={editPurchase?.supplier_id} label="Proveedor" name="supplier_id" options={suppliers} />
+        {selectedItem ? (
+          <>
+            <div className="field">
+              <label>Total pagado COP</label>
+              <input
+                inputMode="numeric"
+                name="total_paid_cop"
+                onChange={(event) => setTotalPaid(formatInteger(event.target.value))}
+                placeholder="$ 0"
+                required
+                type="text"
+                value={totalPaid}
+              />
+            </div>
+            <div className="field">
+              <label>Fecha compra</label>
+              <input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" />
+            </div>
+            <div className="field">
+              <label>Fecha vencimiento</label>
+              <input defaultValue={editPurchase?.expiration_date ?? ""} name="expiration_date" type="date" />
+            </div>
+            <div className="field full">
+              <label>Notas</label>
+              <input name="notes" onChange={(event) => setNotes(uppercaseValue(event.target.value))} placeholder="Factura, observaciones, lote" value={notes} />
+            </div>
+            <AutocompleteOrSelect
+              emptyLabel="Sin marca"
+              initialId={editPurchase?.brand_id}
+              label="Marca"
+              name="brand_id"
+              onChange={setSelectedBrandId}
+              options={brands}
+              value={selectedBrandId}
+            />
+            <AutocompleteOrSelect emptyLabel="Sin proveedor" initialId={editPurchase?.supplier_id} label="Proveedor" name="supplier_id" options={suppliers} />
+          </>
+        ) : (
+          <div className="field full">
+            <div className="empty-state compact-empty-state">
+              <strong>Selecciona un producto para continuar.</strong>
+              <span>El formulario se ajustara automaticamente segun su tipo, marca, unidad y forma de compra.</span>
+            </div>
+          </div>
+        )}
       </div>
       {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
       <div className="form-actions">
@@ -459,7 +574,7 @@ export function PurchaseForm({
             Cancelar
           </Link>
         ) : null}
-        <PurchaseSubmitButton disabled={selectableItems.length === 0} isEditing={Boolean(editPurchase)} />
+        <PurchaseSubmitButton disabled={selectableItems.length === 0 || !selectedItem} isEditing={Boolean(editPurchase)} />
       </div>
     </form>
   );

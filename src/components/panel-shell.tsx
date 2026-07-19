@@ -42,12 +42,13 @@ type PanelShellProps = {
     | "menu"
     | "configuracion";
   actions?: React.ReactNode;
+  hideHeader?: boolean;
 };
 
 const managerRoles = new Set(["gerente", "admin_sistema"]);
 const orderCreatorRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 
-export function PanelShell({ children, title, subtitle, userEmail, roleNames, active, actions }: PanelShellProps) {
+export function PanelShell({ children, title, subtitle, userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
   const isManager = roleNames.some((role) => managerRoles.has(role));
   const canCreateOrders = roleNames.some((role) => orderCreatorRoles.has(role));
   const isAdmin = roleNames.includes("admin_sistema");
@@ -137,14 +138,16 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
       </aside>
 
       <section className="worker-main">
-        <header className="worker-header">
-          <div>
-            <span className="eyebrow">{userEmail}</span>
-            <h1>{title}</h1>
-            <p>{subtitle}</p>
-          </div>
-          {actions ? <div className="worker-actions">{actions}</div> : null}
-        </header>
+        {hideHeader ? null : (
+          <header className="worker-header">
+            <div>
+              <span className="eyebrow">{userEmail}</span>
+              <h1>{title}</h1>
+              <p>{subtitle}</p>
+            </div>
+            {actions ? <div className="worker-actions">{actions}</div> : null}
+          </header>
+        )}
         {children}
       </section>
       <ThemeToggle />
