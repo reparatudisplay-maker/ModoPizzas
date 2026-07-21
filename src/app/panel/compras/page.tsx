@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { Pencil, Trash2 } from "lucide-react";
-import { deletePurchase } from "@/app/admin/actions";
 import { PanelShell } from "@/components/panel-shell";
+import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
-import { formatCop } from "@/lib/format";
+import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
 
 type InventoryItem = {
   id: string;
@@ -14,6 +14,7 @@ type InventoryItem = {
   item_kind?: "ingredient" | "sale_product" | "supply";
   purchase_mode?: "total_weight" | "packages" | null;
   brand_id?: string | null;
+  image_url?: string | null;
   presentation_quantity: number | null;
   presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
   is_active: boolean;
@@ -52,7 +53,10 @@ type Purchase = {
       id: string;
       name: string;
       sku: string | null;
+      unit: "g" | "kg" | "ml" | "l" | "unit";
       item_kind: "ingredient" | "sale_product" | "supply" | null;
+      image_url: string | null;
+      brand_id: string | null;
       presentation_quantity: number | null;
       presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
     } | null;
@@ -95,24 +99,15 @@ function getPeriodStart(period: string) {
   return null;
 }
 
-function unitLabel(unit: string) {
-  if (unit === "unit") return "UND";
-  return unit.toUpperCase();
-}
-
 function formatQuantity(value: number, unit: string) {
   const formatted = new Intl.NumberFormat("es-CO", {
     maximumFractionDigits: 3
   }).format(Number(value));
-  return `${formatted} ${unitLabel(unit)}`;
+  return `${formatted} ${unitLabel(unit as StockUnit)}`;
 }
 
 function presentationCode(quantity: number, unit: string) {
   return formatQuantity(quantity, unit).replace(/\s/g, "");
-}
-
-function internalCode(id?: string | null) {
-  return id ? id.slice(0, 8).toUpperCase() : "-";
 }
 
 function getPurchaseProduct(purchase: Purchase) {
@@ -137,11 +132,12 @@ function getPurchaseKind(purchase: Purchase) {
 
 function getPurchaseQuantity(purchase: Purchase) {
   const item = purchase.purchase_items[0];
-  return item
-    ? new Intl.NumberFormat("es-CO", {
-        maximumFractionDigits: 3
-      }).format(Number(item.purchased_quantity ?? item.quantity))
-    : "-";
+  if (!item) return "-";
+  const product = item.inventory_items;
+  if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
+    return formatStockQuantity(Number(item.quantity ?? 0), item.unit);
+  }
+  return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.purchased_quantity ?? item.quantity))} ${unitLabel("unit")}`;
 }
 
 function getPurchasePresentation(purchase: Purchase) {
@@ -154,63 +150,12 @@ function getPurchaseSku(purchase: Purchase) {
   return purchase.purchase_items[0]?.inventory_items?.sku ?? "-";
 }
 
-function getPurchaseCode(purchase: Purchase) {
-  return internalCode(purchase.purchase_items[0]?.inventory_items?.id);
+function isDirectImageUrl(value: string) {
+  return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:");
 }
 
-function PurchaseFilters({
-  suppliers,
-  brands,
-  currentSupplier,
-  currentBrand,
-  currentPeriod,
-  query,
-  suggestions
-}: {
-  suppliers: Supplier[];
-  brands: Brand[];
-  currentSupplier: string;
-  currentBrand: string;
-  currentPeriod: string;
-  query: string;
-  suggestions: string[];
-}) {
-  return (
-    <form className="table-filters">
-      <input autoComplete="off" defaultValue={query} list="purchase-search-options" name="q" placeholder="Buscar compra" />
-      <datalist id="purchase-search-options">
-        {suggestions.map((suggestion) => (
-          <option key={suggestion} value={suggestion} />
-        ))}
-      </datalist>
-      <select defaultValue={currentSupplier} name="proveedor">
-        <option value="">Todos los proveedores</option>
-        {suppliers.map((supplier) => (
-          <option key={supplier.id} value={supplier.id}>
-            {supplier.name}
-          </option>
-        ))}
-      </select>
-      <select defaultValue={currentBrand} name="marca">
-        <option value="">Todas las marcas</option>
-        {brands.map((brand) => (
-          <option key={brand.id} value={brand.id}>
-            {brand.name}
-          </option>
-        ))}
-      </select>
-      <select defaultValue={currentPeriod} name="periodo">
-        <option value="hoy">Hoy</option>
-        <option value="semana">Semana</option>
-        <option value="15">Ultimos 15 dias</option>
-        <option value="mes">Mes</option>
-        <option value="todos">Todos</option>
-      </select>
-      <button className="ghost-button" type="submit">
-        Filtrar
-      </button>
-    </form>
-  );
+function masterKey(item: { name: string; item_kind?: string | null }) {
+  return `${item.item_kind ?? ""}:${item.name.toUpperCase()}`;
 }
 
 export default async function PurchasesPage({ searchParams }: PurchasePageProps) {
@@ -241,7 +186,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   let purchasesQuery = supabase
     .from("purchases")
     .select(
-      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, item_kind, presentation_quantity, presentation_unit))"
+      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, image_url, brand_id, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
     .limit(60);
@@ -261,9 +206,8 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const [itemsResult, suppliersResult, brandsResult, purchasesResult] = await Promise.all([
     supabase
       .from("inventory_items")
-      .select("id, name, unit, item_kind, purchase_mode, brand_id, presentation_quantity, presentation_unit, is_active")
+      .select("id, name, unit, item_kind, purchase_mode, brand_id, image_url, presentation_quantity, presentation_unit, is_active")
       .eq("is_active", true)
-      .is("presentation_quantity", null)
       .order("name"),
     supabase.from("suppliers").select("id, name, is_active").eq("is_active", true).order("name"),
     supabase.from("brands").select("id, name, is_active").eq("is_active", true).order("name"),
@@ -273,6 +217,18 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const suppliers = (suppliersResult.data ?? []) as Supplier[];
   const brands = (brandsResult.data ?? []) as Brand[];
   const purchases = (purchasesResult.data ?? []) as unknown as Purchase[];
+  const masterItems = items.filter((item) => item.presentation_quantity === null);
+  const masterByKey = new Map(masterItems.map((item) => [masterKey(item), item]));
+  const imagePaths = new Map<string, string | null>();
+  items.forEach((item) => imagePaths.set(item.id, item.image_url ?? null));
+  const signedImageEntries = await Promise.all(
+    [...imagePaths.entries()].map(async ([id, imageUrl]) => {
+      if (!imageUrl || isDirectImageUrl(imageUrl)) return [id, imageUrl] as const;
+      const { data } = await supabase.storage.from("product-images").createSignedUrl(imageUrl, 60 * 60);
+      return [id, data?.signedUrl ?? null] as const;
+    })
+  );
+  const imageSrcById = new Map(signedImageEntries);
   const editPurchaseSource = purchases.find((purchase) => purchase.id === editId);
   const editLine = editPurchaseSource?.purchase_items[0];
   const editPurchase: EditablePurchase | null =
@@ -283,6 +239,8 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
           supplier_id: editPurchaseSource.supplier_id,
           brand_id: editPurchaseSource.brand_id,
           purchased_quantity: Number(editLine.purchased_quantity ?? editLine.quantity ?? 0),
+          quantity: Number(editLine.quantity ?? 0),
+          unit: editLine.unit,
           presentation_quantity: editLine.presentation_quantity,
           presentation_unit: editLine.presentation_unit,
           total_cop: Number(editPurchaseSource.total_cop ?? 0),
@@ -291,6 +249,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
           expiration_date: editLine.expiration_date
         }
       : null;
+  const editPurchaseError = editId && !editPurchase ? "No se pudo cargar la compra seleccionada. Revisa que tenga una linea de compra y producto relacionado." : "";
   const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesResult.error;
   const normalizedQuery = query.toLowerCase();
   const filteredPurchases = normalizedQuery
@@ -308,6 +267,26 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       )
     : purchases;
   const kindFilteredPurchases = kindFilter ? filteredPurchases.filter((purchase) => getPurchaseKind(purchase) === kindFilter) : filteredPurchases;
+  const listRows = kindFilteredPurchases.map((purchase) => {
+    const line = purchase.purchase_items[0];
+    const item = line?.inventory_items ?? null;
+    const productName = getPurchaseProduct(purchase);
+    const masterItem = item ? masterByKey.get(`${item.item_kind ?? ""}:${productName.toUpperCase()}`) ?? masterByKey.get(masterKey(item)) : null;
+    const imageItem = masterItem?.image_url ? masterItem : item;
+    return {
+      id: purchase.id,
+      image_src: imageItem ? imageSrcById.get(imageItem.id) ?? null : null,
+      sku: getPurchaseSku(purchase),
+      product: productName,
+      presentation: getPurchasePresentation(purchase),
+      quantity: getPurchaseQuantity(purchase),
+      supplier: purchase.suppliers?.name ?? "Sin proveedor",
+      brand: purchase.brands?.name ?? "Sin marca",
+      total_cop: Number(purchase.total_cop),
+      purchased_at: purchase.purchased_at,
+      notes: purchase.notes || "Sin notas"
+    };
+  });
   const searchSuggestions = Array.from(
     new Set(
       purchases
@@ -343,11 +322,12 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       userEmail={user.email ?? "usuario"}
     >
       {error ? <p className="alert">{error.message}</p> : null}
+      {editPurchaseError ? <p className="alert">{editPurchaseError}</p> : null}
       <section className="form-panel">
         <div className="section-title-row purchase-list-header">
           <h2>Listado de compras</h2>
           <div className="purchase-toolbar">
-            <PurchaseFilters
+            <PurchaseSearchFilters
               brands={brands}
               currentBrand={brandFilter}
               currentPeriod={periodFilter}
@@ -379,59 +359,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
             Insumos
           </Link>
         </nav>
-        <div className="data-table-wrap">
-          <table className="data-table purchase-table">
-            <thead>
-              <tr>
-                <th>Acciones</th>
-                <th>Codigo</th>
-                <th>SKU</th>
-                <th>Producto</th>
-                <th>Presentacion</th>
-                <th>Cantidad</th>
-                <th>Proveedor</th>
-                <th>Marca</th>
-                <th>Total</th>
-                <th>Fecha</th>
-                <th>Notas</th>
-              </tr>
-            </thead>
-            <tbody>
-              {kindFilteredPurchases.map((purchase) => (
-                <tr key={purchase.id}>
-                  <td colSpan={11}>
-                    <details className="table-details">
-                      <summary>
-                        <span className="row-actions">
-                          <Link className="icon-button" href={`/panel/compras?edit=${purchase.id}`} title="Editar compra">
-                            <Pencil size={16} />
-                          </Link>
-                          <form action={deletePurchase}>
-                            <input name="purchase_id" type="hidden" value={purchase.id} />
-                            <button className="icon-button danger-button" title="Eliminar compra" type="submit">
-                              <Trash2 size={16} />
-                            </button>
-                          </form>
-                        </span>
-                        <span>{getPurchaseCode(purchase)}</span>
-                        <span>{getPurchaseSku(purchase)}</span>
-                        <span>{getPurchaseProduct(purchase)}</span>
-                        <span>{getPurchasePresentation(purchase)}</span>
-                        <span>{getPurchaseQuantity(purchase)}</span>
-                        <span>{purchase.suppliers?.name ?? "Sin proveedor"}</span>
-                        <span>{purchase.brands?.name ?? "Sin marca"}</span>
-                        <strong>{formatCop(Number(purchase.total_cop))}</strong>
-                        <span>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</span>
-                        <span>{purchase.notes || "Sin notas"}</span>
-                      </summary>
-                    </details>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {kindFilteredPurchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}
-        </div>
+        <PurchaseListWorkspace purchases={listRows} />
       </section>
     </PanelShell>
   );

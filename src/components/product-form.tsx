@@ -49,6 +49,8 @@ const productUnitOptions = [
   { value: "unit", label: "Unidad" }
 ] as const;
 
+const unitHelpText = "Peso: harina, queso, carnes. Volumen: aceite, salsa, bebidas. Unidad: cajas, botellas, guantes.";
+
 const initialFormActionState: FormActionState = {
   status: "idle",
   message: ""
@@ -112,6 +114,13 @@ export function ProductForm({
     .slice(0, 8);
   const duplicateProduct = products.find((product) => product.id !== item?.id && normalizeProductName(product.name) === normalizedName);
   const canRegisterName = normalizedName.length > 0 && !duplicateProduct;
+  const brandHint = itemKind === "sale_product" ? "Recomendada para diferenciar referencias comerciales." : "Opcional.";
+  const categoryHint = itemKind === "sale_product" ? "Recomendada para organizar productos de venta." : "Opcional.";
+  const imageHint = itemKind === "sale_product" ? "Recomendada. JPG, PNG, WEBP o GIF hasta 4 MB." : "Opcional. JPG, PNG, WEBP o GIF hasta 4 MB.";
+
+  function handleItemKindChange(nextKind: ItemKind) {
+    setItemKind(nextKind);
+  }
 
   useEffect(() => {
     if (state.status !== "success") return;
@@ -130,6 +139,7 @@ export function ProductForm({
   }, [imagePreview]);
 
   return (
+    <>
     <form action={formAction} className="compact-card">
       {item ? <input name="id" type="hidden" value={item.id} /> : null}
       <div>
@@ -213,7 +223,7 @@ export function ProductForm({
                 aria-pressed={itemKind === value}
                 className={itemKind === value ? "active" : ""}
                 key={value}
-                onClick={() => setItemKind(value as ItemKind)}
+                onClick={() => handleItemKindChange(value as ItemKind)}
                 type="button"
               >
                 {label}
@@ -237,6 +247,7 @@ export function ProductForm({
               </button>
             ))}
           </div>
+          <p className="field-hint">{unitHelpText}</p>
         </div>
         <div className="field full">
           <label>Forma de compra</label>
@@ -256,13 +267,13 @@ export function ProductForm({
               onClick={() => setPurchaseMode("packages")}
               type="button"
             >
-              Cantidad
+              Cantidad / Paquetes
             </button>
           </div>
         </div>
         <div className="field">
           <label>Marca</label>
-            <select defaultValue={item?.brand_id ?? ""} name="brand_id">
+          <select defaultValue={item?.brand_id ?? ""} name="brand_id">
             <option value="">Sin marca</option>
             {brands.map((brand) => (
               <option key={brand.id} value={brand.id}>
@@ -270,6 +281,7 @@ export function ProductForm({
               </option>
             ))}
           </select>
+          <p className="field-hint">{brandHint}</p>
         </div>
         <div className="field">
           <label>Foto</label>
@@ -290,7 +302,7 @@ export function ProductForm({
             }}
             type="file"
           />
-          <p className="field-hint">Opcional. JPG, PNG, WEBP o GIF hasta 4 MB.</p>
+          <p className="field-hint">{imageHint}</p>
           {imagePreview ? (
             <div className="product-photo-box">
               <Image alt="Foto del producto" className="product-photo-preview" height={135} src={imagePreview} unoptimized width={180} />
@@ -326,22 +338,9 @@ export function ProductForm({
               <Plus size={18} />
             </button>
           </div>
+          <p className="field-hint">{categoryHint}</p>
         </div>
       </div>
-      {isCategoryModalOpen ? (
-        <CategoryInlineModal
-          categories={categoryOptions}
-          onCancel={() => setIsCategoryModalOpen(false)}
-          onSaved={(category) => {
-            setCategoryOptions((current) => {
-              if (current.some((item) => item.id === category.id)) return current;
-              return [...current, category].sort((a, b) => a.name.localeCompare(b.name));
-            });
-            setCategoryId(category.id);
-            setIsCategoryModalOpen(false);
-          }}
-        />
-      ) : null}
       <label className="check-option">
         <input defaultChecked={item?.is_active ?? true} name="is_active" type="checkbox" />
         <span>Activo</span>
@@ -354,6 +353,21 @@ export function ProductForm({
         <ProductSubmitButton disabled={Boolean(duplicateProduct) || !itemKind} isEditing={Boolean(item)} />
       </div>
     </form>
+    {isCategoryModalOpen ? (
+      <CategoryInlineModal
+        categories={categoryOptions}
+        onCancel={() => setIsCategoryModalOpen(false)}
+        onSaved={(category) => {
+          setCategoryOptions((current) => {
+            if (current.some((item) => item.id === category.id)) return current;
+            return [...current, category].sort((a, b) => a.name.localeCompare(b.name));
+          });
+          setCategoryId(category.id);
+          setIsCategoryModalOpen(false);
+        }}
+      />
+    ) : null}
+    </>
   );
 }
 

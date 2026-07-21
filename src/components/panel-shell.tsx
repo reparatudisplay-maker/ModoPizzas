@@ -1,22 +1,5 @@
 import Link from "next/link";
-import {
-  Bike,
-  ChefHat,
-  ChevronDown,
-  ClipboardList,
-  Home,
-  Menu,
-  Package,
-  Pizza,
-  Plus,
-  ReceiptText,
-  Settings,
-  Store,
-  Tags,
-  Truck,
-  UserCog,
-  WalletCards
-} from "lucide-react";
+import { ChevronDown, Factory, Home, Menu, Package, Plus, ReceiptText, Settings, Tags, Truck, UserCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -24,39 +7,29 @@ import { ThemeToggle } from "@/components/theme-toggle";
 type PanelShellProps = {
   children: ReactNode;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   userEmail: string;
   roleNames: string[];
   active:
-    | "pedidos"
-    | "cocina"
-    | "domicilios"
     | "proveedores"
     | "inventario"
     | "productos"
     | "compras"
-    | "gastos"
     | "marcas"
     | "categorias"
-    | "pizzas"
-    | "menu"
-    | "configuracion";
+    | "configuracion"
+    | "produccion"
+    | "produccion-preparaciones"
+    | "produccion-registrar";
   actions?: React.ReactNode;
   hideHeader?: boolean;
 };
 
 const managerRoles = new Set(["gerente", "admin_sistema"]);
-const orderCreatorRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 
-export function PanelShell({ children, title, subtitle, userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
+export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
   const isManager = roleNames.some((role) => managerRoles.has(role));
-  const canCreateOrders = roleNames.some((role) => orderCreatorRoles.has(role));
   const isAdmin = roleNames.includes("admin_sistema");
-  const operationLinks = [
-    { key: "pedidos", href: "/panel", label: "Pedidos", icon: ClipboardList, show: true },
-    { key: "cocina", href: "/panel/cocina", label: "Cocina", icon: ChefHat, show: true },
-    { key: "domicilios", href: "/panel/domicilios", label: "Domicilios", icon: Bike, show: true }
-  ];
   const masterLinks = [
     { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: isManager },
     { key: "categorias", href: "/panel/categorias", label: "Categorias", icon: Tags, show: isManager },
@@ -65,17 +38,19 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
   ];
   const inventoryLinks = [
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
-    { key: "gastos", href: "/panel/gastos", label: "Gastos", icon: WalletCards, show: isManager },
-    { key: "inventario", href: "/panel/inventario", label: "Inventario/Stock", icon: Package, show: isManager }
+    { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
+  ];
+  const productionLinks = [
+    { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Registrar produccion", icon: Plus, show: isManager },
+    { key: "produccion-preparaciones", href: "/panel/produccion", label: "Preparaciones", icon: ReceiptText, show: isManager }
   ];
   const adminLinks = [
-    { key: "pizzas", href: "/panel/pizzas", label: "Pizzas", icon: Pizza, show: isManager },
-    { key: "menu", href: "/panel/menu", label: "Menu", icon: Pizza, show: isManager },
     { key: "configuracion", href: "/panel/configuracion", label: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
+  const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
 
-  const renderLinks = (links: typeof operationLinks) =>
+  const renderLinks = (links: typeof masterLinks) =>
     links
       .filter((link) => link.show)
       .map((link) => {
@@ -90,7 +65,7 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
 
   return (
     <main className="worker-shell">
-      <aside className="worker-sidebar" aria-label="Menu de modulos">
+      <aside aria-label="Menu de modulos" className="worker-sidebar">
         <details>
           <summary title="Abrir menu">
             <Menu size={20} />
@@ -104,17 +79,6 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
             </div>
           </div>
           <nav className="worker-nav">
-            <Link href="/" title="Web publica">
-              <Store size={18} />
-              <span>Web publica</span>
-            </Link>
-            {canCreateOrders ? (
-              <Link href="/panel/nuevo-pedido" title="Nuevo pedido">
-                <Plus size={18} />
-                <span>Nuevo pedido</span>
-              </Link>
-            ) : null}
-            {renderLinks(operationLinks)}
             {isManager ? (
               <details className="worker-submenu" open={masterActive}>
                 <summary className={masterActive ? "active" : ""} title="Datos maestros">
@@ -126,6 +90,16 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
               </details>
             ) : null}
             {renderLinks(inventoryLinks)}
+            {isManager ? (
+              <details className="worker-submenu" open={productionActive}>
+                <summary className={productionActive ? "active" : ""} title="Produccion">
+                  <Factory size={18} />
+                  <span>Produccion</span>
+                  <ChevronDown className="submenu-chevron" size={16} />
+                </summary>
+                <div>{renderLinks(productionLinks)}</div>
+              </details>
+            ) : null}
             {renderLinks(adminLinks)}
           </nav>
           <form action={signOut}>
@@ -143,7 +117,7 @@ export function PanelShell({ children, title, subtitle, userEmail, roleNames, ac
             <div>
               <span className="eyebrow">{userEmail}</span>
               <h1>{title}</h1>
-              <p>{subtitle}</p>
+              {subtitle ? <p>{subtitle}</p> : null}
             </div>
             {actions ? <div className="worker-actions">{actions}</div> : null}
           </header>

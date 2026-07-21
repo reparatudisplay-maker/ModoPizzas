@@ -79,5 +79,5 @@ export async function signUp(formData: FormData) {
 export async function signOut() {
   const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
-  redirect("/");
+  redirect("/login");
 }

@@ -587,11 +587,6 @@ a {
   color: var(--foreground);
 }
 
-.status-sent_to_whatsapp {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning);
-}
-
 .status-confirmed,
 .status-in_kitchen,
 .status-in_preparation {
@@ -1318,6 +1313,119 @@ a {
   min-height: 42px;
 }
 
+.modal-form-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  padding-top: 12px;
+}
+
+.modal-form-actions .primary-button,
+.modal-form-actions .ghost-button {
+  width: auto;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.image-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.image-inline-actions {
+  align-content: start;
+  flex-direction: column;
+  margin-top: 0;
+}
+
+.upload-dropzone {
+  display: grid;
+  width: 104px;
+  height: 104px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--secondary) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--secondary) 6%, var(--panel));
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: center;
+}
+
+.upload-dropzone input,
+.compact-file-button input {
+  display: none;
+}
+
+.upload-dropzone span {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.upload-preview {
+  width: 104px;
+  height: 104px;
+  object-fit: cover;
+}
+
+.compact-upload-dropzone {
+  width: 96px;
+  height: 96px;
+}
+
+.compact-upload-preview {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+}
+
+.profile-rule-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.yield-help {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.source-type-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.source-type-badge.preparation {
+  border-color: color-mix(in srgb, var(--secondary) 45%, var(--border));
+  color: var(--secondary);
+}
+
+.source-type-badge.product {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  color: var(--accent);
+}
+
 .form-status {
   margin: 0;
   border: 1px solid var(--border);
@@ -1706,6 +1814,131 @@ a {
   color: var(--accent);
 }
 
+.stock-pill.neutral {
+  background: color-mix(in srgb, var(--muted) 10%, var(--panel));
+  color: var(--muted);
+}
+
+.inventory-module-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.inventory-action-row {
+  align-items: center;
+}
+
+.inventory-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inventory-filter-bar input,
+.inventory-filter-bar select {
+  min-width: 170px;
+}
+
+.inventory-filter-bar input {
+  flex: 1 1 260px;
+}
+
+.rich-inventory-table {
+  min-width: 1320px;
+}
+
+.inventory-section-tabs {
+  margin-top: 0;
+}
+
+.production-inventory-table {
+  min-width: 1180px;
+}
+
+.production-lot-detail-table {
+  min-width: 1180px;
+}
+
+.production-trace-grid {
+  margin-top: 14px;
+}
+
+.preparations-table {
+  min-width: 820px;
+}
+
+.preparations-table .actions-column {
+  min-width: 142px;
+  white-space: nowrap;
+}
+
+.preparation-row-actions {
+  flex-wrap: nowrap;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.preparation-row-actions .inline-form {
+  display: inline-flex;
+}
+
+.recipe-summary {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.rich-inventory-table td:first-child,
+.rich-inventory-table td {
+  text-align: center;
+}
+
+.rich-inventory-table td strong {
+  color: var(--text);
+}
+
+.inventory-product-photo {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  height: 44px;
+  object-fit: cover;
+  width: 58px;
+}
+
+.inventory-photo-placeholder {
+  align-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.76rem;
+  height: 44px;
+  justify-content: center;
+  min-width: 58px;
+  padding: 0 8px;
+}
+
+.inventory-settings-modal {
+  width: min(760px, 100%);
+}
+
+.column-settings-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.icon-text-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+  justify-content: center;
+}
+
 .inventory-detail-panel {
   margin-top: 16px;
 }
@@ -1886,6 +2119,157 @@ a {
   width: min(620px, 100%);
 }
 
+.production-modal {
+  width: min(1040px, 100%);
+}
+
+.production-register-panel {
+  overflow: visible;
+}
+
+.production-selected-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 44%, var(--panel));
+  padding: 10px;
+}
+
+.production-selected-card div {
+  display: grid;
+  gap: 2px;
+}
+
+.production-selected-card span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.production-history-table {
+  min-width: 1080px;
+}
+
+.production-dates-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(170px, 220px) minmax(150px, 190px);
+  gap: 10px;
+  align-items: end;
+}
+
+.production-quantity-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px);
+  gap: 10px;
+}
+
+.section-help {
+  max-width: 760px;
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.readonly-stock-control {
+  display: grid;
+  min-height: 42px;
+  align-content: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  padding: 8px 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: normal;
+}
+
+.readonly-stock-control span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readonly-stock-control.ok {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: color-mix(in srgb, var(--success) 9%, var(--panel));
+  color: var(--success);
+}
+
+.readonly-stock-control.danger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+  color: var(--danger);
+}
+
+.production-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.production-summary-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 55%, var(--panel));
+  padding: 10px;
+}
+
+.production-summary-grid div.highlight {
+  border-color: color-mix(in srgb, var(--secondary) 26%, var(--border));
+  background: color-mix(in srgb, var(--secondary) 7%, var(--panel));
+}
+
+.production-summary-grid strong {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.production-summary-grid span,
+.truncate-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-row-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  position: relative;
+  align-items: center;
+}
+
+.inline-action-form {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  margin: 0;
+}
+
+.production-detail-modal {
+  max-width: min(940px, calc(100vw - 28px));
+}
+
+.production-detail-grid {
+  margin-bottom: 14px;
+}
+
+.production-consumption-card {
+  display: grid;
+  gap: 12px;
+}
+
+.production-consumption-table {
+  min-width: 620px;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -1908,6 +2292,98 @@ a {
 .modal-panel .compact-card {
   border: 0;
   border-radius: 0;
+}
+
+.form-section {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 16px;
+}
+
+.form-section h3 {
+  margin: 0;
+}
+
+.recipe-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.recipe-line {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(120px, 0.35fr) minmax(120px, 0.3fr) 42px;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 44%, var(--panel));
+  padding: 10px;
+}
+
+.recipe-line.production-line {
+  grid-template-columns: minmax(140px, 0.76fr) minmax(88px, 0.2fr) minmax(84px, 0.18fr) minmax(210px, 0.52fr) 42px;
+  align-items: end;
+}
+
+.production-line > .field,
+.production-line > .icon-button {
+  min-width: 0;
+}
+
+.production-line > .icon-button {
+  justify-self: end;
+  margin-bottom: 1px;
+}
+
+.ingredient-add-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.recipe-source-field {
+  min-width: 0;
+}
+
+.conservation-rule-line {
+  grid-template-columns: minmax(150px, 0.45fr) minmax(110px, 0.25fr) minmax(130px, 0.25fr) minmax(180px, 1fr);
+}
+
+@media (max-width: 760px) {
+  .recipe-line,
+  .conservation-rule-line {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-line.production-line {
+    grid-template-columns: minmax(0, 1fr) 42px;
+  }
+
+  .production-line > .field {
+    grid-column: 1;
+  }
+
+  .production-line > .icon-button {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+    align-self: center;
+    margin-bottom: 0;
+  }
+
+  .production-dates-grid,
+  .production-quantity-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .production-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .production-summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .segmented-control {
@@ -2182,6 +2658,19 @@ a {
 
   .form-actions {
     grid-template-columns: 1fr;
+  }
+
+  .modal-form-actions {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .preparations-table {
+    min-width: 680px;
+  }
+
+  .recipe-summary {
+    max-width: 180px;
   }
 
   .panel-header,

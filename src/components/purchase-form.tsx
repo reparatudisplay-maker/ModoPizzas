@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, X } from "lucide-react";
 import { registerPurchase, type FormActionState } from "@/app/admin/actions";
+import { toPreferredDisplayQuantity } from "@/lib/units";
 
 type InventoryItem = {
   id: string;
@@ -44,6 +44,8 @@ export type EditablePurchase = {
   supplier_id: string | null;
   brand_id: string | null;
   purchased_quantity: number;
+  quantity: number;
+  unit: InventoryItem["unit"];
   presentation_quantity: number | null;
   presentation_unit: InventoryItem["unit"] | null;
   total_cop: number;
@@ -352,19 +354,27 @@ export function PurchaseForm({
   suppliers,
   brands,
   editPurchase,
-  onSaved
+  onSaved,
+  onCancel
 }: {
   items: InventoryItem[];
   suppliers: LookupOption[];
   brands: LookupOption[];
   editPurchase?: EditablePurchase | null;
   onSaved?: () => void;
+  onCancel?: () => void;
 }) {
   const [state, formAction] = useActionState(registerPurchase, initialFormActionState);
-  const [quantity, setQuantity] = useState(editPurchase ? formatQuantity(String(editPurchase.purchased_quantity).replace(".", ",")) : "");
+  const editItem = items.find((item) => item.id === editPurchase?.inventory_item_id);
+  const editDisplayQuantity =
+    editPurchase && editItem?.item_kind === "ingredient" && editItem.presentation_quantity === null
+      ? toPreferredDisplayQuantity(editPurchase.quantity, editPurchase.unit)
+      : null;
+  const [quantity, setQuantity] = useState(
+    editPurchase ? formatQuantity(String(editDisplayQuantity?.value ?? editPurchase.purchased_quantity).replace(".", ",")) : ""
+  );
   const [totalPaid, setTotalPaid] = useState(editPurchase ? formatInteger(String(editPurchase.total_cop)) : "");
   const [notes, setNotes] = useState(editPurchase?.notes ?? "");
-  const editItem = items.find((item) => item.id === editPurchase?.inventory_item_id);
   const [selectedItemId, setSelectedItemId] = useState(editPurchase?.inventory_item_id ?? "");
   const selectableItems = items.filter((item) => item.is_active && item.presentation_quantity === null);
   const selectedItem = selectableItems.find((item) => item.id === selectedItemId) ?? editItem;
@@ -372,7 +382,7 @@ export function PurchaseForm({
   const selectedPurchaseMode: PurchaseMode = selectedItem?.purchase_mode === "packages" ? "packages" : "total_weight";
   const unitOptions = compatibleUnits(selectedItem?.unit ?? "unit");
   const [presentationUnit, setPresentationUnit] = useState<InventoryItem["unit"]>(
-    editPurchase?.presentation_unit ?? selectedItem?.presentation_unit ?? compatibleUnits(selectedItem?.unit ?? "unit")[0]?.value ?? "unit"
+    editDisplayQuantity?.unit ?? editPurchase?.presentation_unit ?? selectedItem?.presentation_unit ?? compatibleUnits(selectedItem?.unit ?? "unit")[0]?.value ?? "unit"
   );
   const [referenceSku, setReferenceSku] = useState("");
   const [referenceSkuEdited, setReferenceSkuEdited] = useState(false);
@@ -570,9 +580,9 @@ export function PurchaseForm({
       {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
       <div className="form-actions">
         {editPurchase ? (
-          <Link className="ghost-button" href="/panel/compras">
+          <button className="ghost-button" onClick={onCancel} type="button">
             Cancelar
-          </Link>
+          </button>
         ) : null}
         <PurchaseSubmitButton disabled={selectableItems.length === 0 || !selectedItem} isEditing={Boolean(editPurchase)} />
       </div>
@@ -601,32 +611,60 @@ export function PurchaseModal({
   editPurchase?: EditablePurchase | null;
 }) {
   const [isOpen, setIsOpen] = useState(Boolean(editPurchase));
+  const [mode, setMode] = useState<"new" | "edit">(editPurchase ? "edit" : "new");
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeEditPurchase = mode === "edit" ? editPurchase : null;
+
+  function cleanPurchaseHref() {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("edit");
+    const queryString = nextParams.toString();
+    return `${pathname}${queryString ? `?${queryString}` : ""}`;
+  }
+
+  function clearEditParam() {
+    router.replace(cleanPurchaseHref(), { scroll: false });
+  }
+
+  function closeModal() {
+    setIsOpen(false);
+    setMode("new");
+    clearEditParam();
+  }
 
   function handleSaved() {
     setIsOpen(false);
-    router.replace("/panel/compras");
+    setMode("new");
+    clearEditParam();
     router.refresh();
+  }
+
+  function openNewPurchase() {
+    setMode("new");
+    clearEditParam();
+    setIsOpen(true);
   }
 
   return (
     <>
-      <button className="primary-button add-purchase-button" onClick={() => setIsOpen(true)} type="button">
+      <button className="primary-button add-purchase-button" onClick={openNewPurchase} type="button">
         <Plus size={18} /> Agregar compra
       </button>
       {isOpen ? (
         <div className="modal-backdrop" role="presentation">
-          <section aria-label={editPurchase ? "Editar compra" : "Agregar compra"} aria-modal="true" className="modal-panel purchase-modal" role="dialog">
+          <section aria-label={activeEditPurchase ? "Editar compra" : "Agregar compra"} aria-modal="true" className="modal-panel purchase-modal" role="dialog">
             <header className="modal-header">
               <div>
-                <strong>{editPurchase ? "Editar compra" : "Agregar compra"}</strong>
+                <strong>{activeEditPurchase ? "Editar compra" : "Agregar compra"}</strong>
                 <span>Registra la compra y su linea de inventario.</span>
               </div>
-              <button className="icon-button" onClick={() => setIsOpen(false)} title="Cerrar" type="button">
+              <button className="icon-button" onClick={closeModal} title="Cerrar" type="button">
                 <X size={18} />
               </button>
             </header>
-            <PurchaseForm brands={brands} editPurchase={editPurchase} items={items} onSaved={handleSaved} suppliers={suppliers} />
+            <PurchaseForm brands={brands} editPurchase={activeEditPurchase} items={items} onCancel={closeModal} onSaved={handleSaved} suppliers={suppliers} />
           </section>
         </div>
       ) : null}

@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
 
@@ -20,11 +19,38 @@ export type FormActionState = {
   message: string;
 };
 
+export type ConservationProfileActionState = FormActionState & {
+  profile?: {
+    id: string;
+    name: string;
+    is_active: boolean;
+    conservation_profile_rules: Array<{
+      id: string;
+      storage_method: "ambient" | "refrigerated" | "frozen";
+      duration_value: number;
+      duration_unit: "hours" | "days" | "weeks" | "months";
+      notes: string | null;
+    }>;
+  };
+};
+
 export type CategoryActionState = FormActionState & {
   category?: {
     id: string;
     name: string;
     is_active: boolean;
+  };
+};
+
+export type ProductionActionState = FormActionState & {
+  production?: {
+    id: string;
+    code: string;
+    total_cost_cop: number;
+    unit_cost_cop: number;
+    expiration_date: string;
+    actual_quantity_base: number;
+    base_unit: string;
   };
 };
 
@@ -54,76 +80,8 @@ function getBoolean(formData: FormData, key: string) {
   return formData.get(key) === "on";
 }
 
-function normalizeCode(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function getFormFile(formData: FormData, key: string) {
-  const value = formData.get(key);
-  return value instanceof File && value.size > 0 ? value : null;
-}
-
-async function uploadProductImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File) {
-  const extension = productImageTypes.get(file.type);
-  if (!extension) {
-    throw new Error("La foto debe ser JPG, PNG, WEBP o GIF.");
-  }
-
-  if (file.size > productImageMaxSize) {
-    throw new Error("La foto no puede superar 4 MB.");
-  }
-
-  const path = `productos/${crypto.randomUUID()}.${extension}`;
-  const { error } = await supabase.storage.from(productImageBucket).upload(path, file, {
-    cacheControl: "3600",
-    contentType: file.type,
-    upsert: false
-  });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return path;
-}
-
-function splitLines(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function splitCsv(value: string) {
-  return value
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function revalidateMenu() {
-  revalidatePath("/");
-  revalidatePath("/panel");
-  revalidatePath("/panel/menu");
-  revalidatePath("/panel/pizzas");
-  revalidatePath("/panel/nuevo-pedido");
-}
-
-function revalidateInventory() {
-  revalidatePath("/panel");
-  revalidatePath("/panel/inventario");
-  revalidatePath("/panel/productos");
-  revalidatePath("/panel/insumos");
-  revalidatePath("/panel/compras");
-  revalidatePath("/panel/gastos");
-  revalidatePath("/panel/proveedores");
-  revalidatePath("/panel/marcas");
-  revalidatePath("/panel/categorias");
+function upperText(value: string | null) {
+  return value ? value.toUpperCase() : null;
 }
 
 function getStockUnit(formData: FormData, key = "unit") {
@@ -131,15 +89,29 @@ function getStockUnit(formData: FormData, key = "unit") {
   return ["g", "kg", "ml", "l", "unit"].includes(value) ? value : "unit";
 }
 
-function getOptionalStockUnit(formData: FormData, key: string) {
-  const value = getString(formData, key);
-  return ["g", "kg", "ml", "l", "unit"].includes(value) ? value : null;
-}
-
 function getInventoryItemKind(formData: FormData, key = "item_kind") {
   const value = getString(formData, key);
   if (value === "ingredient" || value === "sale_product" || value === "supply") return value;
   return "";
+}
+
+function getPurchaseMode(formData: FormData, key = "purchase_mode") {
+  return getString(formData, key) === "packages" ? "packages" : "total_weight";
+}
+
+function canonicalStockUnit(unit: string) {
+  if (unit === "kg" || unit === "g") return "g";
+  if (unit === "l" || unit === "ml") return "ml";
+  return "unit";
+}
+
+function convertStockQuantity(quantity: number, fromUnit: string, toUnit: string) {
+  if (fromUnit === toUnit) return quantity;
+  if (fromUnit === "g" && toUnit === "kg") return quantity / 1000;
+  if (fromUnit === "kg" && toUnit === "g") return quantity * 1000;
+  if (fromUnit === "ml" && toUnit === "l") return quantity / 1000;
+  if (fromUnit === "l" && toUnit === "ml") return quantity * 1000;
+  throw new Error("La unidad elegida no es compatible con la unidad del producto.");
 }
 
 function normalizeSkuName(value: string) {
@@ -149,23 +121,6 @@ function normalizeSkuName(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Z0-9]/g, "");
   return normalized.padEnd(3, "X").slice(0, 3);
-}
-
-function normalizeSearchText(value: string) {
-  return value
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getPurchaseMode(formData: FormData, key = "purchase_mode") {
-  return getString(formData, key) === "packages" ? "packages" : "total_weight";
-}
-
-function upperText(value: string | null) {
-  return value ? value.toUpperCase() : null;
 }
 
 function presentationCode(quantity: number, unit: string) {
@@ -193,313 +148,74 @@ function normalizeReferenceSku(value: string | null) {
   return normalized || null;
 }
 
-function canonicalStockUnit(unit: string) {
-  if (unit === "kg" || unit === "g") return "g";
-  if (unit === "l" || unit === "ml") return "ml";
-  return "unit";
+function getFormFile(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return value instanceof File && value.size > 0 ? value : null;
 }
 
-function convertStockQuantity(quantity: number, fromUnit: string, toUnit: string) {
-  if (fromUnit === toUnit) return quantity;
-  if (fromUnit === "g" && toUnit === "kg") return quantity / 1000;
-  if (fromUnit === "kg" && toUnit === "g") return quantity * 1000;
-  if (fromUnit === "ml" && toUnit === "l") return quantity / 1000;
-  if (fromUnit === "l" && toUnit === "ml") return quantity * 1000;
-  throw new Error("La unidad elegida no es compatible con la unidad del producto.");
+async function uploadProductImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File, folder = "productos") {
+  const extension = productImageTypes.get(file.type);
+  if (!extension) throw new Error("La foto debe ser JPG, PNG, WEBP o GIF.");
+  if (file.size > productImageMaxSize) throw new Error("La foto no puede superar 4 MB.");
+
+  const path = `${folder}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabase.storage.from(productImageBucket).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false
+  });
+  if (error) throw new Error(error.message);
+  return path;
 }
 
-export async function updateSiteSettings(formData: FormData) {
-  const businessName = getString(formData, "business_name");
-  const whatsappNumber = getString(formData, "whatsapp_number");
-  const whatsappButtonText = getString(formData, "whatsapp_button_text");
-  const whatsappEnabled = formData.get("whatsapp_enabled") === "on";
-  const supabase = await createServerSupabaseClient();
-
-  const { error } = await supabase
-    .from("site_settings")
-    .update({
-      business_name: businessName || "ModoPizzas",
-      whatsapp_number: whatsappNumber,
-      whatsapp_button_text: whatsappButtonText || "Finalizar por WhatsApp",
-      whatsapp_enabled: whatsappEnabled,
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", true);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidatePath("/");
+function revalidateInventory() {
   revalidatePath("/panel");
+  revalidatePath("/panel/inventario");
+  revalidatePath("/panel/productos");
+  revalidatePath("/panel/compras");
+  revalidatePath("/panel/proveedores");
+  revalidatePath("/panel/marcas");
+  revalidatePath("/panel/categorias");
+  revalidatePath("/panel/configuracion");
+  revalidatePath("/panel/produccion");
 }
 
-export async function savePizzaSize(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const name = getString(formData, "name");
-  const code = normalizeCode(getString(formData, "code") || name);
-  const supabase = await createServerSupabaseClient();
-  let displayOrder = getInteger(formData, "display_order", 0);
-
-  if (!formData.has("display_order")) {
-    if (id) {
-      const { data: currentSize, error: currentSizeError } = await supabase
-        .from("pizza_sizes")
-        .select("display_order")
-        .eq("id", id)
-        .single();
-
-      if (currentSizeError) {
-        throw new Error(currentSizeError.message);
-      }
-
-      displayOrder = Number(currentSize?.display_order ?? 0);
-    } else {
-      const { data: lastSize, error: lastSizeError } = await supabase
-        .from("pizza_sizes")
-        .select("display_order")
-        .order("display_order", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (lastSizeError) {
-        throw new Error(lastSizeError.message);
-      }
-
-      displayOrder = Number(lastSize?.display_order ?? 0) + 1;
-    }
-  }
-
-  const payload = {
-    code,
-    name,
-    description: getOptionalString(formData, "description"),
-    diameter_cm: getDecimal(formData, "diameter_cm", 0) || null,
-    display_order: displayOrder,
-    is_active: getBoolean(formData, "is_active"),
-    supports_half_and_half: getBoolean(formData, "supports_half_and_half")
-  };
-
-  const query = id
-    ? supabase.from("pizza_sizes").update(payload).eq("id", id)
-    : supabase.from("pizza_sizes").insert(payload);
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateMenu();
-  redirect("/panel/pizzas?section=tamanos");
+async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
+  const { count, error } = await supabase.from(table).select("id", { count: "exact", head: true }).eq(column, value);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
-export async function deletePizzaSize(formData: FormData) {
-  const id = getString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.from("pizza_sizes").delete().eq("id", id);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateMenu();
+async function hasDuplicateName(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  table: "product_categories" | "brands" | "suppliers" | "conservation_profiles" | "preparations",
+  name: string,
+  currentId?: string | null
+) {
+  const { data, error } = await supabase.from(table).select("id, name");
+  if (error) throw new Error(error.message);
+  const normalizedName = normalizeMasterText(name);
+  return (data ?? []).some((item) => item.id !== currentId && normalizeMasterText(item.name ?? "") === normalizedName);
 }
 
-export async function savePizzaFlavor(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const name = getString(formData, "name");
-  const code = normalizeCode(getString(formData, "code") || name);
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    code,
-    name,
-    description: getString(formData, "description"),
-    image_url: getOptionalString(formData, "image_url"),
-    allergens: splitCsv(getString(formData, "allergens")),
-    is_featured: getBoolean(formData, "is_featured"),
-    is_public: getBoolean(formData, "is_public"),
-    is_active: getBoolean(formData, "is_active")
-  };
+async function recalculateInventoryItem(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, inventoryItemId: string) {
+  const { data: lines, error } = await supabase
+    .from("purchase_items")
+    .select("quantity, line_total_cop")
+    .eq("inventory_item_id", inventoryItemId);
 
-  const flavorResult = id
-    ? await supabase.from("pizza_flavors").update(payload).eq("id", id).select("id").single()
-    : await supabase.from("pizza_flavors").insert(payload).select("id").single();
+  if (error) throw new Error(error.message);
 
-  if (flavorResult.error) {
-    throw new Error(flavorResult.error.message);
-  }
+  const quantity = (lines ?? []).reduce((sum, line) => sum + Number(line.quantity ?? 0), 0);
+  const total = (lines ?? []).reduce((sum, line) => sum + Number(line.line_total_cop ?? 0), 0);
+  const average = quantity > 0 ? Math.round((total / quantity) * 100) / 100 : 0;
 
-  const flavorId = flavorResult.data.id;
-  const { data: sizes, error: sizesError } = await supabase.from("pizza_sizes").select("id");
-  if (sizesError) {
-    throw new Error(sizesError.message);
-  }
+  const { error: updateError } = await supabase
+    .from("inventory_items")
+    .update({ current_quantity: quantity, average_cost_cop: average })
+    .eq("id", inventoryItemId);
 
-  const prices = (sizes ?? [])
-    .filter((size) => formData.has(`price_${size.id}`))
-    .map((size) => ({
-      flavor_id: flavorId,
-      size_id: size.id,
-      price_cop: getInteger(formData, `price_${size.id}`, 0)
-    }));
-
-  if (prices.length > 0) {
-    const { error: pricesError } = await supabase.from("pizza_flavor_prices").upsert(prices, {
-      onConflict: "flavor_id,size_id"
-    });
-
-    if (pricesError) {
-      throw new Error(pricesError.message);
-    }
-  }
-
-  revalidateMenu();
-  redirect("/panel/pizzas?section=sabores");
-}
-
-export async function deletePizzaFlavor(formData: FormData) {
-  const id = getString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.from("pizza_flavors").delete().eq("id", id);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateMenu();
-}
-
-export async function savePizzaRecipeAndPrice(formData: FormData) {
-  const flavorId = getString(formData, "flavor_id");
-  const sizeId = getString(formData, "size_id");
-  const priceCop = getInteger(formData, "price_cop", 0);
-  const wastePercent = getDecimal(formData, "waste_percent", 5);
-  const supabase = await createServerSupabaseClient();
-
-  const { error: deleteError } = await supabase
-    .from("recipes")
-    .delete()
-    .eq("flavor_id", flavorId)
-    .eq("size_id", sizeId)
-    .is("extra_id", null);
-
-  if (deleteError) {
-    throw new Error(deleteError.message);
-  }
-
-  const rowCount = Math.min(getInteger(formData, "row_count", 4), 40);
-  const rows = Array.from({ length: rowCount })
-    .map((_, index) => {
-      const inventoryItemId = getOptionalString(formData, `ingredient_${index}`);
-      const quantity = getDecimal(formData, `quantity_${index}`, 0);
-      const unit = getOptionalStockUnit(formData, `unit_${index}`);
-
-      if (!inventoryItemId || quantity <= 0 || !unit) {
-        return null;
-      }
-
-      return {
-        flavor_id: flavorId,
-        size_id: sizeId,
-        inventory_item_id: inventoryItemId,
-        quantity,
-        unit
-      };
-    })
-    .filter((row): row is NonNullable<typeof row> => Boolean(row));
-
-  if (rows.length > 0) {
-    const { error: insertError } = await supabase.from("recipes").insert(rows);
-    if (insertError) {
-      throw new Error(insertError.message);
-    }
-  }
-
-  const { error: priceError } = await supabase.from("pizza_flavor_prices").upsert(
-    {
-      flavor_id: flavorId,
-      size_id: sizeId,
-      price_cop: priceCop,
-      waste_percent: wastePercent
-    },
-    { onConflict: "flavor_id,size_id" }
-  );
-
-  if (priceError) {
-    throw new Error(priceError.message);
-  }
-
-  revalidateMenu();
-  revalidatePath("/panel/pizzas");
-}
-
-export async function savePizzaExtra(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const name = getString(formData, "name");
-  const code = normalizeCode(getString(formData, "code") || name);
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    code,
-    name,
-    price_cop: getInteger(formData, "price_cop", 0),
-    extra_kind: getString(formData, "extra_kind") === "crust" ? "crust" : "addition",
-    is_active: getBoolean(formData, "is_active")
-  };
-
-  const query = id
-    ? supabase.from("pizza_extras").update(payload).eq("id", id)
-    : supabase.from("pizza_extras").insert(payload);
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateMenu();
-}
-
-export async function saveCombo(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const name = getString(formData, "name");
-  const code = normalizeCode(getString(formData, "code") || name);
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    code,
-    name,
-    description: getString(formData, "description"),
-    price_cop: getInteger(formData, "price_cop", 0),
-    is_public: getBoolean(formData, "is_public"),
-    is_active: getBoolean(formData, "is_active")
-  };
-
-  const comboResult = id
-    ? await supabase.from("combos").update(payload).eq("id", id).select("id").single()
-    : await supabase.from("combos").insert(payload).select("id").single();
-
-  if (comboResult.error) {
-    throw new Error(comboResult.error.message);
-  }
-
-  const comboId = comboResult.data.id;
-  const { error: deleteError } = await supabase.from("combo_items").delete().eq("combo_id", comboId);
-  if (deleteError) {
-    throw new Error(deleteError.message);
-  }
-
-  const items = splitLines(getString(formData, "items")).map((item) => ({
-    combo_id: comboId,
-    item_label: item,
-    quantity: 1
-  }));
-
-  if (items.length > 0) {
-    const { error: insertError } = await supabase.from("combo_items").insert(items);
-    if (insertError) {
-      throw new Error(insertError.message);
-    }
-  }
-
-  revalidateMenu();
+  if (updateError) throw new Error(updateError.message);
 }
 
 export async function saveInventoryItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -507,26 +223,21 @@ export async function saveInventoryItem(_previousState: FormActionState, formDat
   const supabase = await createServerSupabaseClient();
   const itemKind = getInventoryItemKind(formData);
   const productName = upperText(getOptionalString(formData, "name")) ?? "";
-  if (!itemKind) {
-    return { status: "error", message: "Selecciona un tipo de producto." };
-  }
-  if (!productName) {
-    return { status: "error", message: "Ingresa el nombre del producto." };
-  }
+
+  if (!itemKind) return { status: "error", message: "Selecciona un tipo de producto." };
+  if (!productName) return { status: "error", message: "Ingresa el nombre del producto." };
+
   const { data: existingItems, error: existingItemsError } = await supabase
     .from("inventory_items")
     .select("id, name")
     .is("presentation_quantity", null);
 
-  if (existingItemsError) {
-    return { status: "error", message: existingItemsError.message };
-  }
+  if (existingItemsError) return { status: "error", message: existingItemsError.message };
 
-  const normalizedName = normalizeSearchText(productName);
-  const duplicateItem = (existingItems ?? []).find((item) => item.id !== id && normalizeSearchText(item.name ?? "") === normalizedName);
-  if (duplicateItem) {
-    return { status: "error", message: "Ya existe un producto con ese nombre." };
-  }
+  const normalizedName = normalizeMasterText(productName);
+  const duplicateItem = (existingItems ?? []).find((item) => item.id !== id && normalizeMasterText(item.name ?? "") === normalizedName);
+  if (duplicateItem) return { status: "error", message: "Ya existe un producto con ese nombre." };
+
   const payload: {
     name: string;
     unit: string;
@@ -538,8 +249,6 @@ export async function saveInventoryItem(_previousState: FormActionState, formDat
     image_url?: string | null;
     presentation_quantity: number | null;
     presentation_unit: string | null;
-    current_quantity?: number;
-    average_cost_cop?: number;
   } = {
     name: productName,
     unit: getStockUnit(formData),
@@ -550,13 +259,8 @@ export async function saveInventoryItem(_previousState: FormActionState, formDat
     presentation_unit: null
   };
 
-  if (formData.has("category_id")) {
-    payload.category_id = getOptionalString(formData, "category_id");
-  }
-
-  if (formData.has("brand_id")) {
-    payload.brand_id = getOptionalString(formData, "brand_id");
-  }
+  if (formData.has("category_id")) payload.category_id = getOptionalString(formData, "category_id");
+  if (formData.has("brand_id")) payload.brand_id = getOptionalString(formData, "brand_id");
 
   const imageFile = getFormFile(formData, "product_image");
   const shouldRemoveImage = getString(formData, "remove_image") === "1";
@@ -570,53 +274,13 @@ export async function saveInventoryItem(_previousState: FormActionState, formDat
     payload.image_url = null;
   }
 
-  if (formData.has("current_quantity")) {
-    payload.current_quantity = getDecimal(formData, "current_quantity", 0);
-  }
+  const result = id
+    ? await supabase.from("inventory_items").update(payload).eq("id", id)
+    : await supabase.from("inventory_items").insert({ ...payload, current_quantity: 0, average_cost_cop: 0 });
 
-  if (formData.has("average_cost_cop")) {
-    payload.average_cost_cop = getDecimal(formData, "average_cost_cop", 0);
-  }
-
-  if (id) {
-    const { error } = await supabase.from("inventory_items").update(payload).eq("id", id);
-    if (error) {
-      return { status: "error", message: error.message };
-    }
-
-    revalidateInventory();
-    return { status: "success", message: "Guardado correctamente" };
-  }
-
-  const insertResult = await supabase.from("inventory_items").insert(payload).select("id").single();
-  if (insertResult.error) {
-    return { status: "error", message: insertResult.error.message };
-  }
-
+  if (result.error) return { status: "error", message: result.error.message };
   revalidateInventory();
   return { status: "success", message: "Guardado correctamente" };
-}
-
-export async function saveProductCategory(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    name: getString(formData, "name"),
-    description: getOptionalString(formData, "description"),
-    is_active: getBoolean(formData, "is_active"),
-    updated_at: new Date().toISOString()
-  };
-
-  const query = id
-    ? supabase.from("product_categories").update(payload).eq("id", id)
-    : supabase.from("product_categories").insert(payload);
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateInventory();
 }
 
 export async function saveProductCategoryInline(_previousState: CategoryActionState, formData: FormData): Promise<CategoryActionState> {
@@ -624,13 +288,11 @@ export async function saveProductCategoryInline(_previousState: CategoryActionSt
   const supabase = await createServerSupabaseClient();
   const name = upperText(getOptionalString(formData, "name")) ?? "";
 
-  if (!name) {
-    return { status: "error", message: "Ingresa el nombre de la categoria." };
-  }
+  if (!name) return { status: "error", message: "Ingresa el nombre de la categoria." };
 
   try {
     if (await hasDuplicateName(supabase, "product_categories", name, id)) {
-      return { status: "error", message: "Esta categoría ya está registrada." };
+      return { status: "error", message: "Esta categoria ya esta registrada." };
     }
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la categoria." };
@@ -642,69 +304,16 @@ export async function saveProductCategoryInline(_previousState: CategoryActionSt
     is_active: getBoolean(formData, "is_active"),
     updated_at: new Date().toISOString()
   };
-
-  const query = id
-    ? supabase.from("product_categories").update(payload).eq("id", id)
-    : supabase.from("product_categories").insert(payload);
+  const query = id ? supabase.from("product_categories").update(payload).eq("id", id) : supabase.from("product_categories").insert(payload);
   const { data, error } = await query.select("id, name, is_active").single();
 
-  if (error) {
-    return { status: "error", message: error.message };
-  }
-
+  if (error) return { status: "error", message: error.message };
   revalidateInventory();
   return { status: "success", message: "Categoria guardada correctamente", category: data };
 }
 
-async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
-  const { count, error } = await supabase.from(table).select("id", { count: "exact", head: true }).eq(column, value);
-  if (error) throw new Error(error.message);
-  return count ?? 0;
-}
-
-async function hasDuplicateName(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  table: "product_categories" | "brands" | "suppliers",
-  name: string,
-  currentId?: string | null
-) {
-  const { data, error } = await supabase.from(table).select("id, name");
-  if (error) throw new Error(error.message);
-  const normalizedName = normalizeMasterText(name);
-  return (data ?? []).some((item) => item.id !== currentId && normalizeMasterText(item.name ?? "") === normalizedName);
-}
-
 export async function saveProductCategoryState(_previousState: CategoryActionState, formData: FormData): Promise<CategoryActionState> {
-  const id = getOptionalString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const name = upperText(getOptionalString(formData, "name")) ?? "";
-
-  if (!name) return { status: "error", message: "Ingresa el nombre de la categoria." };
-
-  try {
-    if (await hasDuplicateName(supabase, "product_categories", name, id)) {
-      return { status: "error", message: "Ya existe una categoria con ese nombre." };
-    }
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la categoria." };
-  }
-
-  const payload = {
-    name,
-    description: getOptionalString(formData, "description"),
-    is_active: getBoolean(formData, "is_active"),
-    updated_at: new Date().toISOString()
-  };
-
-  const query = id
-    ? supabase.from("product_categories").update(payload).eq("id", id)
-    : supabase.from("product_categories").insert(payload);
-  const { data, error } = await query.select("id, name, is_active").single();
-
-  if (error) return { status: "error", message: error.message };
-
-  revalidateInventory();
-  return { status: "success", message: "Categoria guardada correctamente.", category: data };
+  return saveProductCategoryInline(_previousState, formData);
 }
 
 export async function saveBrandState(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -715,9 +324,7 @@ export async function saveBrandState(_previousState: FormActionState, formData: 
   if (!name) return { status: "error", message: "Ingresa el nombre de la marca." };
 
   try {
-    if (await hasDuplicateName(supabase, "brands", name, id)) {
-      return { status: "error", message: "Ya existe una marca con ese nombre." };
-    }
+    if (await hasDuplicateName(supabase, "brands", name, id)) return { status: "error", message: "Ya existe una marca con ese nombre." };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la marca." };
   }
@@ -729,12 +336,10 @@ export async function saveBrandState(_previousState: FormActionState, formData: 
     is_active: getBoolean(formData, "is_active"),
     updated_at: new Date().toISOString()
   };
-
   const query = id ? supabase.from("brands").update(payload).eq("id", id) : supabase.from("brands").insert(payload);
   const { error } = await query;
 
   if (error) return { status: "error", message: error.message };
-
   revalidateInventory();
   return { status: "success", message: "Marca guardada correctamente." };
 }
@@ -747,9 +352,7 @@ export async function saveSupplierState(_previousState: FormActionState, formDat
   if (!name) return { status: "error", message: "Ingresa el nombre del proveedor." };
 
   try {
-    if (await hasDuplicateName(supabase, "suppliers", name, id)) {
-      return { status: "error", message: "Ya existe un proveedor con ese nombre." };
-    }
+    if (await hasDuplicateName(supabase, "suppliers", name, id)) return { status: "error", message: "Ya existe un proveedor con ese nombre." };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el proveedor." };
   }
@@ -760,12 +363,10 @@ export async function saveSupplierState(_previousState: FormActionState, formDat
     notes: getOptionalString(formData, "notes"),
     is_active: getBoolean(formData, "is_active")
   };
-
   const query = id ? supabase.from("suppliers").update(payload).eq("id", id) : supabase.from("suppliers").insert(payload);
   const { error } = await query;
 
   if (error) return { status: "error", message: error.message };
-
   revalidateInventory();
   return { status: "success", message: "Proveedor guardado correctamente." };
 }
@@ -773,17 +374,13 @@ export async function saveSupplierState(_previousState: FormActionState, formDat
 export async function deleteProductCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getString(formData, "id");
   if (!id) return { status: "error", message: "Categoria no valida." };
-
   const supabase = await createServerSupabaseClient();
   try {
-    const productCount = await relationCount(supabase, "inventory_items", "category_id", id);
-    if (productCount > 0) {
+    if ((await relationCount(supabase, "inventory_items", "category_id", id)) > 0) {
       return { status: "error", message: "No se puede eliminar esta categoria porque esta siendo utilizada en Productos." };
     }
-
     const { error } = await supabase.from("product_categories").delete().eq("id", id);
     if (error) return { status: "error", message: error.message };
-
     revalidateInventory();
     return { status: "success", message: "Categoria eliminada correctamente." };
   } catch (error) {
@@ -794,23 +391,15 @@ export async function deleteProductCategory(_previousState: FormActionState, for
 export async function deleteBrand(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getString(formData, "id");
   if (!id) return { status: "error", message: "Marca no valida." };
-
   const supabase = await createServerSupabaseClient();
   try {
-    const [productCount, purchaseCount] = await Promise.all([
-      relationCount(supabase, "inventory_items", "brand_id", id),
-      relationCount(supabase, "purchases", "brand_id", id)
-    ]);
     const usedIn: string[] = [];
-    if (productCount > 0) usedIn.push("Productos");
-    if (purchaseCount > 0) usedIn.push("Compras");
-    if (usedIn.length > 0) {
-      return { status: "error", message: `No se puede eliminar esta marca porque esta siendo utilizada en ${usedIn.join(" y ")}.` };
-    }
+    if ((await relationCount(supabase, "inventory_items", "brand_id", id)) > 0) usedIn.push("Productos");
+    if ((await relationCount(supabase, "purchases", "brand_id", id)) > 0) usedIn.push("Compras");
+    if (usedIn.length > 0) return { status: "error", message: `No se puede eliminar esta marca porque esta siendo utilizada en ${usedIn.join(" y ")}.` };
 
     const { error } = await supabase.from("brands").delete().eq("id", id);
     if (error) return { status: "error", message: error.message };
-
     revalidateInventory();
     return { status: "success", message: "Marca eliminada correctamente." };
   } catch (error) {
@@ -821,17 +410,13 @@ export async function deleteBrand(_previousState: FormActionState, formData: For
 export async function deleteSupplier(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getString(formData, "id");
   if (!id) return { status: "error", message: "Proveedor no valido." };
-
   const supabase = await createServerSupabaseClient();
   try {
-    const purchaseCount = await relationCount(supabase, "purchases", "supplier_id", id);
-    if (purchaseCount > 0) {
+    if ((await relationCount(supabase, "purchases", "supplier_id", id)) > 0) {
       return { status: "error", message: "No se puede eliminar este proveedor porque esta siendo utilizado en Compras." };
     }
-
     const { error } = await supabase.from("suppliers").delete().eq("id", id);
     if (error) return { status: "error", message: error.message };
-
     revalidateInventory();
     return { status: "success", message: "Proveedor eliminado correctamente." };
   } catch (error) {
@@ -841,106 +426,24 @@ export async function deleteSupplier(_previousState: FormActionState, formData: 
 
 export async function deleteInventoryItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getString(formData, "id");
-  if (!id) {
-    return { status: "error", message: "Producto no valido." };
-  }
-
+  if (!id) return { status: "error", message: "Producto no valido." };
   const supabase = await createServerSupabaseClient();
-
   try {
-    const usedIn: string[] = [];
-    const [purchaseCount, movementCount, recipeCount, productCount] = await Promise.all([
-      relationCount(supabase, "purchase_items", "inventory_item_id", id),
-      relationCount(supabase, "inventory_movements", "inventory_item_id", id),
-      relationCount(supabase, "recipes", "inventory_item_id", id),
-      relationCount(supabase, "products", "inventory_item_id", id)
-    ]);
+    const purchaseCount = await relationCount(supabase, "purchase_items", "inventory_item_id", id);
+    if (purchaseCount > 0) return { status: "error", message: "No se puede eliminar este producto porque esta siendo utilizado en Compras." };
 
-    if (purchaseCount > 0) usedIn.push("Compras");
-    if (movementCount > 0) usedIn.push("Inventario/movimientos");
-    if (recipeCount > 0) usedIn.push("Recetas");
-    if (productCount > 0) usedIn.push("Referencias comerciales");
-
-    const { data: linkedProducts, error: linkedProductsError } = await supabase.from("products").select("id").eq("inventory_item_id", id);
-    if (linkedProductsError) {
-      throw new Error(linkedProductsError.message);
-    }
-
-    const linkedProductIds = (linkedProducts ?? []).map((product) => product.id);
-    if (linkedProductIds.length > 0) {
-      const { count: orderItemsCount, error: orderItemsError } = await supabase
-        .from("order_items")
-        .select("id", { count: "exact", head: true })
-        .in("product_id", linkedProductIds);
-
-      if (orderItemsError) {
-        throw new Error(orderItemsError.message);
-      }
-
-      if ((orderItemsCount ?? 0) > 0) {
-        usedIn.push("Ventas o pedidos");
-      }
-    }
-
-    const uniqueRelations = Array.from(new Set(usedIn));
-    if (uniqueRelations.length > 0) {
-      return {
-        status: "error",
-        message: `No se puede eliminar este producto porque esta siendo utilizado en: ${uniqueRelations.join(", ")}.`
-      };
+    const { error: movementCleanupError } = await supabase.from("inventory_movements").delete().eq("inventory_item_id", id);
+    if (movementCleanupError && movementCleanupError.code !== "42P01" && movementCleanupError.code !== "PGRST205") {
+      return { status: "error", message: movementCleanupError.message };
     }
 
     const { error } = await supabase.from("inventory_items").delete().eq("id", id);
-    if (error) {
-      return { status: "error", message: error.message };
-    }
-
+    if (error) return { status: "error", message: error.message };
     revalidateInventory();
     return { status: "success", message: "Producto eliminado correctamente." };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el uso del producto." };
   }
-}
-
-export async function saveSupplier(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    name: getString(formData, "name"),
-    phone: getOptionalString(formData, "phone"),
-    notes: getOptionalString(formData, "notes"),
-    is_active: getBoolean(formData, "is_active")
-  };
-
-  const query = id ? supabase.from("suppliers").update(payload).eq("id", id) : supabase.from("suppliers").insert(payload);
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateInventory();
-}
-
-export async function saveBrand(formData: FormData) {
-  const id = getOptionalString(formData, "id");
-  const supabase = await createServerSupabaseClient();
-  const payload = {
-    name: getString(formData, "name"),
-    category: getOptionalString(formData, "category"),
-    notes: getOptionalString(formData, "notes"),
-    is_active: getBoolean(formData, "is_active"),
-    updated_at: new Date().toISOString()
-  };
-
-  const query = id ? supabase.from("brands").update(payload).eq("id", id) : supabase.from("brands").insert(payload);
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateInventory();
 }
 
 async function resolvePurchaseInventoryItem(
@@ -953,61 +456,34 @@ async function resolvePurchaseInventoryItem(
 ) {
   const { data: masterItem, error: masterItemError } = await supabase
     .from("inventory_items")
-    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, is_active")
     .eq("id", masterItemId)
     .single();
 
-  if (masterItemError) {
-    throw new Error(masterItemError.message);
-  }
+  if (masterItemError) throw new Error(masterItemError.message);
+  if (purchaseKind === "ingredient" || presentationQuantity <= 0) return masterItem;
 
-  if (purchaseKind === "ingredient") {
-    return masterItem;
-  }
-
-  if (presentationQuantity <= 0) {
-    return masterItem;
-  }
-
-  const referenceName = masterItem.name.toUpperCase();
-  const legacyReferenceName = `${masterItem.name} ${presentationCode(presentationQuantity, presentationUnit)}`.toUpperCase();
   const { data: existingReference, error: existingReferenceError } = await supabase
     .from("inventory_items")
-    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, is_active")
     .eq("item_kind", purchaseKind)
     .eq("presentation_quantity", presentationQuantity)
     .eq("presentation_unit", presentationUnit)
-    .in("name", [referenceName, legacyReferenceName])
+    .eq("name", masterItem.name.toUpperCase())
     .maybeSingle();
 
-  if (existingReferenceError) {
-    throw new Error(existingReferenceError.message);
-  }
-
-  if (existingReference) {
-    return existingReference;
-  }
+  if (existingReferenceError) throw new Error(existingReferenceError.message);
+  if (existingReference) return existingReference;
 
   const sku = normalizeReferenceSku(referenceSku) ?? buildReferenceSku(masterItem.name, presentationQuantity, presentationUnit);
-  const { data: duplicateSku, error: duplicateSkuError } = await supabase
-    .from("inventory_items")
-    .select("id")
-    .ilike("sku", sku)
-    .limit(1)
-    .maybeSingle();
+  const { data: duplicateSku, error: duplicateSkuError } = await supabase.from("inventory_items").select("id").ilike("sku", sku).limit(1).maybeSingle();
+  if (duplicateSkuError) throw new Error(duplicateSkuError.message);
+  if (duplicateSku) throw new Error(`Ya existe un producto con el SKU ${sku}.`);
 
-  if (duplicateSkuError) {
-    throw new Error(duplicateSkuError.message);
-  }
-
-  if (duplicateSku) {
-    throw new Error(`Ya existe un producto con el SKU ${sku}.`);
-  }
-
-  const insertResult = await supabase
+  const { data, error } = await supabase
     .from("inventory_items")
     .insert({
-      name: referenceName,
+      name: masterItem.name.toUpperCase(),
       sku,
       unit: "unit",
       item_kind: purchaseKind,
@@ -1020,14 +496,11 @@ async function resolvePurchaseInventoryItem(
       current_quantity: 0,
       average_cost_cop: 0
     })
-    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, current_quantity, average_cost_cop, is_active")
+    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, is_active")
     .single();
 
-  if (insertResult.error) {
-    throw new Error(insertResult.error.message);
-  }
-
-  return insertResult.data;
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function registerPurchase(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -1040,7 +513,7 @@ export async function registerPurchase(_previousState: FormActionState, formData
   const presentationQuantity = getDecimal(formData, "presentation_quantity", 0);
   const effectivePresentationQuantity = submittedPurchaseMode === "packages" ? packageContentQuantity : presentationQuantity;
   const presentationUnit = getStockUnit(formData, "presentation_unit");
-  const lineTotal = getInteger(formData, "total_paid_cop", getInteger(formData, "unit_cost_cop", 0));
+  const lineTotal = getInteger(formData, "total_paid_cop", 0);
   const purchaseDate = getString(formData, "purchase_date");
   const expirationDate = getOptionalString(formData, "expiration_date");
   const referenceSku = normalizeReferenceSku(getOptionalString(formData, "reference_sku"));
@@ -1049,96 +522,62 @@ export async function registerPurchase(_previousState: FormActionState, formData
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { status: "error", message: "Debes iniciar sesion." };
-  }
-
-  if (!inventoryItemId) {
-    return { status: "error", message: "Selecciona un producto registrado." };
-  }
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+  if (!inventoryItemId) return { status: "error", message: "Selecciona un producto registrado." };
+  if (enteredQuantity <= 0) return { status: "error", message: "Ingresa una cantidad mayor a cero." };
+  if (lineTotal <= 0) return { status: "error", message: "Ingresa el total pagado." };
 
   if (!purchaseKind) {
-    const { data: selectedItem, error: selectedItemError } = await supabase
-      .from("inventory_items")
-      .select("item_kind")
-      .eq("id", inventoryItemId)
-      .single();
-
-    if (selectedItemError) {
-      return { status: "error", message: selectedItemError.message };
-    }
-
+    const { data: selectedItem, error: selectedItemError } = await supabase.from("inventory_items").select("item_kind").eq("id", inventoryItemId).single();
+    if (selectedItemError) return { status: "error", message: selectedItemError.message };
     purchaseKind = selectedItem?.item_kind === "sale_product" || selectedItem?.item_kind === "supply" ? selectedItem.item_kind : "ingredient";
   }
 
+  const affectedItems = new Set<string>();
   if (purchaseId) {
-    await reversePurchaseStock(supabase, purchaseId, user.id);
+    const { data: previousLines, error: previousLinesError } = await supabase.from("purchase_items").select("inventory_item_id").eq("purchase_id", purchaseId);
+    if (previousLinesError) return { status: "error", message: previousLinesError.message };
+    previousLines?.forEach((line) => affectedItems.add(line.inventory_item_id));
   }
 
+  let item: { id: string; unit: string; purchase_mode?: string | null };
   let quantity = 0;
-  let item: {
-    id: string;
-    unit: string;
-    purchase_mode?: string | null;
-    current_quantity?: number | string | null;
-    average_cost_cop?: number | string | null;
-  };
-  let previousItemUnit = "unit";
   try {
     item = await resolvePurchaseInventoryItem(supabase, inventoryItemId, purchaseKind, effectivePresentationQuantity, presentationUnit, referenceSku);
     inventoryItemId = item.id;
-    previousItemUnit = item.unit;
     const targetUnit = purchaseKind === "ingredient" ? canonicalStockUnit(presentationUnit) : "unit";
     const itemPurchaseMode = item.purchase_mode === "packages" || item.purchase_mode === "total_weight" ? item.purchase_mode : submittedPurchaseMode;
-    if (itemPurchaseMode === "packages" && packageContentQuantity <= 0) {
-      return { status: "error", message: "Ingresa el contenido por paquete." };
-    }
-    const ingredientEntryQuantity =
-      purchaseKind === "ingredient" && itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity;
-    quantity =
-      purchaseKind === "sale_product" || purchaseKind === "supply"
-        ? convertStockQuantity(itemPurchaseMode === "packages" ? enteredQuantity : enteredQuantity, "unit", targetUnit)
-        : convertStockQuantity(ingredientEntryQuantity, presentationUnit, targetUnit);
+    if (itemPurchaseMode === "packages" && packageContentQuantity <= 0) return { status: "error", message: "Ingresa el contenido por paquete." };
+    const ingredientEntryQuantity = purchaseKind === "ingredient" && itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity;
+    quantity = purchaseKind === "sale_product" || purchaseKind === "supply" ? enteredQuantity : convertStockQuantity(ingredientEntryQuantity, presentationUnit, targetUnit);
     item.unit = targetUnit;
     item.purchase_mode = itemPurchaseMode;
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo resolver el producto de inventario." };
   }
-  const unitCost = quantity > 0 ? Math.round((lineTotal / quantity) * 100) / 100 : 0;
 
   const purchasePayload = {
-      supplier_id: getOptionalString(formData, "supplier_id"),
-      brand_id: getOptionalString(formData, "brand_id"),
-      purchased_by: user.id,
-      total_cop: lineTotal,
-      notes: upperText(getOptionalString(formData, "notes")),
-      purchased_at: purchaseDate ? `${purchaseDate}T12:00:00-05:00` : new Date().toISOString()
-    };
+    supplier_id: getOptionalString(formData, "supplier_id"),
+    brand_id: getOptionalString(formData, "brand_id"),
+    purchased_by: user.id,
+    total_cop: lineTotal,
+    notes: upperText(getOptionalString(formData, "notes")),
+    purchased_at: purchaseDate ? `${purchaseDate}T12:00:00-05:00` : new Date().toISOString()
+  };
   const purchaseResult = purchaseId
     ? await supabase.from("purchases").update(purchasePayload).eq("id", purchaseId).select("id").single()
-    : await supabase
-    .from("purchases")
-    .insert(purchasePayload)
-    .select("id")
-    .single();
-  const purchase = purchaseResult.data;
-  const purchaseError = purchaseResult.error;
+    : await supabase.from("purchases").insert(purchasePayload).select("id").single();
 
-  if (purchaseError) {
-    return { status: "error", message: purchaseError.message };
-  }
-  if (!purchase) {
-    return { status: "error", message: "No se pudo guardar la compra." };
-  }
+  if (purchaseResult.error) return { status: "error", message: purchaseResult.error.message };
+  if (!purchaseResult.data) return { status: "error", message: "No se pudo guardar la compra." };
 
   if (purchaseId) {
     const { error: deleteLineError } = await supabase.from("purchase_items").delete().eq("purchase_id", purchaseId);
-    if (deleteLineError) {
-      return { status: "error", message: deleteLineError.message };
-    }
+    if (deleteLineError) return { status: "error", message: deleteLineError.message };
   }
 
-  const purchaseLinePayload: {
+  const unitCost = quantity > 0 ? Math.round((lineTotal / quantity) * 100) / 100 : 0;
+  const linePayload: {
     purchase_id: string;
     inventory_item_id: string;
     purchased_quantity: number;
@@ -1150,296 +589,432 @@ export async function registerPurchase(_previousState: FormActionState, formData
     line_total_cop: number;
     expiration_date?: string;
   } = {
-    purchase_id: purchase.id,
+    purchase_id: purchaseResult.data.id,
     inventory_item_id: inventoryItemId,
     purchased_quantity: enteredQuantity,
     quantity,
     unit: item.unit,
-    presentation_quantity:
-      item.purchase_mode === "packages"
-        ? packageContentQuantity
-        : presentationQuantity > 0
-          ? presentationQuantity
-          : null,
-    presentation_unit:
-      item.purchase_mode === "packages"
-        ? presentationUnit
-        : presentationQuantity > 0
-          ? presentationUnit
-          : null,
+    presentation_quantity: item.purchase_mode === "packages" ? packageContentQuantity : presentationQuantity > 0 ? presentationQuantity : null,
+    presentation_unit: item.purchase_mode === "packages" ? presentationUnit : presentationQuantity > 0 ? presentationUnit : null,
     unit_cost_cop: unitCost,
     line_total_cop: lineTotal
   };
+  if (expirationDate) linePayload.expiration_date = expirationDate;
 
-  if (expirationDate) {
-    purchaseLinePayload.expiration_date = expirationDate;
+  const { error: lineError } = await supabase.from("purchase_items").insert(linePayload);
+  if (lineError) return { status: "error", message: lineError.message };
+
+  affectedItems.add(inventoryItemId);
+  try {
+    await Promise.all([...affectedItems].map((id) => recalculateInventoryItem(supabase, id)));
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo recalcular el inventario." };
   }
-
-  const { error: lineError } = await supabase.from("purchase_items").insert(purchaseLinePayload);
-
-  if (lineError) {
-    return { status: "error", message: lineError.message };
-  }
-
-  const storedUnit = item.unit;
-  const currentQuantity = convertStockQuantity(Number(item.current_quantity ?? 0), previousItemUnit, storedUnit);
-  const currentAverage = Number(item.average_cost_cop ?? 0);
-  const nextQuantity = currentQuantity + quantity;
-  const nextAverage =
-    nextQuantity > 0 ? Math.round(((currentQuantity * currentAverage + lineTotal) / nextQuantity) * 100) / 100 : unitCost;
-
-  const { error: updateError } = await supabase
-    .from("inventory_items")
-    .update({
-      unit: storedUnit,
-      current_quantity: nextQuantity,
-      average_cost_cop: nextAverage
-    })
-    .eq("id", inventoryItemId);
-
-  if (updateError) {
-    return { status: "error", message: updateError.message };
-  }
-
-  await supabase.from("inventory_movements").insert({
-    inventory_item_id: inventoryItemId,
-    movement_kind: "purchase",
-    quantity_delta: quantity,
-    unit: item.unit,
-    source_table: "purchases",
-    source_id: purchase.id,
-    note: upperText(getOptionalString(formData, "notes")),
-    created_by: user.id
-  });
 
   revalidateInventory();
   return { status: "success", message: "Guardado correctamente" };
 }
 
-async function reversePurchaseStock(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  purchaseId: string,
-  userId: string
-) {
-  const { data: lines, error } = await supabase
-    .from("purchase_items")
-    .select("inventory_item_id, quantity, unit, line_total_cop")
-    .eq("purchase_id", purchaseId);
+export async function deletePurchase(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const purchaseId = getString(formData, "purchase_id");
+  if (!purchaseId) return { status: "error", message: "Compra no valida." };
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
 
-  if (error) {
-    throw new Error(error.message);
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+
+  try {
+    const { data: lines, error: linesError } = await supabase.from("purchase_items").select("inventory_item_id").eq("purchase_id", purchaseId);
+    if (linesError) return { status: "error", message: linesError.message };
+    const affectedItems = Array.from(new Set((lines ?? []).map((line) => line.inventory_item_id)));
+
+    const { error } = await supabase.from("purchases").delete().eq("id", purchaseId);
+    if (error) return { status: "error", message: error.message };
+
+    await Promise.all(affectedItems.map((id) => recalculateInventoryItem(supabase, id)));
+    revalidateInventory();
+    return { status: "success", message: "Compra eliminada y stock revertido correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar la compra." };
+  }
+}
+
+function getDurationUnit(formData: FormData, key: string) {
+  const value = getString(formData, key);
+  return ["hours", "days", "weeks", "months"].includes(value) ? value : "days";
+}
+
+function getStorageMethod(value: string) {
+  return ["ambient", "refrigerated", "frozen"].includes(value) ? value : "";
+}
+
+function getUnitKind(formData: FormData) {
+  const value = getString(formData, "unit_kind");
+  if (value === "weight" || value === "volume" || value === "unit") return value;
+  return "";
+}
+
+function canonicalUnitForKind(unitKind: string) {
+  if (unitKind === "weight") return "g";
+  if (unitKind === "volume") return "ml";
+  return "unit";
+}
+
+function unitKindForStockUnit(unit: string) {
+  if (unit === "g" || unit === "kg") return "weight";
+  if (unit === "ml" || unit === "l") return "volume";
+  return "unit";
+}
+
+function isUnitCompatibleWithKind(unitKind: string, unit: string) {
+  if (unitKind === "weight") return unit === "g" || unit === "kg";
+  if (unitKind === "volume") return unit === "ml" || unit === "l";
+  return unit === "unit";
+}
+
+function getIndexedStrings(formData: FormData, prefix: string) {
+  const indexes = new Set<number>();
+  for (const key of formData.keys()) {
+    const match = key.match(new RegExp(`^${prefix}\\[(\\d+)\\]`));
+    if (match) indexes.add(Number(match[1]));
+  }
+  return [...indexes].sort((a, b) => a - b);
+}
+
+export async function saveConservationProfile(_previousState: ConservationProfileActionState, formData: FormData): Promise<ConservationProfileActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+
+  if (!name) return { status: "error", message: "Ingresa el nombre del perfil." };
+
+  try {
+    if (await hasDuplicateName(supabase, "conservation_profiles", name, id)) {
+      return { status: "error", message: "Ya existe un perfil con ese nombre." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el perfil." };
   }
 
-  for (const line of lines ?? []) {
-    const { data: item, error: itemError } = await supabase
+  const rules = getIndexedStrings(formData, "rules")
+    .map((index) => {
+      const enabled = formData.get(`rules[${index}][enabled]`) === "on";
+      const storageMethod = getStorageMethod(getString(formData, `rules[${index}][storage_method]`));
+      const durationValue = getInteger(formData, `rules[${index}][duration_value]`, 0);
+      return {
+        enabled,
+        storage_method: storageMethod,
+        duration_value: durationValue,
+        duration_unit: getDurationUnit(formData, `rules[${index}][duration_unit]`),
+        notes: upperText(getOptionalString(formData, `rules[${index}][notes]`))
+      };
+    })
+    .filter((rule) => rule.enabled);
+
+  if (rules.length === 0) return { status: "error", message: "Agrega al menos una regla de conservacion." };
+  if (rules.some((rule) => !rule.storage_method || rule.duration_value <= 0)) {
+    return { status: "error", message: "Cada regla necesita metodo y duracion mayor a cero." };
+  }
+  if (new Set(rules.map((rule) => rule.storage_method)).size !== rules.length) {
+    return { status: "error", message: "No puedes repetir metodos de conservacion en el mismo perfil." };
+  }
+
+  const payload = {
+    name,
+    description: upperText(getOptionalString(formData, "description")),
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString()
+  };
+  const profileResult = id
+    ? await supabase.from("conservation_profiles").update(payload).eq("id", id).select("id").single()
+    : await supabase.from("conservation_profiles").insert(payload).select("id").single();
+
+  if (profileResult.error) return { status: "error", message: profileResult.error.message };
+  const profileId = profileResult.data?.id;
+  if (!profileId) return { status: "error", message: "No se pudo guardar el perfil." };
+
+  if (id) {
+    const { error: deleteRulesError } = await supabase.from("conservation_profile_rules").delete().eq("profile_id", profileId);
+    if (deleteRulesError) return { status: "error", message: deleteRulesError.message };
+  }
+
+  const { error: rulesError } = await supabase.from("conservation_profile_rules").insert(
+    rules.map((rule) => ({
+      profile_id: profileId,
+      storage_method: rule.storage_method,
+      duration_value: rule.duration_value,
+      duration_unit: rule.duration_unit,
+      notes: rule.notes
+    }))
+  );
+  if (rulesError) return { status: "error", message: rulesError.message };
+
+  const { data: savedProfile, error: savedProfileError } = await supabase
+    .from("conservation_profiles")
+    .select("id, name, is_active, conservation_profile_rules(id, storage_method, duration_value, duration_unit, notes)")
+    .eq("id", profileId)
+    .single();
+  if (savedProfileError) return { status: "error", message: savedProfileError.message };
+
+  revalidateInventory();
+  return { status: "success", message: "Perfil guardado correctamente.", profile: savedProfile as ConservationProfileActionState["profile"] };
+}
+
+export async function savePreparation(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const unitKind = getUnitKind(formData);
+  const baseUnit = canonicalUnitForKind(unitKind);
+  const submittedYieldUnit = getStockUnit(formData, "base_yield_unit");
+  const submittedYieldQuantity = getDecimal(formData, "base_yield_quantity", 0);
+  const alternativeUnitRaw = getOptionalString(formData, "alternative_unit");
+  const alternativeUnit = alternativeUnitRaw ? getStockUnit(formData, "alternative_unit") : null;
+  const conversionEnabled = getString(formData, "conversion_enabled") === "on";
+  const density = conversionEnabled ? getDecimal(formData, "density", 0) : 0;
+
+  if (!name) return { status: "error", message: "Ingresa el nombre de la preparacion." };
+  if (!unitKind) return { status: "error", message: "Selecciona la unidad principal." };
+  if (!isUnitCompatibleWithKind(unitKind, submittedYieldUnit)) return { status: "error", message: "El rendimiento no es compatible con la unidad principal." };
+  if (submittedYieldQuantity <= 0) return { status: "error", message: "Ingresa un rendimiento mayor a cero." };
+  if (conversionEnabled && unitKind === "unit") return { status: "error", message: "La conversion peso-volumen no aplica para unidad." };
+  if (conversionEnabled && density <= 0) {
+    return { status: "error", message: "Ingresa densidad para convertir entre peso y volumen." };
+  }
+
+  try {
+    if (await hasDuplicateName(supabase, "preparations", name, id)) {
+      return { status: "error", message: "Ya existe una preparacion con ese nombre." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la preparacion." };
+  }
+
+  const baseYieldQuantity = convertStockQuantity(submittedYieldQuantity, submittedYieldUnit, baseUnit);
+  const payload: {
+    name: string;
+    image_url?: string | null;
+    unit_kind: string;
+    base_unit: string;
+    alternative_unit: string | null;
+    density: number | null;
+    conservation_profile_id: string | null;
+    base_yield_quantity: number;
+    base_yield_unit: string;
+    is_active: boolean;
+    updated_at: string;
+  } = {
+    name,
+    unit_kind: unitKind,
+    base_unit: baseUnit,
+    alternative_unit: alternativeUnit,
+    density: conversionEnabled && density > 0 ? density : null,
+    conservation_profile_id: getOptionalString(formData, "conservation_profile_id"),
+    base_yield_quantity: baseYieldQuantity,
+    base_yield_unit: baseUnit,
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString()
+  };
+
+  const imageFile = getFormFile(formData, "preparation_image");
+  const shouldRemoveImage = getString(formData, "remove_image") === "1";
+  if (imageFile) {
+    try {
+      payload.image_url = await uploadProductImage(supabase, imageFile, "preparaciones");
+    } catch (error) {
+      return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la foto." };
+    }
+  } else if (shouldRemoveImage) {
+    payload.image_url = null;
+  }
+
+  const preparationResult = id
+    ? await supabase.from("preparations").update(payload).eq("id", id).select("id").single()
+    : await supabase.from("preparations").insert(payload).select("id").single();
+
+  if (preparationResult.error) return { status: "error", message: preparationResult.error.message };
+  const preparationId = preparationResult.data?.id;
+  if (!preparationId) return { status: "error", message: "No se pudo guardar la preparacion." };
+
+  if (id) {
+    const { error: deleteRecipeError } = await supabase.from("preparation_recipe_items").delete().eq("preparation_id", preparationId);
+    if (deleteRecipeError) return { status: "error", message: deleteRecipeError.message };
+  }
+
+  const indexes = getIndexedStrings(formData, "recipe");
+  const recipeRows = [];
+  for (const index of indexes) {
+    const sourceKind = getString(formData, `recipe[${index}][source_kind]`);
+    const sourceId = getString(formData, `recipe[${index}][source_id]`);
+    const quantity = getDecimal(formData, `recipe[${index}][quantity]`, 0);
+    const unit = getStockUnit(formData, `recipe[${index}][unit]`);
+    if (!sourceId || quantity <= 0) continue;
+
+    if (sourceKind === "preparation") {
+      if (sourceId === preparationId) return { status: "error", message: "Una preparacion no puede usarse como ingrediente de si misma." };
+      const { data: sourcePreparation, error: sourcePreparationError } = await supabase.from("preparations").select("unit_kind, base_unit, is_active").eq("id", sourceId).single();
+      if (sourcePreparationError) return { status: "error", message: sourcePreparationError.message };
+      if (!sourcePreparation.is_active) return { status: "error", message: "Solo puedes usar preparaciones activas en la receta." };
+      if (!isUnitCompatibleWithKind(sourcePreparation.unit_kind, unit)) return { status: "error", message: "Hay una unidad incompatible en la receta." };
+      recipeRows.push({
+        preparation_id: preparationId,
+        source_kind: "preparation",
+        source_preparation_id: sourceId,
+        inventory_item_id: null,
+        quantity: convertStockQuantity(quantity, unit, sourcePreparation.base_unit),
+        unit: sourcePreparation.base_unit
+      });
+      continue;
+    }
+
+    const { data: inventoryItem, error: inventoryItemError } = await supabase
       .from("inventory_items")
-      .select("id, current_quantity, average_cost_cop")
-      .eq("id", line.inventory_item_id)
+      .select("unit, item_kind, is_active, presentation_quantity")
+      .eq("id", sourceId)
       .single();
-
-    if (itemError) {
-      throw new Error(itemError.message);
+    if (inventoryItemError) return { status: "error", message: inventoryItemError.message };
+    if (!inventoryItem.is_active || inventoryItem.item_kind !== "ingredient" || inventoryItem.presentation_quantity !== null) {
+      return { status: "error", message: "La receta base solo puede usar ingredientes activos." };
     }
-
-    const currentQuantity = Number(item.current_quantity ?? 0);
-    const currentAverage = Number(item.average_cost_cop ?? 0);
-    const reverseQuantity = Number(line.quantity ?? 0);
-    const reverseTotal = Number(line.line_total_cop ?? 0);
-    const nextQuantity = Math.max(0, currentQuantity - reverseQuantity);
-    const remainingValue = Math.max(0, currentQuantity * currentAverage - reverseTotal);
-    const nextAverage = nextQuantity > 0 ? Math.round((remainingValue / nextQuantity) * 100) / 100 : 0;
-
-    const { error: updateError } = await supabase
-      .from("inventory_items")
-      .update({
-        current_quantity: nextQuantity,
-        average_cost_cop: nextAverage
-      })
-      .eq("id", item.id);
-
-    if (updateError) {
-      throw new Error(updateError.message);
-    }
-
-    await supabase.from("inventory_movements").insert({
-      inventory_item_id: item.id,
-      movement_kind: "adjustment",
-      quantity_delta: -reverseQuantity,
-      unit: line.unit,
-      source_table: "purchases",
-      source_id: purchaseId,
-      note: "Reversion de compra",
-      created_by: userId
+    const targetUnit = canonicalStockUnit(inventoryItem.unit);
+    if (!isUnitCompatibleWithKind(unitKindForStockUnit(targetUnit), unit)) return { status: "error", message: "Hay una unidad incompatible en la receta." };
+    recipeRows.push({
+      preparation_id: preparationId,
+      source_kind: "inventory_item",
+      inventory_item_id: sourceId,
+      source_preparation_id: null,
+      quantity: convertStockQuantity(quantity, unit, targetUnit),
+      unit: targetUnit
     });
   }
-}
 
-export async function deletePurchase(formData: FormData) {
-  const purchaseId = getString(formData, "purchase_id");
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error("Debes iniciar sesion.");
-  }
-
-  await reversePurchaseStock(supabase, purchaseId, user.id);
-
-  const { error } = await supabase.from("purchases").delete().eq("id", purchaseId);
-  if (error) {
-    throw new Error(error.message);
+  if (recipeRows.length > 0) {
+    const { error: recipeError } = await supabase.from("preparation_recipe_items").insert(recipeRows);
+    if (recipeError) return { status: "error", message: recipeError.message };
   }
 
   revalidateInventory();
+  return { status: "success", message: "Preparacion guardada correctamente." };
 }
 
-export async function registerInventoryAdjustment(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const inventoryItemId = getString(formData, "inventory_item_id");
-  const adjustmentKind = getString(formData, "adjustment_kind") === "adjustment_out" ? "adjustment_out" : "adjustment_in";
-  const enteredQuantity = getDecimal(formData, "quantity", 0);
-  const enteredUnit = getStockUnit(formData, "unit");
-  const reason = getString(formData, "reason");
-  const observation = getOptionalString(formData, "observation");
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { status: "error", message: "Debes iniciar sesion." };
-  }
-
-  if (!inventoryItemId) {
-    return { status: "error", message: "Selecciona un producto." };
-  }
-
-  if (enteredQuantity <= 0) {
-    return { status: "error", message: "La cantidad debe ser mayor a cero." };
-  }
-
-  if (!reason) {
-    return { status: "error", message: "El motivo es obligatorio." };
-  }
-
-  const { data: item, error: itemError } = await supabase
-    .from("inventory_items")
-    .select("id, unit, current_quantity, average_cost_cop")
-    .eq("id", inventoryItemId)
-    .single();
-
-  if (itemError) {
-    return { status: "error", message: itemError.message };
-  }
-
-  let convertedQuantity = 0;
-  try {
-    convertedQuantity = convertStockQuantity(enteredQuantity, enteredUnit, item.unit);
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "La unidad elegida no es compatible." };
-  }
-
-  const currentQuantity = Number(item.current_quantity ?? 0);
-  const quantityDelta = adjustmentKind === "adjustment_out" ? -convertedQuantity : convertedQuantity;
-  const nextQuantity = currentQuantity + quantityDelta;
-
-  if (nextQuantity < 0) {
-    return { status: "error", message: "El ajuste no puede dejar el stock en negativo." };
-  }
-
-  const note = observation ? `Motivo: ${reason}\nObservacion: ${observation}` : `Motivo: ${reason}`;
-  const { error: movementError } = await supabase.from("inventory_movements").insert({
-    inventory_item_id: inventoryItemId,
-    movement_kind: adjustmentKind,
-    quantity_delta: quantityDelta,
-    unit: item.unit,
-    source_table: "inventory_adjustments",
-    note,
-    created_by: user.id
-  });
-
-  if (movementError) {
-    return { status: "error", message: movementError.message };
-  }
-
-  const { error: updateError } = await supabase
-    .from("inventory_items")
-    .update({
-      current_quantity: nextQuantity,
-      average_cost_cop: Number(item.average_cost_cop ?? 0)
-    })
-    .eq("id", inventoryItemId);
-
-  if (updateError) {
-    return { status: "error", message: updateError.message };
-  }
-
-  revalidateInventory();
-  return { status: "success", message: "Ajuste registrado correctamente" };
-}
-
-export async function updatePurchaseMeta(formData: FormData) {
+export async function togglePreparationState(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getString(formData, "id");
+  const isActive = getString(formData, "is_active") === "true";
+  if (!id) return { status: "error", message: "Preparacion no valida." };
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase
-    .from("purchases")
-    .update({
-      supplier_id: getOptionalString(formData, "supplier_id"),
-      brand_id: getOptionalString(formData, "brand_id"),
-      notes: getOptionalString(formData, "notes")
-    })
-    .eq("id", id);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
+  const { error } = await supabase.from("preparations").update({ is_active: isActive, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { status: "error", message: error.message };
   revalidateInventory();
+  return { status: "success", message: isActive ? "Preparacion activada." : "Preparacion desactivada." };
 }
 
-export async function registerExpense(formData: FormData) {
+export async function registerProduction(_previousState: ProductionActionState, formData: FormData): Promise<ProductionActionState> {
+  const supabase = await createServerSupabaseClient();
+  const preparationId = getString(formData, "preparation_id");
+  const storageMethod = getString(formData, "storage_method");
+  const elaboratedAt = getString(formData, "elaborated_at");
+  const expirationDate = getString(formData, "expiration_date");
+  const expectedQuantity = getDecimal(formData, "expected_quantity", 0);
+  const expectedUnit = getStockUnit(formData, "expected_unit");
+  const actualQuantity = getDecimal(formData, "actual_quantity", 0);
+  const actualUnit = getStockUnit(formData, "actual_unit");
+  const itemsRaw = getString(formData, "items");
+
+  if (!preparationId) return { status: "error", message: "Selecciona una preparacion." };
+  if (!["ambient", "refrigerated", "frozen"].includes(storageMethod)) return { status: "error", message: "Selecciona un metodo de conservacion valido." };
+  if (!elaboratedAt) return { status: "error", message: "Ingresa la fecha de elaboracion." };
+  if (!expirationDate) return { status: "error", message: "Ingresa la fecha de vencimiento." };
+  if (expectedQuantity <= 0) return { status: "error", message: "La cantidad esperada debe ser mayor a cero." };
+  if (actualQuantity <= 0) return { status: "error", message: "La cantidad real debe ser mayor a cero." };
+
+  let items: unknown;
+  try {
+    items = JSON.parse(itemsRaw);
+  } catch {
+    return { status: "error", message: "La receta confirmada no es valida." };
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return { status: "error", message: "La produccion necesita al menos un ingrediente." };
+  }
+
+  const { data, error } = await supabase.rpc("create_production", {
+    p_preparation_id: preparationId,
+    p_storage_method: storageMethod,
+    p_elaborated_at: elaboratedAt,
+    p_expiration_date: expirationDate,
+    p_expected_quantity: expectedQuantity,
+    p_expected_unit: expectedUnit,
+    p_actual_quantity: actualQuantity,
+    p_actual_unit: actualUnit,
+    p_items: items
+  });
+
+  if (error) return { status: "error", message: error.message };
+
+  revalidateInventory();
+  return {
+    status: "success",
+    message: "Produccion registrada correctamente.",
+    production: data as ProductionActionState["production"]
+  };
+}
+
+export async function deleteProduction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const productionId = getString(formData, "production_id");
+  if (!productionId) return { status: "error", message: "Produccion no valida." };
+
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    throw new Error("Debes iniciar sesion.");
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+
+  try {
+    const { data: batches, error: batchesError } = await supabase
+      .from("production_batches")
+      .select("id")
+      .eq("production_id", productionId);
+    if (batchesError) return { status: "error", message: batchesError.message };
+
+    const batchIds = (batches ?? []).map((batch) => batch.id);
+    if (batchIds.length > 0) {
+      const { count, error: allocationsError } = await supabase
+        .from("production_consumption_allocations")
+        .select("id", { count: "exact", head: true })
+        .in("production_batch_id", batchIds);
+
+      if (allocationsError) return { status: "error", message: allocationsError.message };
+      if ((count ?? 0) > 0) {
+        return {
+          status: "error",
+          message: "No se puede eliminar esta produccion porque su lote ya fue consumido por otra produccion."
+        };
+      }
+    }
+
+    const { error } = await supabase.from("productions").delete().eq("id", productionId);
+    if (error) return { status: "error", message: error.message };
+
+    revalidateInventory();
+    revalidatePath("/panel/produccion/registrar");
+    return { status: "success", message: "Produccion eliminada correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar la produccion." };
   }
-
-  const { error } = await supabase.from("expenses").insert({
-    category: getString(formData, "category"),
-    description: getString(formData, "description"),
-    amount_cop: getDecimal(formData, "amount_cop", 0),
-    paid_by: user.id
-  });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidateInventory();
 }
 
 export async function assignUserRole(formData: FormData) {
   const userId = getString(formData, "user_id");
   const role = getString(formData, "role");
   const supabase = await createServerSupabaseClient();
+  if (!validRoles.has(role)) throw new Error("Rol no valido.");
 
-  if (!validRoles.has(role)) {
-    throw new Error("Rol no valido.");
-  }
-
-  const { error } = await supabase.from("user_roles").insert({
-    user_id: userId,
-    role
-  });
-
-  if (error && error.code !== "23505") {
-    throw new Error(error.message);
-  }
-
+  const { error } = await supabase.from("user_roles").insert({ user_id: userId, role });
+  if (error && error.code !== "23505") throw new Error(error.message);
   revalidatePath("/panel");
 }
 
@@ -1447,12 +1022,7 @@ export async function removeUserRole(formData: FormData) {
   const userId = getString(formData, "user_id");
   const role = getString(formData, "role");
   const supabase = await createServerSupabaseClient();
-
   const { error } = await supabase.from("user_roles").delete().eq("user_id", userId).eq("role", role);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
+  if (error) throw new Error(error.message);
   revalidatePath("/panel");
 }
