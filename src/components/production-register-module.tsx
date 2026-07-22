@@ -242,6 +242,9 @@ export function ProductionRegisterModule({
   const [actualTouched, setActualTouched] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [hideFormStatus, setHideFormStatus] = useState(true);
+  const [successMessage, setSuccessMessage] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyStatus, setHistoryStatus] = useState("");
   const [visibleHistoryColumns, setVisibleHistoryColumns] = useState<HistoryColumnKey[]>(readHistoryColumns);
@@ -269,6 +272,7 @@ export function ProductionRegisterModule({
   const hasMissingStock = lineStates.some((line) => line.missing > 0);
   const totalCost = lineStates.reduce((sum, line) => sum + line.cost, 0);
   const unitCost = actualBase > 0 ? totalCost / actualBase : 0;
+  const hasPlannedQuantity = parseUiNumber(expectedQuantity) > 0;
   const normalizedHistoryQuery = normalizeMasterText(historyQuery);
   const filteredHistory = history.filter((row) => {
     const matchesQuery = !normalizedHistoryQuery || normalizeMasterText(`${row.code} ${row.preparation_name} ${row.user_label}`).includes(normalizedHistoryQuery);
@@ -277,7 +281,6 @@ export function ProductionRegisterModule({
   });
   const canSubmit =
     Boolean(selectedPreparation) &&
-    expectedBase > 0 &&
     actualBase > 0 &&
     Boolean(storageMethod) &&
     Boolean(expirationDate) &&
@@ -287,10 +290,21 @@ export function ProductionRegisterModule({
     !hasMissingStock;
 
   useEffect(() => {
-    if (state.status !== "success") return;
-    const timeout = window.setTimeout(() => router.refresh(), 1200);
-    return () => window.clearTimeout(timeout);
-  }, [router, state.status]);
+    if (state.status !== "success" || !state.production) return;
+    const message = `${state.message} ${state.production.code}: ${formatCop(Number(state.production.total_cost_cop), { decimals: true })}, vence ${state.production.expiration_date}.`;
+    const closeTimeout = window.setTimeout(() => {
+      setSuccessMessage(message);
+      resetForm();
+      setShowRegisterModal(false);
+      setHideFormStatus(true);
+      router.refresh();
+    }, 0);
+    const messageTimeout = window.setTimeout(() => setSuccessMessage(""), 5000);
+    return () => {
+      window.clearTimeout(closeTimeout);
+      window.clearTimeout(messageTimeout);
+    };
+  }, [router, state]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -378,6 +392,15 @@ export function ProductionRegisterModule({
     const hasChanges = Boolean(selectedPreparation || expectedQuantity || actualQuantity || lines.some((line) => line.quantity || line.source));
     if (hasChanges && !window.confirm("Cancelar y limpiar esta produccion sin registrar?")) return;
     resetForm();
+    setShowRegisterModal(false);
+    setHideFormStatus(true);
+  }
+
+  function openRegisterModal() {
+    resetForm();
+    setSuccessMessage("");
+    setHideFormStatus(true);
+    setShowRegisterModal(true);
   }
 
   function addManualLine() {
@@ -407,11 +430,26 @@ export function ProductionRegisterModule({
 
   return (
     <section className="module-stack">
-      <form action={formAction} className="form-panel production-register-panel" onSubmit={() => setSubmitted(true)}>
-        <div className="section-title-row">
-          <h2>Registrar produccion</h2>
-          <span className="stock-pill neutral">Codigo automatico</span>
-        </div>
+      {showRegisterModal ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Registrar produccion" aria-modal="true" className="modal-panel production-register-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>Registrar produccion</strong>
+                <span>El codigo se asigna automaticamente al guardar.</span>
+              </div>
+              <button className="icon-button" onClick={cancelForm} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </header>
+            <form
+              action={formAction}
+              className="form-panel production-register-panel"
+              onSubmit={() => {
+                setSubmitted(true);
+                setHideFormStatus(false);
+              }}
+            >
 
         <section className="form-section">
           <h3>Seleccion</h3>
@@ -656,7 +694,7 @@ export function ProductionRegisterModule({
                 <div><strong>Preparacion</strong><span>{selectedPreparation.name}</span></div>
                 <div><strong>Elaboracion</strong><span>{elaboratedAt}</span></div>
                 <div className="highlight"><strong>Vencimiento</strong><span>{expirationDate || "Pendiente"}</span></div>
-                <div><strong>Cantidad planificada</strong><span>{expectedBase > 0 ? formatStockQuantity(expectedBase, selectedPreparation.base_unit) : "Pendiente"}</span></div>
+                <div><strong>Cantidad planificada</strong><span>{hasPlannedQuantity && expectedBase > 0 ? formatStockQuantity(expectedBase, selectedPreparation.base_unit) : "Sin planificar"}</span></div>
                 <div className="highlight"><strong>Cantidad realmente obtenida</strong><span>{actualBase > 0 ? formatStockQuantity(actualBase, selectedPreparation.base_unit) : "Pendiente"}</span></div>
                 <div className="highlight"><strong>Costo total estimado</strong><span>{formatCop(totalCost, { decimals: true })}</span></div>
                 <div className="highlight"><strong>Costo unitario estimado</strong><span>{formatCop(unitCost, { decimals: true })}</span></div>
@@ -668,11 +706,9 @@ export function ProductionRegisterModule({
 
         <input name="preparation_id" type="hidden" value={selectedPreparation?.id ?? ""} />
         <input name="items" type="hidden" value={payloadItems()} />
-        {state.status !== "idle" ? (
+        {!hideFormStatus && state.status === "error" ? (
           <p className={`form-status ${state.status}`}>
-            {state.status === "success" && state.production
-              ? `${state.message} ${state.production.code}: ${formatCop(Number(state.production.total_cost_cop), { decimals: true })}, vence ${state.production.expiration_date}.`
-              : state.message}
+            {state.message}
           </p>
         ) : null}
         <div className="form-actions modal-form-actions">
@@ -681,7 +717,10 @@ export function ProductionRegisterModule({
           </button>
           <ProductionSubmitButton disabled={!canSubmit} />
         </div>
-      </form>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       <section className="form-panel">
         <div className="section-title-row inventory-toolbar-row">
@@ -700,8 +739,12 @@ export function ProductionRegisterModule({
             <button className="ghost-button icon-text-button" onClick={() => setShowHistorySettings(true)} type="button">
               <Settings size={18} /> Configuracion
             </button>
+            <button className="primary-button icon-text-button" onClick={openRegisterModal} type="button">
+              <Plus size={18} /> Registrar produccion
+            </button>
           </div>
         </div>
+        {successMessage ? <p className="form-status success">{successMessage}</p> : null}
         <div className="data-table-wrap">
           <table className="data-table production-history-table">
             <thead>

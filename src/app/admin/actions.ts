@@ -54,6 +54,15 @@ export type ProductionActionState = FormActionState & {
   };
 };
 
+export type PhysicalInventoryActionState = FormActionState & {
+  count?: {
+    id: string;
+    adjustment_kind: "waste" | "adjustment_in";
+    difference_quantity_base: number;
+    base_unit: string;
+  };
+};
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -72,6 +81,12 @@ function getInteger(formData: FormData, key: string, fallback = 0) {
 
 function getDecimal(formData: FormData, key: string, fallback = 0) {
   const value = getString(formData, key).replace(/\./g, "").replace(/,/g, ".");
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
+function getMachineDecimal(formData: FormData, key: string, fallback = 0) {
+  const value = getString(formData, key);
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
 }
@@ -916,17 +931,18 @@ export async function registerProduction(_previousState: ProductionActionState, 
   const storageMethod = getString(formData, "storage_method");
   const elaboratedAt = getString(formData, "elaborated_at");
   const expirationDate = getString(formData, "expiration_date");
-  const expectedQuantity = getDecimal(formData, "expected_quantity", 0);
-  const expectedUnit = getStockUnit(formData, "expected_unit");
   const actualQuantity = getDecimal(formData, "actual_quantity", 0);
   const actualUnit = getStockUnit(formData, "actual_unit");
+  const submittedExpectedQuantity = getDecimal(formData, "expected_quantity", 0);
+  const submittedExpectedUnit = getStockUnit(formData, "expected_unit");
+  const expectedQuantity = submittedExpectedQuantity > 0 ? submittedExpectedQuantity : actualQuantity;
+  const expectedUnit = submittedExpectedQuantity > 0 ? submittedExpectedUnit : actualUnit;
   const itemsRaw = getString(formData, "items");
 
   if (!preparationId) return { status: "error", message: "Selecciona una preparacion." };
   if (!["ambient", "refrigerated", "frozen"].includes(storageMethod)) return { status: "error", message: "Selecciona un metodo de conservacion valido." };
   if (!elaboratedAt) return { status: "error", message: "Ingresa la fecha de elaboracion." };
   if (!expirationDate) return { status: "error", message: "Ingresa la fecha de vencimiento." };
-  if (expectedQuantity <= 0) return { status: "error", message: "La cantidad esperada debe ser mayor a cero." };
   if (actualQuantity <= 0) return { status: "error", message: "La cantidad real debe ser mayor a cero." };
 
   let items: unknown;
@@ -1005,6 +1021,86 @@ export async function deleteProduction(_previousState: FormActionState, formData
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar la produccion." };
   }
+}
+
+export async function recordPhysicalInventoryCount(
+  _previousState: PhysicalInventoryActionState,
+  formData: FormData
+): Promise<PhysicalInventoryActionState> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+
+  const sourceKind = getString(formData, "source_kind");
+  const sourceId = getString(formData, "source_id");
+  const theoreticalQuantity = getMachineDecimal(formData, "theoretical_quantity_base", 0);
+  const averageCost = getMachineDecimal(formData, "average_cost_cop", 0);
+  const physicalQuantity = getDecimal(formData, "physical_quantity", 0);
+  const physicalUnit = getStockUnit(formData, "physical_unit");
+  const reason = getString(formData, "reason");
+
+  if (sourceKind !== "inventory_item" && sourceKind !== "preparation") {
+    return { status: "error", message: "Selecciona un producto o preparacion valida." };
+  }
+  if (!sourceId) return { status: "error", message: "Selecciona un registro para contar." };
+  if (physicalQuantity < 0) return { status: "error", message: "El stock fisico no puede ser negativo." };
+  if (!reason) return { status: "error", message: "Ingresa el motivo del conteo." };
+
+  let baseUnit = "unit";
+  if (sourceKind === "inventory_item") {
+    const { data: item, error } = await supabase.from("inventory_items").select("unit").eq("id", sourceId).single();
+    if (error || !item) return { status: "error", message: error?.message ?? "Producto no encontrado." };
+    baseUnit = canonicalStockUnit(item.unit);
+  } else {
+    const { data: preparation, error } = await supabase.from("preparations").select("base_unit").eq("id", sourceId).single();
+    if (error || !preparation) return { status: "error", message: error?.message ?? "Preparacion no encontrada." };
+    baseUnit = canonicalStockUnit(preparation.base_unit);
+  }
+
+  let physicalBase = 0;
+  try {
+    physicalBase = convertStockQuantity(physicalQuantity, physicalUnit, baseUnit);
+  } catch {
+    return { status: "error", message: "La unidad del conteo no es compatible con el producto seleccionado." };
+  }
+
+  const difference = Number((physicalBase - theoreticalQuantity).toFixed(3));
+  if (difference === 0) {
+    return { status: "error", message: "No hay diferencia entre el stock teorico y el stock fisico." };
+  }
+
+  const adjustmentKind = difference > 0 ? "adjustment_in" : "waste";
+  const payload = {
+    source_kind: sourceKind,
+    inventory_item_id: sourceKind === "inventory_item" ? sourceId : null,
+    source_preparation_id: sourceKind === "preparation" ? sourceId : null,
+    theoretical_quantity_base: theoreticalQuantity,
+    physical_quantity_base: physicalBase,
+    difference_quantity_base: difference,
+    base_unit: baseUnit,
+    average_cost_cop: averageCost,
+    adjustment_kind: adjustmentKind,
+    reason: upperText(reason),
+    created_by: user.id
+  };
+
+  const { data, error } = await supabase
+    .from("physical_inventory_counts")
+    .insert(payload)
+    .select("id, adjustment_kind, difference_quantity_base, base_unit")
+    .single();
+
+  if (error) return { status: "error", message: error.message };
+
+  revalidateInventory();
+  return {
+    status: "success",
+    message: "Conteo fisico registrado correctamente.",
+    count: data as PhysicalInventoryActionState["count"]
+  };
 }
 
 export async function assignUserRole(formData: FormData) {

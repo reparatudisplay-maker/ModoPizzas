@@ -1,17 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
+import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import { Eye, Settings, X } from "lucide-react";
+import { recordPhysicalInventoryCount, type PhysicalInventoryActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { type ProductionInventoryItem, productionItemStatus, productionLotStatus } from "@/lib/production-inventory";
-import { formatStockQuantity, unitLabel } from "@/lib/units";
+import { canonicalStockUnit, formatStockQuantity, unitLabel } from "@/lib/units";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 type ItemKind = "ingredient" | "sale_product" | "supply";
 type ViewMode = "consolidated" | "decentralized";
-type StockFilter = "all" | "available" | "low" | "out" | "hide_out";
+type StockFilter = "all" | "available" | "out";
 type InventorySection = "purchases" | "preparations";
+type CountSourceKind = "inventory_item" | "preparation";
 
 export type InventoryPurchaseLine = {
   id: string;
@@ -59,9 +63,36 @@ export type InventoryListItem = {
 };
 
 type InventoryWorkspaceProps = {
+  countHistory: InventoryCountHistoryRow[];
   items: InventoryListItem[];
   purchaseLines: InventoryPurchaseLine[];
   preparationItems: ProductionInventoryItem[];
+};
+
+export type InventoryCountHistoryRow = {
+  id: string;
+  created_at: string;
+  product_name: string;
+  source_label: string;
+  source_kind: CountSourceKind;
+  theoretical_quantity_base: number;
+  physical_quantity_base: number;
+  difference_quantity_base: number;
+  base_unit: StockUnit;
+  adjustment_kind: "waste" | "adjustment_in";
+  reason: string;
+  user_label: string;
+};
+
+type CountSourceOption = {
+  id: string;
+  source_kind: CountSourceKind;
+  name: string;
+  type_label: string;
+  stock_base: number;
+  base_unit: StockUnit;
+  average_cost_cop: number;
+  image_src: string | null;
 };
 
 type InventoryRow = {
@@ -126,6 +157,7 @@ const allColumns: ColumnKey[] = [
 const defaultColumns: ColumnKey[] = ["photo", "product", "type", "stock", "unit", "cost", "unitPrice", "inventoryValue", "status", "expiration", "detail"];
 const inventoryViewStorageKey = "modopizzas.inventory.view";
 const productionInventoryStorageKey = "modopizzas.inventory.production.columns";
+type ColumnsByMode = Record<ViewMode, ColumnKey[]>;
 type ProductionColumnKey = "photo" | "unitKind" | "stock" | "cost" | "inventoryValue" | "expiration" | "lots" | "status" | "actions";
 const productionColumns: ProductionColumnKey[] = ["photo", "unitKind", "stock", "cost", "inventoryValue", "expiration", "lots", "status", "actions"];
 const defaultProductionColumns: ProductionColumnKey[] = ["photo", "unitKind", "stock", "cost", "inventoryValue", "expiration", "lots", "status", "actions"];
@@ -167,6 +199,13 @@ function columnLabel(column: ColumnKey, mode: ViewMode) {
   return labels[column];
 }
 
+const inventoryColumnGroups: Array<{ title: string; columns: ColumnKey[] }> = [
+  { title: "Informacion", columns: ["photo", "product", "sku", "type", "unit", "detail"] },
+  { title: "Compras", columns: ["lot", "supplier", "brand", "lastPurchase", "expiration"] },
+  { title: "Costos", columns: ["stock", "cost", "unitPrice", "inventoryValue"] },
+  { title: "Estado", columns: ["status"] }
+];
+
 function productionColumnLabel(column: ProductionColumnKey) {
   const labels: Record<ProductionColumnKey, string> = {
     photo: "Foto",
@@ -204,6 +243,26 @@ function normalizeSearch(value: string) {
     .trim();
 }
 
+function parseUiNumber(value: string) {
+  const parsed = Number(value.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function unitOptionsForBase(unit: StockUnit) {
+  if (unit === "g" || unit === "kg") return ["g", "kg"] as StockUnit[];
+  if (unit === "ml" || unit === "l") return ["ml", "l"] as StockUnit[];
+  return ["unit"] as StockUnit[];
+}
+
+function convertQuantity(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
+  if (fromUnit === toUnit) return quantity;
+  if (fromUnit === "kg" && toUnit === "g") return quantity * 1000;
+  if (fromUnit === "g" && toUnit === "kg") return quantity / 1000;
+  if (fromUnit === "l" && toUnit === "ml") return quantity * 1000;
+  if (fromUnit === "ml" && toUnit === "l") return quantity / 1000;
+  return NaN;
+}
+
 function dateLabel(value?: string | null) {
   if (!value) return "Sin fecha";
   return new Date(`${value.includes("T") ? value : `${value}T12:00:00`}`).toLocaleDateString("es-CO");
@@ -232,7 +291,13 @@ function readInventoryPreferences() {
   const saved = window.localStorage.getItem(inventoryViewStorageKey);
   if (!saved) return {};
   try {
-    return JSON.parse(saved) as { viewMode?: ViewMode; stockFilter?: StockFilter; visibleColumns?: ColumnKey[] };
+    return JSON.parse(saved) as {
+      viewMode?: ViewMode;
+      stockFilter?: StockFilter;
+      showOutOfStock?: boolean;
+      visibleColumns?: ColumnKey[];
+      columnsByMode?: Partial<ColumnsByMode>;
+    };
   } catch {
     window.localStorage.removeItem(inventoryViewStorageKey);
     return {};
@@ -295,7 +360,11 @@ function uniqueValues(rows: Array<{ brand_name: string | null; supplier_name: st
   return Array.from(new Set(rows.map((row) => row[key]).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b));
 }
 
-export function InventoryWorkspace({ items, purchaseLines, preparationItems }: InventoryWorkspaceProps) {
+const initialCountState: PhysicalInventoryActionState = { status: "idle", message: "" };
+
+export function InventoryWorkspace({ countHistory, items, purchaseLines, preparationItems }: InventoryWorkspaceProps) {
+  const router = useRouter();
+  const [countState, countAction] = useActionState(recordPhysicalInventoryCount, initialCountState);
   const [section, setSection] = useState<InventorySection>("purchases");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("");
@@ -306,13 +375,29 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
   const [supplier, setSupplier] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(() => readInventoryPreferences().viewMode ?? "consolidated");
   const [stockFilter, setStockFilter] = useState<StockFilter>(() => readInventoryPreferences().stockFilter ?? "all");
-  const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(() => {
+  const [showOutOfStock, setShowOutOfStock] = useState(() => readInventoryPreferences().showOutOfStock ?? true);
+  const [columnsByMode, setColumnsByMode] = useState<ColumnsByMode>(() => {
     const preferences = readInventoryPreferences();
-    const mode = preferences.viewMode ?? "consolidated";
-    const savedColumns = preferences.visibleColumns?.filter((column) => allColumns.includes(column));
-    const sanitizedColumns = savedColumns?.length ? sanitizeColumns(savedColumns, mode) : defaultColumnsForMode(mode);
-    return sanitizedColumns.length ? sanitizedColumns : defaultColumnsForMode(mode);
+    const legacyMode = preferences.viewMode ?? "consolidated";
+    const legacyColumns = preferences.visibleColumns?.filter((column) => allColumns.includes(column));
+    const savedConsolidated = preferences.columnsByMode?.consolidated?.filter((column) => allColumns.includes(column));
+    const savedDecentralized = preferences.columnsByMode?.decentralized?.filter((column) => allColumns.includes(column));
+    const consolidated = savedConsolidated?.length
+      ? sanitizeColumns(savedConsolidated, "consolidated")
+      : legacyMode === "consolidated" && legacyColumns?.length
+        ? sanitizeColumns(legacyColumns, "consolidated")
+        : defaultColumnsForMode("consolidated");
+    const decentralized = savedDecentralized?.length
+      ? sanitizeColumns(savedDecentralized, "decentralized")
+      : legacyMode === "decentralized" && legacyColumns?.length
+        ? sanitizeColumns(legacyColumns, "decentralized")
+        : defaultColumnsForMode("decentralized");
+    return {
+      consolidated: consolidated.length ? consolidated : defaultColumnsForMode("consolidated"),
+      decentralized: decentralized.length ? decentralized : defaultColumnsForMode("decentralized")
+    };
   });
+  const visibleColumns = columnsByMode[viewMode];
   const [showSettings, setShowSettings] = useState(false);
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [preparationQuery, setPreparationQuery] = useState("");
@@ -323,15 +408,89 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
   const [visibleProductionColumns, setVisibleProductionColumns] = useState<ProductionColumnKey[]>(readProductionColumns);
   const [showProductionSettings, setShowProductionSettings] = useState(false);
   const [openPreparationId, setOpenPreparationId] = useState<string | null>(null);
+  const [showCountModal, setShowCountModal] = useState(false);
+  const [hideCountStatus, setHideCountStatus] = useState(true);
+  const [countSuccessMessage, setCountSuccessMessage] = useState("");
+  const [countQuery, setCountQuery] = useState("");
+  const [selectedCountSource, setSelectedCountSource] = useState<CountSourceOption | null>(null);
+  const [isCountSourceOpen, setIsCountSourceOpen] = useState(false);
+  const [activeCountSourceIndex, setActiveCountSourceIndex] = useState(0);
+  const [physicalQuantity, setPhysicalQuantity] = useState("");
+  const [physicalUnit, setPhysicalUnit] = useState<StockUnit>("unit");
+  const [countReason, setCountReason] = useState("");
+  const [countSubmitted, setCountSubmitted] = useState(false);
 
   useEffect(() => {
-    const sanitizedColumns = sanitizeColumns(visibleColumns, viewMode);
-    window.localStorage.setItem(inventoryViewStorageKey, JSON.stringify({ viewMode, stockFilter, visibleColumns: sanitizedColumns }));
-  }, [viewMode, stockFilter, visibleColumns]);
+    window.localStorage.setItem(
+      inventoryViewStorageKey,
+      JSON.stringify({
+        viewMode,
+        stockFilter,
+        showOutOfStock,
+        columnsByMode: {
+          consolidated: sanitizeColumns(columnsByMode.consolidated, "consolidated"),
+          decentralized: sanitizeColumns(columnsByMode.decentralized, "decentralized")
+        }
+      })
+    );
+  }, [columnsByMode, showOutOfStock, stockFilter, viewMode]);
 
   useEffect(() => {
     window.localStorage.setItem(productionInventoryStorageKey, JSON.stringify(visibleProductionColumns.filter((column) => productionColumns.includes(column))));
   }, [visibleProductionColumns]);
+
+  useEffect(() => {
+    if (countState.status !== "success" || !countState.count) return;
+    const message = `${countState.message} ${countState.count.adjustment_kind === "adjustment_in" ? "Entrada" : "Merma"} ${formatStockQuantity(Math.abs(Number(countState.count.difference_quantity_base)), countState.count.base_unit as StockUnit)}.`;
+    const closeTimeout = window.setTimeout(() => {
+      setCountSuccessMessage(message);
+      resetCountForm();
+      setShowCountModal(false);
+      setHideCountStatus(true);
+      router.refresh();
+    }, 0);
+    const messageTimeout = window.setTimeout(() => setCountSuccessMessage(""), 5000);
+    return () => {
+      window.clearTimeout(closeTimeout);
+      window.clearTimeout(messageTimeout);
+    };
+  }, [countState, router]);
+
+  const countSources = useMemo<CountSourceOption[]>(() => {
+    const purchaseSources = items.map((item) => {
+      const baseUnit = canonicalStockUnit(item.unit);
+      return {
+        id: item.id,
+        source_kind: "inventory_item" as const,
+        name: item.product_name,
+        type_label: kindLabel(item.item_kind),
+        stock_base: convertQuantity(item.stock, item.unit, baseUnit),
+        base_unit: baseUnit,
+        average_cost_cop: item.average_cost_cop,
+        image_src: item.image_src
+      };
+    });
+    const preparationSources = preparationItems.map((item) => ({
+      id: item.id,
+      source_kind: "preparation" as const,
+      name: item.preparation_name,
+      type_label: "Preparacion",
+      stock_base: item.stock_base,
+      base_unit: item.base_unit,
+      average_cost_cop: item.average_cost_cop,
+      image_src: item.image_src
+    }));
+    return [...purchaseSources, ...preparationSources].sort((a, b) => a.name.localeCompare(b.name));
+  }, [items, preparationItems]);
+
+  const countMatches = countSources
+    .filter((source) => normalizeSearch(`${source.name} ${source.type_label}`).includes(normalizeSearch(countQuery)))
+    .slice(0, 12);
+  const countUnits = selectedCountSource ? unitOptionsForBase(selectedCountSource.base_unit) : ["unit"] as StockUnit[];
+  const physicalQuantityBase = selectedCountSource ? convertQuantity(parseUiNumber(physicalQuantity), physicalUnit, selectedCountSource.base_unit) : 0;
+  const countDifference = selectedCountSource && Number.isFinite(physicalQuantityBase) ? physicalQuantityBase - selectedCountSource.stock_base : 0;
+  const countKind = countDifference > 0 ? "Ajuste de entrada" : countDifference < 0 ? "Merma" : "Sin diferencia";
+  const canSaveCount = Boolean(selectedCountSource) && physicalQuantityBase >= 0 && Number.isFinite(physicalQuantityBase) && countDifference !== 0 && countReason.trim().length > 0;
 
   const consolidatedRows = useMemo<InventoryRow[]>(() => {
     return items.map((item) => ({
@@ -407,11 +566,9 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
       if (normalizedQuery && !haystack.includes(normalizedQuery)) return false;
       if (kind && row.item_kind !== kind) return false;
       if (status && currentStatus !== status) return false;
-      if (stockFilter === "available" && currentStatus !== "available") return false;
-      if (stockFilter === "low" && currentStatus !== "low") return false;
-      if (stockFilter === "out" && currentStatus !== "out") return false;
-      if (stockFilter === "hide_out" && currentStatus === "out") return false;
-      if (viewMode === "decentralized" && stockFilter !== "out" && row.stock <= 0) return false;
+      if (stockFilter === "available" && row.stock <= 0) return false;
+      if (stockFilter === "out" && row.stock !== 0) return false;
+      if (stockFilter === "all" && !showOutOfStock && row.stock === 0) return false;
       if (brand && row.brand_name !== brand) return false;
       if (supplier && row.supplier_name !== supplier) return false;
       if (expiration === "none" && expirationDate) return false;
@@ -426,17 +583,24 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
       return true;
     });
     return sortByOption(filtered, effectiveSort);
-  }, [brand, consolidatedRows, decentralizedRows, effectiveSort, expiration, kind, query, status, stockFilter, supplier, viewMode]);
+  }, [brand, consolidatedRows, decentralizedRows, effectiveSort, expiration, kind, query, showOutOfStock, status, stockFilter, supplier, viewMode]);
 
   function toggleColumn(column: ColumnKey) {
     if (!compatibleColumnsForMode(viewMode).includes(column)) return;
-    setVisibleColumns((current) => (current.includes(column) ? current.filter((item) => item !== column) : [...current, column]));
+    setColumnsByMode((current) => ({
+      ...current,
+      [viewMode]: current[viewMode].includes(column) ? current[viewMode].filter((item) => item !== column) : [...current[viewMode], column]
+    }));
   }
 
   function resetSettings() {
     setViewMode("consolidated");
-    setVisibleColumns(defaultColumnsForMode("consolidated"));
+    setColumnsByMode({
+      consolidated: defaultColumnsForMode("consolidated"),
+      decentralized: defaultColumnsForMode("decentralized")
+    });
     setStockFilter("all");
+    setShowOutOfStock(true);
     setOpenItemId(null);
   }
 
@@ -446,9 +610,12 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
     if (nextMode === "decentralized" && (sort === "cost_desc" || sort === "cost_asc")) {
       setSort("value_desc");
     }
-    setVisibleColumns((current) => {
-      const sanitizedColumns = sanitizeColumns(current, nextMode);
-      return sanitizedColumns.length ? sanitizedColumns : defaultColumnsForMode(nextMode);
+    setColumnsByMode((current) => {
+      const sanitizedColumns = sanitizeColumns(current[nextMode], nextMode);
+      return {
+        ...current,
+        [nextMode]: sanitizedColumns.length ? sanitizedColumns : defaultColumnsForMode(nextMode)
+      };
     });
   }
 
@@ -475,8 +642,7 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
         if (preparationUnitKind && item.unit_kind !== preparationUnitKind) return false;
         if (preparationStatus && currentStatus !== preparationStatus) return false;
         if (preparationStock === "available" && item.stock_base <= 0) return false;
-        if (preparationStock === "out" && item.stock_base > 0) return false;
-        if (preparationStock === "hide_out" && item.stock_base <= 0) return false;
+        if (preparationStock === "out" && item.stock_base !== 0) return false;
         if (preparationExpiration === "none" && expirationDate) return false;
         if (preparationExpiration && preparationExpiration !== "none" && !expirationDate) return false;
         if (expirationDate) {
@@ -500,6 +666,39 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
     setVisibleProductionColumns((current) => (current.includes(column) ? current.filter((item) => item !== column) : [...current, column]));
   }
 
+  function resetCountForm() {
+    setCountQuery("");
+    setSelectedCountSource(null);
+    setIsCountSourceOpen(false);
+    setActiveCountSourceIndex(0);
+    setPhysicalQuantity("");
+    setPhysicalUnit("unit");
+    setCountReason("");
+    setCountSubmitted(false);
+  }
+
+  function openCountModal() {
+    resetCountForm();
+    setCountSuccessMessage("");
+    setHideCountStatus(true);
+    setShowCountModal(true);
+  }
+
+  function closeCountModal() {
+    resetCountForm();
+    setHideCountStatus(true);
+    setShowCountModal(false);
+  }
+
+  function pickCountSource(source: CountSourceOption) {
+    setSelectedCountSource(source);
+    setCountQuery(source.name);
+    setPhysicalUnit(unitOptionsForBase(source.base_unit)[0]);
+    setPhysicalQuantity("");
+    setIsCountSourceOpen(false);
+    setActiveCountSourceIndex(0);
+  }
+
   return (
     <>
       <nav className="section-tabs inventory-section-tabs" aria-label="Secciones de inventario">
@@ -515,13 +714,17 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
         <>
       <section className="form-panel inventory-module-panel">
         <div className="section-title-row inventory-toolbar-row">
-          <h1>{viewMode === "consolidated" ? "Listado consolidado" : "Listado desglosado"}</h1>
+          <h1>{viewMode === "consolidated" ? "Listado consolidado" : "Inventario por lotes"}</h1>
           <div className="purchase-toolbar inventory-action-row">
             <button className="ghost-button icon-text-button" onClick={() => setShowSettings(true)} type="button">
-              <Settings size={18} /> Configuracion
+              <Settings size={18} /> Vista
+            </button>
+            <button className="primary-button icon-text-button" onClick={openCountModal} type="button">
+              Conteo fisico
             </button>
           </div>
         </div>
+        {countSuccessMessage ? <p className="form-status success">{countSuccessMessage}</p> : null}
 
         <div className="inventory-filter-bar">
           <input autoComplete="off" onChange={(event) => setQuery(event.target.value)} placeholder="Buscar producto, SKU, marca, proveedor o lote" value={query} />
@@ -704,7 +907,7 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
           <section aria-label="Configuracion de inventario" aria-modal="true" className="modal-panel inventory-settings-modal" role="dialog">
             <header className="modal-header">
               <div>
-                <strong>Configuracion de vista</strong>
+                <strong>Vista</strong>
                 <span>Preferencias guardadas en este navegador.</span>
               </div>
               <button className="icon-button" onClick={() => setShowSettings(false)} title="Cerrar" type="button">
@@ -720,38 +923,50 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
                       Consolidado
                     </button>
                     <button className={viewMode === "decentralized" ? "active" : ""} onClick={() => handleViewModeChange("decentralized")} type="button">
-                      Desglosado
+                      Inventario por lotes
                     </button>
                   </div>
                 </div>
                 <div className="field full">
-                  <label>Estado visible</label>
+                  <label>Mostrar</label>
                   <select onChange={(event) => setStockFilter(event.target.value as StockFilter)} value={stockFilter}>
                     <option value="all">Mostrar todos</option>
                     <option value="available">Solo disponibles</option>
-                    <option value="low">Solo bajo stock</option>
                     <option value="out">Solo agotados</option>
-                    <option value="hide_out">Ocultar agotados</option>
                   </select>
                 </div>
                 <div className="field full">
+                  <label>Agotados</label>
+                  <button className="ghost-button icon-text-button" onClick={() => setShowOutOfStock((current) => !current)} type="button">
+                    {showOutOfStock ? "Ocultar agotados" : "Mostrar agotados"}
+                  </button>
+                </div>
+                <div className="field full">
                   <label>Columnas</label>
-                  <div className="column-settings-grid">
-                    {compatibleColumnsForMode(viewMode).map((column) => (
-                      <label className="check-option" key={column}>
-                        <input checked={visibleColumns.includes(column)} onChange={() => toggleColumn(column)} type="checkbox" />
-                        <span>{columnLabel(column, viewMode)}</span>
-                      </label>
-                    ))}
+                  <div className="column-settings-sections">
+                    {inventoryColumnGroups.map((group) => {
+                      const columns = group.columns.filter((column) => compatibleColumnsForMode(viewMode).includes(column));
+                      if (columns.length === 0) return null;
+                      return (
+                        <section className="column-settings-section" key={group.title}>
+                          <h3>{group.title}</h3>
+                          <div className="column-settings-grid">
+                            {columns.map((column) => (
+                              <label className="check-option" key={column}>
+                                <input checked={visibleColumns.includes(column)} onChange={() => toggleColumn(column)} type="checkbox" />
+                                <span>{columnLabel(column, viewMode)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </section>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
               <div className="form-actions">
                 <button className="ghost-button" onClick={resetSettings} type="button">
                   Restablecer configuracion
-                </button>
-                <button className="primary-button" onClick={() => setShowSettings(false)} type="button">
-                  Aplicar
                 </button>
               </div>
             </div>
@@ -775,10 +990,53 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
           setPreparationStatus={setPreparationStatus}
           setPreparationStock={setPreparationStock}
           setPreparationUnitKind={setPreparationUnitKind}
+          openCountModal={openCountModal}
+          countSuccessMessage={countSuccessMessage}
           setShowProductionSettings={setShowProductionSettings}
           showProductionColumn={showProductionColumn}
         />
       )}
+
+      {showCountModal ? (
+        <PhysicalInventoryCountModal
+          canSave={canSaveCount}
+          countAction={countAction}
+          countDifference={countDifference}
+          countKind={countKind}
+          countMatches={countMatches}
+          countQuery={countQuery}
+          countReason={countReason}
+          countState={countState}
+          countSubmitted={countSubmitted}
+          countUnits={countUnits}
+          hideCountStatus={hideCountStatus}
+          isCountSourceOpen={isCountSourceOpen}
+          activeCountSourceIndex={activeCountSourceIndex}
+          onClose={closeCountModal}
+          onClearSource={() => {
+            setSelectedCountSource(null);
+            setCountQuery("");
+            setPhysicalQuantity("");
+            setPhysicalUnit("unit");
+            setCountReason("");
+          }}
+          onPickSource={pickCountSource}
+          physicalQuantity={physicalQuantity}
+          physicalQuantityBase={physicalQuantityBase}
+          physicalUnit={physicalUnit}
+          selectedCountSource={selectedCountSource}
+          setActiveCountSourceIndex={setActiveCountSourceIndex}
+          setCountQuery={setCountQuery}
+          setCountReason={setCountReason}
+          setCountSubmitted={setCountSubmitted}
+          setHideCountStatus={setHideCountStatus}
+          setIsCountSourceOpen={setIsCountSourceOpen}
+          setPhysicalQuantity={setPhysicalQuantity}
+          setPhysicalUnit={setPhysicalUnit}
+        />
+      ) : null}
+
+      <PhysicalInventoryCountHistory history={countHistory} />
 
       {showProductionSettings ? (
         <div className="modal-backdrop" role="presentation">
@@ -821,6 +1079,308 @@ export function InventoryWorkspace({ items, purchaseLines, preparationItems }: I
   );
 }
 
+function PhysicalInventoryCountModal({
+  activeCountSourceIndex,
+  canSave,
+  countAction,
+  countDifference,
+  countKind,
+  countMatches,
+  countQuery,
+  countReason,
+  countState,
+  countSubmitted,
+  countUnits,
+  hideCountStatus,
+  isCountSourceOpen,
+  onClose,
+  onClearSource,
+  onPickSource,
+  physicalQuantity,
+  physicalQuantityBase,
+  physicalUnit,
+  selectedCountSource,
+  setActiveCountSourceIndex,
+  setCountQuery,
+  setCountReason,
+  setCountSubmitted,
+  setHideCountStatus,
+  setIsCountSourceOpen,
+  setPhysicalQuantity,
+  setPhysicalUnit
+}: {
+  activeCountSourceIndex: number;
+  canSave: boolean;
+  countAction: (payload: FormData) => void;
+  countDifference: number;
+  countKind: string;
+  countMatches: CountSourceOption[];
+  countQuery: string;
+  countReason: string;
+  countState: PhysicalInventoryActionState;
+  countSubmitted: boolean;
+  countUnits: StockUnit[];
+  hideCountStatus: boolean;
+  isCountSourceOpen: boolean;
+  onClose: () => void;
+  onClearSource: () => void;
+  onPickSource: (source: CountSourceOption) => void;
+  physicalQuantity: string;
+  physicalQuantityBase: number;
+  physicalUnit: StockUnit;
+  selectedCountSource: CountSourceOption | null;
+  setActiveCountSourceIndex: (value: number | ((current: number) => number)) => void;
+  setCountQuery: (value: string) => void;
+  setCountReason: (value: string) => void;
+  setCountSubmitted: (value: boolean) => void;
+  setHideCountStatus: (value: boolean) => void;
+  setIsCountSourceOpen: (value: boolean) => void;
+  setPhysicalQuantity: (value: string) => void;
+  setPhysicalUnit: (value: StockUnit) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-label="Conteo fisico" aria-modal="true" className="modal-panel physical-count-modal" role="dialog">
+        <header className="modal-header">
+          <div>
+            <strong>Conteo fisico</strong>
+            <span>Registra diferencias sin modificar compras ni producciones.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button">
+            <X size={18} />
+          </button>
+        </header>
+        <form
+          action={countAction}
+          className="form-panel physical-count-form"
+          onSubmit={() => {
+            setCountSubmitted(true);
+            setHideCountStatus(false);
+          }}
+        >
+          <section className="form-section">
+            <div className="form-grid">
+              <div className="field autocomplete-field full">
+                <label>Producto o preparacion</label>
+                <div className="locked-input">
+                  <input
+                    autoComplete="off"
+                    disabled={Boolean(selectedCountSource)}
+                    onBlur={() => window.setTimeout(() => setIsCountSourceOpen(false), 120)}
+                    onChange={(event) => {
+                      setCountQuery(event.target.value.toUpperCase());
+                      setIsCountSourceOpen(true);
+                      setActiveCountSourceIndex(0);
+                    }}
+                    onFocus={() => setIsCountSourceOpen(true)}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        setIsCountSourceOpen(true);
+                        setActiveCountSourceIndex((current) => Math.min(current + 1, Math.max(countMatches.length - 1, 0)));
+                      }
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setActiveCountSourceIndex((current) => Math.max(current - 1, 0));
+                      }
+                      if (event.key === "Enter" && countMatches[activeCountSourceIndex]) {
+                        event.preventDefault();
+                        onPickSource(countMatches[activeCountSourceIndex]);
+                      }
+                      if (event.key === "Escape") setIsCountSourceOpen(false);
+                    }}
+                    placeholder="Buscar ingrediente, producto o preparacion"
+                    value={selectedCountSource?.name ?? countQuery}
+                  />
+                  {selectedCountSource ? (
+                    <button
+                      aria-label="Limpiar seleccion"
+                      className="clear-selection-button"
+                      onClick={onClearSource}
+                      type="button"
+                    >
+                      <X size={15} />
+                    </button>
+                  ) : null}
+                </div>
+                {isCountSourceOpen && !selectedCountSource ? (
+                  <div className="autocomplete-menu">
+                    {countMatches.map((source, index) => (
+                      <button
+                        className={`autocomplete-option${index === activeCountSourceIndex ? " active" : ""}`}
+                        key={`${source.source_kind}:${source.id}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          onPickSource(source);
+                        }}
+                        type="button"
+                      >
+                        <span>{source.name}</span>
+                        <span className="availability-badge ok">{source.type_label}</span>
+                      </button>
+                    ))}
+                    {countMatches.length === 0 ? <p className="autocomplete-empty">Sin coincidencias.</p> : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
+          {selectedCountSource?.id ? (
+            <>
+              <section className="form-section">
+                <div className="production-summary-grid physical-count-summary-grid">
+                  <div>
+                    <strong>Stock teorico</strong>
+                    <span>{formatStockQuantity(selectedCountSource.stock_base, selectedCountSource.base_unit)}</span>
+                  </div>
+                  <div>
+                    <strong>Unidad</strong>
+                    <span>{unitLabel(selectedCountSource.base_unit)}</span>
+                  </div>
+                  <div>
+                    <strong>Costo promedio</strong>
+                    <span>{formatCop(selectedCountSource.average_cost_cop, { decimals: true })}</span>
+                  </div>
+                </div>
+                <p className="field-hint">
+                  Conteo consolidado: el ajuste se reflejara en el stock total y, en inventario por lotes, se distribuira sobre las existencias disponibles.
+                </p>
+              </section>
+
+              <section className="form-section">
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Stock fisico contado</label>
+                    <div className="split-input">
+                      <input
+                        name="physical_quantity"
+                        onChange={(event) => setPhysicalQuantity(event.target.value.replace(/[^\d.,]/g, ""))}
+                        placeholder="Ingrese cantidad"
+                        value={physicalQuantity}
+                      />
+                      <select name="physical_unit" onChange={(event) => setPhysicalUnit(event.target.value as StockUnit)} value={physicalUnit}>
+                        {countUnits.map((unit) => (
+                          <option key={unit} value={unit}>
+                            {unitLabel(unit)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Diferencia</label>
+                    <input
+                      className={countDifference < 0 ? "readonly-danger" : countDifference > 0 ? "readonly-ok" : ""}
+                      readOnly
+                      value={Number.isFinite(countDifference) ? formatStockQuantity(countDifference, selectedCountSource.base_unit) : "Unidad incompatible"}
+                    />
+                  </div>
+                  <div className="field full">
+                    <label>Motivo</label>
+                    <input
+                      name="reason"
+                      onChange={(event) => setCountReason(event.target.value.toUpperCase())}
+                      placeholder="Ej. CONTEO DE CIERRE"
+                      value={countReason}
+                    />
+                    {countSubmitted && !countReason.trim() ? <p className="field-hint danger">El motivo es obligatorio.</p> : null}
+                  </div>
+                </div>
+              </section>
+
+              <section className="form-section">
+                <h3>Resumen</h3>
+                <div className="production-summary-grid physical-count-summary-grid">
+                  <div>
+                    <strong>Producto</strong>
+                    <span>{selectedCountSource.name}</span>
+                  </div>
+                  <div>
+                    <strong>Fisico</strong>
+                    <span>{Number.isFinite(physicalQuantityBase) ? formatStockQuantity(physicalQuantityBase, selectedCountSource.base_unit) : "Pendiente"}</span>
+                  </div>
+                  <div className={countDifference < 0 ? "highlight danger" : countDifference > 0 ? "highlight" : ""}>
+                    <strong>Tipo</strong>
+                    <span>{countKind}</span>
+                  </div>
+                </div>
+                {countSubmitted && countDifference === 0 ? <p className="field-hint danger">No se puede guardar una diferencia en cero.</p> : null}
+              </section>
+            </>
+          ) : null}
+
+          <input name="source_kind" type="hidden" value={selectedCountSource?.source_kind ?? ""} />
+          <input name="source_id" type="hidden" value={selectedCountSource?.id ?? ""} />
+          <input name="theoretical_quantity_base" type="hidden" value={selectedCountSource?.stock_base ?? 0} />
+          <input name="average_cost_cop" type="hidden" value={selectedCountSource?.average_cost_cop ?? 0} />
+          {!hideCountStatus && countState.status === "error" ? <p className="form-status error">{countState.message}</p> : null}
+          <div className="form-actions modal-form-actions">
+            <button className="ghost-button" onClick={onClose} type="button">
+              Cancelar
+            </button>
+            <PhysicalCountSubmitButton disabled={!canSave} />
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function PhysicalCountSubmitButton({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button className="primary-button" disabled={disabled || pending} type="submit">
+      {pending ? "Guardando..." : "Guardar conteo"}
+    </button>
+  );
+}
+
+function PhysicalInventoryCountHistory({ history }: { history: InventoryCountHistoryRow[] }) {
+  return (
+    <section className="form-panel physical-count-history-panel">
+      <div className="section-title-row">
+        <h2>Historial de conteos</h2>
+      </div>
+      <div className="data-table-wrap">
+        <table className="data-table compact-data-table physical-count-history-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Producto</th>
+              <th>Origen</th>
+              <th>Teorico</th>
+              <th>Fisico</th>
+              <th>Diferencia</th>
+              <th>Ajuste</th>
+              <th>Motivo</th>
+              <th>Usuario</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map((row) => (
+              <tr key={row.id}>
+                <td>{dateLabel(row.created_at)}</td>
+                <td>
+                  <strong>{row.product_name}</strong>
+                </td>
+                <td>{row.source_label}</td>
+                <td>{formatStockQuantity(row.theoretical_quantity_base, row.base_unit)}</td>
+                <td>{formatStockQuantity(row.physical_quantity_base, row.base_unit)}</td>
+                <td>{formatStockQuantity(row.difference_quantity_base, row.base_unit)}</td>
+                <td><span className={`stock-pill ${row.adjustment_kind === "adjustment_in" ? "ok" : "warning"}`}>{row.adjustment_kind === "adjustment_in" ? "Ajuste de entrada" : "Merma"}</span></td>
+                <td>{row.reason}</td>
+                <td>{row.user_label}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {history.length === 0 ? <p className="muted">Aun no hay conteos fisicos registrados.</p> : null}
+      </div>
+    </section>
+  );
+}
+
 function ProductionInventorySection({
   filteredItems,
   openPreparation,
@@ -830,6 +1390,8 @@ function ProductionInventorySection({
   preparationStatus,
   preparationStock,
   preparationUnitKind,
+  countSuccessMessage,
+  openCountModal,
   setOpenPreparationId,
   setPreparationExpiration,
   setPreparationQuery,
@@ -847,6 +1409,8 @@ function ProductionInventorySection({
   preparationStatus: string;
   preparationStock: StockFilter;
   preparationUnitKind: string;
+  countSuccessMessage: string;
+  openCountModal: () => void;
   setOpenPreparationId: (value: string | null | ((current: string | null) => string | null)) => void;
   setPreparationExpiration: (value: string) => void;
   setPreparationQuery: (value: string) => void;
@@ -863,10 +1427,14 @@ function ProductionInventorySection({
           <h1>Preparaciones producidas</h1>
           <div className="purchase-toolbar inventory-action-row">
             <button className="ghost-button icon-text-button" onClick={() => setShowProductionSettings(true)} type="button">
-              <Settings size={18} /> Configuracion
+              <Settings size={18} /> Vista
+            </button>
+            <button className="primary-button icon-text-button" onClick={openCountModal} type="button">
+              Conteo fisico
             </button>
           </div>
         </div>
+        {countSuccessMessage ? <p className="form-status success">{countSuccessMessage}</p> : null}
         <div className="inventory-filter-bar">
           <input autoComplete="off" onChange={(event) => setPreparationQuery(event.target.value)} placeholder="Buscar preparacion" value={preparationQuery} />
           <select onChange={(event) => setPreparationUnitKind(event.target.value)} value={preparationUnitKind}>
@@ -896,7 +1464,6 @@ function ProductionInventorySection({
             <option value="all">Con stock y agotadas</option>
             <option value="available">Con stock</option>
             <option value="out">Agotadas</option>
-            <option value="hide_out">Ocultar agotadas</option>
           </select>
         </div>
         <div className="data-table-wrap">

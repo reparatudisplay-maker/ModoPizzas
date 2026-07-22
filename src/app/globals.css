@@ -1315,7 +1315,7 @@ a {
 
 .modal-form-actions {
   position: sticky;
-  z-index: 2;
+  z-index: 30;
   bottom: 0;
   grid-template-columns: auto auto;
   justify-content: end;
@@ -1926,10 +1926,66 @@ a {
   width: min(760px, 100%);
 }
 
+.physical-count-modal {
+  display: grid;
+  gap: 0;
+  width: min(900px, 100%);
+}
+
+.physical-count-form {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.physical-count-modal .modal-form-actions {
+  position: static;
+}
+
+.physical-count-modal .autocomplete-menu {
+  position: static;
+  margin-top: 4px;
+}
+
+.physical-count-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.physical-count-history-table {
+  min-width: 980px;
+}
+
+.readonly-ok {
+  border-color: color-mix(in srgb, #1a7f37 55%, var(--border));
+  color: #1a7f37;
+}
+
+.readonly-danger {
+  border-color: color-mix(in srgb, #b42318 55%, var(--border));
+  color: #b42318;
+}
+
 .column-settings-grid {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.column-settings-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.column-settings-section {
+  display: grid;
+  gap: 8px;
+}
+
+.column-settings-section h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
 }
 
 .icon-text-button {
@@ -2121,6 +2177,18 @@ a {
 
 .production-modal {
   width: min(1040px, 100%);
+}
+
+.production-register-modal {
+  display: grid;
+  gap: 0;
+  width: min(1080px, 100%);
+}
+
+.production-register-modal .production-register-panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .production-register-panel {
