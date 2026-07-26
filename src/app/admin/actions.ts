@@ -351,7 +351,7 @@ async function hasDuplicateName(
 
 async function reserveMenuSku(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  section: "menu_categories" | "pizza_sizes" | "pizza_flavors",
+  section: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions",
   name: string
 ) {
   const { data, error } = await supabase.rpc("reserve_menu_sku", { p_section: section, p_name: name });
@@ -361,14 +361,14 @@ async function reserveMenuSku(
 
 async function nextMenuSortOrder(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  table: "menu_categories" | "pizza_sizes" | "pizza_flavors"
+  table: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions"
 ) {
   const { data, error } = await supabase.from(table).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle();
   if (error) throw new Error(error.message);
   return Number(data?.sort_order ?? 0) + 1;
 }
 
-async function normalizeMenuOrder(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, section: "menu_categories" | "pizza_sizes" | "pizza_flavors") {
+async function normalizeMenuOrder(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, section: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions") {
   const { error } = await supabase.rpc("normalize_menu_order", { p_section: section });
   if (error) throw new Error(error.message);
 }
@@ -430,7 +430,7 @@ function getJsonStringArray(formData: FormData, key: string) {
 async function savePizzaAdditionRelations(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   additionId: string,
-  sizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string; cost_cop: number }>,
+  sizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string }>,
   flavorIds: string[],
   categoryIds: string[]
 ) {
@@ -451,7 +451,6 @@ async function savePizzaAdditionRelations(
         unit: item.base_unit,
         display_quantity: item.quantity,
         display_unit: item.unit,
-        cost_cop: item.cost_cop,
         price_cop: item.price_cop
       }))
     );
@@ -797,14 +796,16 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
   const id = getOptionalString(formData, "id");
   const supabase = await createServerSupabaseClient();
   const name = upperText(getOptionalString(formData, "name")) ?? "";
-  const inventoryItemId = getString(formData, "inventory_item_id");
+  const sourceKind = getString(formData, "source_kind");
+  const sourceId = getString(formData, "source_id");
   const maxAllowed = getInteger(formData, "max_allowed", 1);
   const sizeInputs = getPizzaAdditionSizeInputs(formData);
   const flavorIds = getJsonStringArray(formData, "compatible_flavor_ids");
   const categoryIds = getJsonStringArray(formData, "compatible_category_ids");
 
   if (!name) return { status: "error", message: "Ingresa el nombre de la adicion." };
-  if (!inventoryItemId) return { status: "error", message: "Selecciona el ingrediente que consume la adicion." };
+  if (sourceKind !== "inventory_item" && sourceKind !== "preparation") return { status: "error", message: "Selecciona un componente valido." };
+  if (!sourceId) return { status: "error", message: "Selecciona el componente que consume la adicion." };
   if (maxAllowed <= 0) return { status: "error", message: "El maximo permitido debe ser mayor a cero." };
   if (sizeInputs.length === 0) return { status: "error", message: "Configura cantidad y precio para al menos un tamano." };
 
@@ -816,19 +817,26 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la adicion." };
   }
 
-  const { data: ingredient, error: ingredientError } = await supabase
-    .from("inventory_items")
-    .select("id, unit, item_kind, is_active, average_cost_cop, presentation_quantity")
-    .eq("id", inventoryItemId)
-    .single();
-  if (ingredientError || !ingredient) return { status: "error", message: ingredientError?.message ?? "Ingrediente no encontrado." };
-  if (!ingredient.is_active || ingredient.item_kind !== "ingredient" || ingredient.presentation_quantity !== null) {
-    return { status: "error", message: "Las adiciones solo pueden consumir ingredientes activos." };
+  let baseUnit = "unit";
+  if (sourceKind === "inventory_item") {
+    const { data: ingredient, error: ingredientError } = await supabase
+      .from("inventory_items")
+      .select("id, unit, item_kind, is_active, presentation_quantity")
+      .eq("id", sourceId)
+      .single();
+    if (ingredientError || !ingredient) return { status: "error", message: ingredientError?.message ?? "Ingrediente no encontrado." };
+    if (!ingredient.is_active || ingredient.item_kind !== "ingredient" || ingredient.presentation_quantity !== null) {
+      return { status: "error", message: "Las adiciones solo pueden consumir ingredientes activos." };
+    }
+    baseUnit = canonicalStockUnit(ingredient.unit);
+  } else {
+    const { data: preparation, error: preparationError } = await supabase.from("preparations").select("id, base_unit, is_active").eq("id", sourceId).single();
+    if (preparationError || !preparation) return { status: "error", message: preparationError?.message ?? "Preparacion no encontrada." };
+    if (!preparation.is_active) return { status: "error", message: "Las adiciones solo pueden consumir preparaciones activas." };
+    baseUnit = canonicalStockUnit(preparation.base_unit);
   }
 
-  const baseUnit = canonicalStockUnit(ingredient.unit);
-  const averageCost = Number(ingredient.average_cost_cop ?? 0);
-  const normalizedSizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string; cost_cop: number }> = [];
+  const normalizedSizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string }> = [];
   try {
     for (const item of sizeInputs) {
       const submittedUnit = ["g", "kg", "ml", "l", "unit"].includes(item.unit) ? item.unit : "unit";
@@ -839,8 +847,7 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
         unit: submittedUnit,
         price_cop: Math.max(0, Number(item.price_cop ?? 0)),
         quantity_base: quantityBase,
-        base_unit: baseUnit,
-        cost_cop: Number((quantityBase * averageCost).toFixed(2))
+        base_unit: baseUnit
       });
     }
   } catch (error) {
@@ -849,13 +856,21 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
 
   const payload = {
     name,
-    inventory_item_id: inventoryItemId,
+    source_kind: sourceKind,
+    inventory_item_id: sourceKind === "inventory_item" ? sourceId : null,
+    source_preparation_id: sourceKind === "preparation" ? sourceId : null,
     max_allowed: maxAllowed,
     is_active: getBoolean(formData, "is_active"),
     is_available: getBoolean(formData, "is_available"),
     updated_at: new Date().toISOString()
   };
-  const query = id ? supabase.from("pizza_additions").update(payload).eq("id", id) : supabase.from("pizza_additions").insert(payload);
+  const query = id
+    ? supabase.from("pizza_additions").update(payload).eq("id", id)
+    : supabase.from("pizza_additions").insert({
+        ...payload,
+        sku: await reserveMenuSku(supabase, "pizza_additions", name),
+        sort_order: await nextMenuSortOrder(supabase, "pizza_additions")
+      });
   const { data, error } = await query.select("id").single();
   if (error) return { status: "error", message: error.message };
 
@@ -874,7 +889,7 @@ export async function moveMenuPizzaItem(_previousState: FormActionState, formDat
   const id = getString(formData, "id");
   const direction = getString(formData, "direction");
   if (!id) return { status: "error", message: "Registro no valido." };
-  if (!["menu_categories", "pizza_sizes", "pizza_flavors"].includes(section)) return { status: "error", message: "Seccion no valida." };
+  if (!["menu_categories", "pizza_sizes", "pizza_flavors", "pizza_additions"].includes(section)) return { status: "error", message: "Seccion no valida." };
   if (direction !== "up" && direction !== "down") return { status: "error", message: "Direccion no valida." };
 
   const supabase = await createServerSupabaseClient();
@@ -891,6 +906,7 @@ export async function deleteMenuCategory(_previousState: FormActionState, formDa
   try {
     const usedIn: string[] = [];
     if ((await relationCount(supabase, "pizza_flavors", "menu_category_id", id)) > 0) usedIn.push("Sabores");
+    if ((await relationCount(supabase, "pizza_addition_categories", "menu_category_id", id)) > 0) usedIn.push("Adiciones");
     if (usedIn.length > 0) return { status: "error", message: `No se puede eliminar esta categoria porque esta siendo utilizada en ${usedIn.join(" y ")}.` };
 
     const { error } = await supabase.from("menu_categories").delete().eq("id", id);
@@ -908,6 +924,9 @@ export async function deletePizzaSize(_previousState: FormActionState, formData:
   if (!id) return { status: "error", message: "Tamano no valido." };
   const supabase = await createServerSupabaseClient();
   try {
+    if ((await relationCount(supabase, "pizza_addition_sizes", "pizza_size_id", id)) > 0) {
+      return { status: "error", message: "No se puede eliminar este tamano porque esta siendo utilizado en Adiciones." };
+    }
     const { error } = await supabase.from("pizza_sizes").delete().eq("id", id);
     if (error) return { status: "error", message: error.message };
     await normalizeMenuOrder(supabase, "pizza_sizes");
@@ -925,6 +944,7 @@ export async function deletePizzaFlavor(_previousState: FormActionState, formDat
   try {
     const usedIn: string[] = [];
     if ((await relationCount(supabase, "pizza_flavor_ingredients", "flavor_id", id)) > 0) usedIn.push("Ingredientes caracteristicos");
+    if ((await relationCount(supabase, "pizza_addition_flavors", "flavor_id", id)) > 0) usedIn.push("Adiciones");
     if (usedIn.length > 0) return { status: "error", message: `No se puede eliminar este sabor porque esta siendo utilizado en ${usedIn.join(" y ")}.` };
 
     const { error } = await supabase.from("pizza_flavors").delete().eq("id", id);
@@ -952,6 +972,7 @@ export async function deletePizzaAddition(_previousState: FormActionState, formD
 
     const { error } = await supabase.from("pizza_additions").delete().eq("id", id);
     if (error) return { status: "error", message: error.message };
+    await normalizeMenuOrder(supabase, "pizza_additions");
     revalidateInventory();
     return { status: "success", message: "Adicion eliminada correctamente." };
   } catch (error) {

@@ -36,8 +36,10 @@ type FlavorIngredientSelection = {
 export type AdditionIngredientSource = {
   id: string;
   name: string;
+  source_kind: "inventory_item" | "preparation";
   unit: StockUnit;
-  average_cost_cop: number;
+  stock_base: number;
+  unit_cost_cop: number | null;
 };
 
 export type MenuCategoryRecord = {
@@ -80,14 +82,18 @@ export type PizzaFlavorRecord = {
 
 export type PizzaAdditionRecord = {
   id: string;
+  sku: string;
   name: string;
-  inventory_item_id: string;
-  ingredient_name: string;
-  ingredient_unit: StockUnit;
-  ingredient_average_cost_cop: number;
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+  component_name: string;
+  component_unit: StockUnit;
+  component_stock_base: number;
+  component_unit_cost_cop: number | null;
   max_allowed: number;
   is_active: boolean;
   is_available: boolean;
+  sort_order: number;
   created_at: string;
   sizes: {
     pizza_size_id: string;
@@ -96,7 +102,6 @@ export type PizzaAdditionRecord = {
     unit: "g" | "ml" | "unit";
     display_quantity: number;
     display_unit: StockUnit;
-    cost_cop: number;
     price_cop: number;
   }[];
   compatible_flavors: { id: string; name: string }[];
@@ -106,7 +111,7 @@ export type PizzaAdditionRecord = {
 type FlavorColumn = "sku" | "photo" | "description" | "category" | "half" | "allergens" | "status" | "actions";
 type SizeColumn = "sku" | "diameter" | "slices" | "status" | "actions";
 type CategoryColumn = "sku" | "description" | "status" | "actions";
-type AdditionColumn = "ingredient" | "sizes" | "cost" | "price" | "max" | "compatibility" | "availability" | "status" | "actions";
+type AdditionColumn = "sku" | "component" | "sizes" | "cost" | "price" | "margin" | "compatibility" | "status" | "actions";
 type ModalState =
   | { section: "sabores"; item: PizzaFlavorRecord | null }
   | { section: "tamanos"; item: PizzaSizeRecord | null }
@@ -119,13 +124,13 @@ const defaultColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
   categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
-  adiciones: ["ingredient", "sizes", "cost", "price", "max", "compatibility", "availability", "status", "actions"] as AdditionColumn[]
+  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[]
 };
 const allColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
   categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
-  adiciones: ["ingredient", "sizes", "cost", "price", "max", "compatibility", "availability", "status", "actions"] as AdditionColumn[]
+  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[]
 };
 
 function readColumns() {
@@ -177,13 +182,12 @@ function columnLabel(section: SectionKey, column: string) {
     sku: "SKU",
     diameter: "Diametro",
     slices: "Porciones",
-    ingredient: "Ingrediente",
+    component: "Componente",
     sizes: "Tamanos",
     cost: "Costo",
     price: "Precio",
-    max: "Maximo",
+    margin: "Margen",
     compatibility: "Compatibles",
-    availability: "Disponibilidad",
     status: "Estado",
     actions: "Acciones"
   };
@@ -235,6 +239,25 @@ function unitOptionsFor(unit: StockUnit) {
 
 function formatAdditionQuantity(quantity: number, unit: StockUnit) {
   return `${formatDecimal(quantity)} ${formatUnit(unit)}`;
+}
+
+function additionCost(quantityBase: number, unitCost: number | null) {
+  if (!unitCost || unitCost <= 0) return null;
+  return quantityBase * unitCost;
+}
+
+function additionMargin(price: number, cost: number | null) {
+  if (!cost || cost <= 0 || price <= 0) return null;
+  return ((price - cost) / price) * 100;
+}
+
+function formatPercent(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "Sin margen";
+  return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function costLabel(value: number | null) {
+  return value === null ? "Sin costo disponible" : formatCop(value);
 }
 
 function orderedFirst<T extends { sort_order: number; name: string }>(items: T[]) {
@@ -317,12 +340,11 @@ export function MenuPizzasWorkspace({
   }, [categories, limit, normalizedQuery, status]);
 
   const filteredAdditions = useMemo(() => {
-    const filtered = [...additions]
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const filtered = orderedFirst(additions)
       .filter((item) => {
         const compatibleText = [...item.compatible_flavors, ...item.compatible_categories].map((compatible) => compatible.name).join(" ");
         const matchesQuery =
-          !normalizedQuery || normalizeMasterText(`${item.name} ${item.ingredient_name} ${compatibleText}`).includes(normalizedQuery);
+          !normalizedQuery || normalizeMasterText(`${item.sku} ${item.name} ${item.component_name} ${compatibleText}`).includes(normalizedQuery);
         const matchesStatus = status === "active" ? item.is_active : status === "inactive" ? !item.is_active : true;
         return matchesQuery && matchesStatus;
       });
@@ -415,7 +437,7 @@ export function MenuPizzasWorkspace({
           <CategoriesTable allItems={orderedFirst(categories)} categories={filteredCategories} onEdit={(item) => setModal({ section: "categorias", item })} showColumn={showColumn} />
         ) : null}
         {section === "adiciones" ? (
-          <AdditionsTable additions={filteredAdditions} onEdit={(item) => setModal({ section: "adiciones", item })} showColumn={showColumn} />
+          <AdditionsTable additions={filteredAdditions} allItems={orderedFirst(additions)} onEdit={(item) => setModal({ section: "adiciones", item })} showColumn={showColumn} />
         ) : null}
       </section>
 
@@ -661,10 +683,12 @@ function CategoriesTable({
 
 function AdditionsTable({
   additions,
+  allItems,
   showColumn,
   onEdit
 }: {
   additions: PizzaAdditionRecord[];
+  allItems: PizzaAdditionRecord[];
   showColumn: (column: string) => boolean;
   onEdit: (item: PizzaAdditionRecord) => void;
 }) {
@@ -673,14 +697,15 @@ function AdditionsTable({
       <table className="data-table rich-inventory-table menu-pizzas-table menu-additions-table">
         <thead>
           <tr>
+            <th></th>
+            {showColumn("sku") ? <th>SKU</th> : null}
             <th>Nombre</th>
-            {showColumn("ingredient") ? <th>Ingrediente</th> : null}
+            {showColumn("component") ? <th>Componente</th> : null}
             {showColumn("sizes") ? <th>Tamanos</th> : null}
-            {showColumn("cost") ? <th>Costo</th> : null}
-            {showColumn("price") ? <th>Precio adicional</th> : null}
-            {showColumn("max") ? <th>Max.</th> : null}
+            {showColumn("cost") ? <th>Costo desde</th> : null}
+            {showColumn("price") ? <th>Precio desde</th> : null}
+            {showColumn("margin") ? <th>Margen</th> : null}
             {showColumn("compatibility") ? <th>Compatibles</th> : null}
-            {showColumn("availability") ? <th>Disponibilidad</th> : null}
             {showColumn("status") ? <th>Estado</th> : null}
             {showColumn("actions") ? <th className="actions-column compact-actions-column">Acciones</th> : null}
           </tr>
@@ -688,6 +713,11 @@ function AdditionsTable({
         <tbody>
           {additions.map((item) => {
             const sizeSummary = item.sizes.map((size) => `${size.pizza_size_name}: ${formatAdditionQuantity(size.display_quantity, size.display_unit)}`).join(", ");
+            const costs = item.sizes.map((size) => additionCost(size.quantity_base, item.component_unit_cost_cop)).filter((value): value is number => value !== null);
+            const prices = item.sizes.map((size) => Number(size.price_cop ?? 0)).filter((value) => value > 0);
+            const minCost = costs.length ? Math.min(...costs) : null;
+            const minPrice = prices.length ? Math.min(...prices) : 0;
+            const margin = minPrice > 0 ? additionMargin(minPrice, minCost) : null;
             const compatibility = [
               ...item.compatible_categories.map((category) => category.name),
               ...item.compatible_flavors.map((flavor) => flavor.name)
@@ -695,30 +725,36 @@ function AdditionsTable({
             return (
               <tr key={item.id}>
                 <td>
+                  <ReorderControls id={item.id} items={allItems} section="pizza_additions" />
+                </td>
+                {showColumn("sku") ? <td>{item.sku}</td> : null}
+                <td>
                   <strong>{item.name}</strong>
                 </td>
-                {showColumn("ingredient") ? <td>{item.ingredient_name}</td> : null}
+                {showColumn("component") ? (
+                  <td>
+                    {item.component_name}
+                    <small className="muted block-text">{item.source_kind === "preparation" ? "Preparacion" : "Ingrediente"}</small>
+                  </td>
+                ) : null}
                 {showColumn("sizes") ? (
                   <td title={sizeSummary || "Sin tamanos"}>
                     <span className="truncated-cell">{sizeSummary || "Sin tamanos"}</span>
                   </td>
                 ) : null}
-                {showColumn("cost") ? <td>{formatCop(item.sizes.reduce((sum, size) => sum + Number(size.cost_cop ?? 0), 0))}</td> : null}
-                {showColumn("price") ? <td>{formatCop(item.sizes.reduce((sum, size) => sum + Number(size.price_cop ?? 0), 0))}</td> : null}
-                {showColumn("max") ? <td>{item.max_allowed}</td> : null}
+                {showColumn("cost") ? <td>{costLabel(minCost)}</td> : null}
+                {showColumn("price") ? <td>{minPrice > 0 ? formatCop(minPrice) : "Sin precio"}</td> : null}
+                {showColumn("margin") ? <td className={margin !== null && margin < 0 ? "danger-text" : ""}>{formatPercent(margin)}</td> : null}
                 {showColumn("compatibility") ? (
                   <td title={compatibility || "Todos"}>
                     <span className="truncated-cell">{compatibility || "Todos"}</span>
                   </td>
                 ) : null}
-                {showColumn("availability") ? (
-                  <td>
-                    <span className={`stock-pill ${item.is_available ? "ok" : "danger"}`}>{item.is_available ? "Disponible" : "No disponible"}</span>
-                  </td>
-                ) : null}
                 {showColumn("status") ? (
                   <td>
-                    <span className={`stock-pill ${item.is_active ? "ok" : "danger"}`}>{activeLabel(item.is_active)}</span>
+                    <span className={`stock-pill ${item.is_active && item.is_available ? "ok" : "danger"}`}>
+                      {item.is_active ? (item.is_available ? "Activo" : "No disponible") : "Inactivo"}
+                    </span>
                   </td>
                 ) : null}
                 {showColumn("actions") ? (
@@ -747,7 +783,7 @@ function ReorderControls({
   items
 }: {
   id: string;
-  section: "menu_categories" | "pizza_sizes" | "pizza_flavors";
+  section: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions";
   items: Array<{ id: string }>;
 }) {
   const index = items.findIndex((item) => item.id === id);
@@ -771,7 +807,7 @@ function ReorderButton({
   direction
 }: {
   id: string;
-  section: "menu_categories" | "pizza_sizes" | "pizza_flavors";
+  section: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions";
   direction: "up" | "down";
 }) {
   const [state, formAction] = useActionState(moveMenuPizzaItem, initialState);
@@ -1146,15 +1182,16 @@ function AdditionForm({
   action: (payload: FormData) => void;
   onClose: () => void;
 }) {
-  const initialIngredient = ingredientSources.find((source) => source.id === item?.inventory_item_id) ?? ingredientSources[0] ?? null;
-  const [ingredientId, setIngredientId] = useState(initialIngredient?.id ?? "");
-  const selectedIngredient = ingredientSources.find((source) => source.id === ingredientId) ?? null;
+  const initialComponent = ingredientSources.find((source) => source.id === item?.source_id && source.source_kind === item?.source_kind) ?? ingredientSources[0] ?? null;
+  const [sourceKey, setSourceKey] = useState(initialComponent ? `${initialComponent.source_kind}:${initialComponent.id}` : "");
+  const selectedComponent = ingredientSources.find((source) => `${source.source_kind}:${source.id}` === sourceKey) ?? null;
   const initialRows = sizes.map((size) => {
     const existing = item?.sizes.find((row) => row.pizza_size_id === size.id);
-    const unit = existing?.display_unit ?? unitOptionsFor(selectedIngredient?.unit ?? "unit")[0];
+    const unit = existing?.display_unit ?? unitOptionsFor(selectedComponent?.unit ?? "unit")[0];
     return {
       pizza_size_id: size.id,
       pizza_size_name: size.name,
+      enabled: Boolean(existing),
       quantity: existing?.display_quantity ? String(existing.display_quantity) : "",
       unit,
       price_cop: existing?.price_cop ? String(existing.price_cop) : ""
@@ -1163,9 +1200,10 @@ function AdditionForm({
   const [sizeRows, setSizeRows] = useState(initialRows);
   const [compatibleFlavorIds, setCompatibleFlavorIds] = useState<string[]>(item?.compatible_flavors.map((flavor) => flavor.id) ?? []);
   const [compatibleCategoryIds, setCompatibleCategoryIds] = useState<string[]>(item?.compatible_categories.map((category) => category.id) ?? []);
-  const unitOptions = useMemo(() => unitOptionsFor(selectedIngredient?.unit ?? "unit"), [selectedIngredient?.unit]);
+  const unitOptions = useMemo(() => unitOptionsFor(selectedComponent?.unit ?? "unit"), [selectedComponent?.unit]);
 
   const rowsPayload = sizeRows
+    .filter((row) => row.enabled)
     .map((row) => ({
       pizza_size_id: row.pizza_size_id,
       quantity: Number(String(row.quantity).replace(",", ".")),
@@ -1183,16 +1221,17 @@ function AdditionForm({
   }
 
   function estimatedCost(row: (typeof sizeRows)[number]) {
-    if (!selectedIngredient) return 0;
+    if (!selectedComponent?.unit_cost_cop) return null;
     const quantity = Number(String(row.quantity).replace(",", "."));
-    if (quantity <= 0) return 0;
-    return convertQuantity(quantity, row.unit, canonicalUnit(row.unit)) * selectedIngredient.average_cost_cop;
+    if (quantity <= 0) return null;
+    return convertQuantity(quantity, row.unit, canonicalUnit(row.unit)) * selectedComponent.unit_cost_cop;
   }
 
   return (
     <form action={action} className="compact-card">
       {item ? <input name="id" type="hidden" value={item.id} /> : null}
-      <input name="inventory_item_id" type="hidden" value={ingredientId} />
+      <input name="source_kind" type="hidden" value={selectedComponent?.source_kind ?? ""} />
+      <input name="source_id" type="hidden" value={selectedComponent?.id ?? ""} />
       <input name="addition_sizes" type="hidden" value={JSON.stringify(rowsPayload)} />
       <input name="compatible_flavor_ids" type="hidden" value={JSON.stringify(compatibleFlavorIds)} />
       <input name="compatible_category_ids" type="hidden" value={JSON.stringify(compatibleCategoryIds)} />
@@ -1202,13 +1241,13 @@ function AdditionForm({
           <input defaultValue={item?.name ?? ""} name="name" onInput={(event) => (event.currentTarget.value = uppercaseMasterName(event.currentTarget.value))} required />
         </div>
         <div className="field">
-          <label>Ingrediente</label>
+          <label>Ingrediente o preparacion</label>
           <select
             onChange={(event) => {
-              const nextId = event.target.value;
-              const nextIngredient = ingredientSources.find((ingredient) => ingredient.id === nextId);
-              const nextOptions = unitOptionsFor(nextIngredient?.unit ?? "unit");
-              setIngredientId(nextId);
+              const nextKey = event.target.value;
+              const nextComponent = ingredientSources.find((source) => `${source.source_kind}:${source.id}` === nextKey);
+              const nextOptions = unitOptionsFor(nextComponent?.unit ?? "unit");
+              setSourceKey(nextKey);
               setSizeRows((current) =>
                 current.map((row) => ({
                   ...row,
@@ -1217,16 +1256,16 @@ function AdditionForm({
               );
             }}
             required
-            value={ingredientId}
+            value={sourceKey}
           >
-            <option value="">Selecciona ingrediente</option>
-            {ingredientSources.map((ingredient) => (
-              <option key={ingredient.id} value={ingredient.id}>
-                {ingredient.name}
+            <option value="">Selecciona componente</option>
+            {ingredientSources.map((source) => (
+              <option key={`${source.source_kind}:${source.id}`} value={`${source.source_kind}:${source.id}`}>
+                {source.name} - {source.source_kind === "preparation" ? "PREPARACION" : "INGREDIENTE"}
               </option>
             ))}
           </select>
-          <p className="field-hint">Solo ingredientes activos. No consume productos para venta ni insumos.</p>
+          <p className="field-hint">Solo ingredientes y preparaciones activas. No consume productos para venta ni insumos.</p>
         </div>
         <div className="field">
           <label>Maximo permitido</label>
@@ -1237,27 +1276,34 @@ function AdditionForm({
           <div className="addition-size-grid">
             {sizeRows.map((row) => (
               <div className="addition-size-row" key={row.pizza_size_id}>
+                <label className="check-option addition-enable-option">
+                  <input checked={row.enabled} onChange={(event) => updateRow(row.pizza_size_id, { enabled: event.target.checked })} type="checkbox" />
+                  <span>Habilitar</span>
+                </label>
                 <strong>{row.pizza_size_name}</strong>
                 <input
+                  disabled={!row.enabled}
                   inputMode="decimal"
                   onChange={(event) => updateRow(row.pizza_size_id, { quantity: event.target.value })}
                   placeholder="Cantidad"
                   value={row.quantity}
                 />
-                <select onChange={(event) => updateRow(row.pizza_size_id, { unit: event.target.value as StockUnit })} value={row.unit}>
+                <select disabled={!row.enabled} onChange={(event) => updateRow(row.pizza_size_id, { unit: event.target.value as StockUnit })} value={row.unit}>
                   {unitOptions.map((unit) => (
                     <option key={unit} value={unit}>
                       {formatUnit(unit)}
                     </option>
                   ))}
                 </select>
-                <span className="readonly-chip">Costo {formatCop(estimatedCost(row))}</span>
+                <span className="readonly-chip">Costo {costLabel(estimatedCost(row))}</span>
                 <input
+                  disabled={!row.enabled}
                   inputMode="numeric"
                   onChange={(event) => updateRow(row.pizza_size_id, { price_cop: event.target.value.replace(/\D/g, "") })}
-                  placeholder="Precio COP"
+                  placeholder="Precio adicional"
                   value={row.price_cop}
                 />
+                {row.enabled ? <AdditionProfit cost={estimatedCost(row)} price={Number(row.price_cop || 0)} /> : null}
               </div>
             ))}
           </div>
@@ -1305,6 +1351,19 @@ function AdditionForm({
         <SubmitButton label={item ? "Actualizar adicion" : "Guardar adicion"} />
       </div>
     </form>
+  );
+}
+
+function AdditionProfit({ cost, price }: { cost: number | null; price: number }) {
+  const profit = cost !== null ? price - cost : null;
+  const margin = additionMargin(price, cost);
+  if (cost === null) {
+    return <span className="addition-warning">Sin costo disponible. Margen no calculable.</span>;
+  }
+  return (
+    <span className={profit !== null && profit < 0 ? "addition-warning" : "readonly-chip"}>
+      Utilidad {formatCop(profit ?? 0)} · Margen {formatPercent(margin)}
+    </span>
   );
 }
 
