@@ -330,7 +330,16 @@ async function getEditablePhysicalCount(supabase: Awaited<ReturnType<typeof crea
 
 async function hasDuplicateName(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  table: "product_categories" | "brands" | "suppliers" | "conservation_profiles" | "preparations" | "menu_categories" | "pizza_sizes" | "pizza_flavors",
+  table:
+    | "product_categories"
+    | "brands"
+    | "suppliers"
+    | "conservation_profiles"
+    | "preparations"
+    | "menu_categories"
+    | "pizza_sizes"
+    | "pizza_flavors"
+    | "pizza_additions",
   name: string,
   currentId?: string | null
 ) {
@@ -381,6 +390,85 @@ async function saveFlavorIngredients(
   }));
   const { error } = await supabase.from("pizza_flavor_ingredients").insert(payload);
   if (error) throw new Error(error.message);
+}
+
+type PizzaAdditionSizeInput = {
+  pizza_size_id: string;
+  quantity: number;
+  unit: string;
+  price_cop: number;
+};
+
+function getPizzaAdditionSizeInputs(formData: FormData) {
+  const rawValue = getString(formData, "addition_sizes");
+  if (!rawValue) return [];
+  try {
+    const parsed = JSON.parse(rawValue) as PizzaAdditionSizeInput[];
+    const seen = new Set<string>();
+    return parsed.filter((item) => {
+      if (!item?.pizza_size_id || !item.unit || Number(item.quantity) <= 0) return false;
+      if (seen.has(item.pizza_size_id)) return false;
+      seen.add(item.pizza_size_id);
+      return true;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function getJsonStringArray(formData: FormData, key: string) {
+  const rawValue = getString(formData, key);
+  if (!rawValue) return [];
+  try {
+    const parsed = JSON.parse(rawValue) as string[];
+    return [...new Set(parsed.filter((item) => typeof item === "string" && item))];
+  } catch {
+    return [];
+  }
+}
+
+async function savePizzaAdditionRelations(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  additionId: string,
+  sizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string; cost_cop: number }>,
+  flavorIds: string[],
+  categoryIds: string[]
+) {
+  const [sizesDelete, flavorsDelete, categoriesDelete] = await Promise.all([
+    supabase.from("pizza_addition_sizes").delete().eq("addition_id", additionId),
+    supabase.from("pizza_addition_flavors").delete().eq("addition_id", additionId),
+    supabase.from("pizza_addition_categories").delete().eq("addition_id", additionId)
+  ]);
+  const deleteError = sizesDelete.error ?? flavorsDelete.error ?? categoriesDelete.error;
+  if (deleteError) throw new Error(deleteError.message);
+
+  if (sizes.length > 0) {
+    const { error } = await supabase.from("pizza_addition_sizes").insert(
+      sizes.map((item) => ({
+        addition_id: additionId,
+        pizza_size_id: item.pizza_size_id,
+        quantity_base: item.quantity_base,
+        unit: item.base_unit,
+        display_quantity: item.quantity,
+        display_unit: item.unit,
+        cost_cop: item.cost_cop,
+        price_cop: item.price_cop
+      }))
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  if (flavorIds.length > 0) {
+    const { error } = await supabase.from("pizza_addition_flavors").insert(flavorIds.map((flavor_id) => ({ addition_id: additionId, flavor_id })));
+    if (error) throw new Error(error.message);
+  }
+
+  if (categoryIds.length > 0) {
+    const { error } = await supabase
+      .from("pizza_addition_categories")
+      .insert(categoryIds.map((menu_category_id) => ({ addition_id: additionId, menu_category_id })));
+    if (error) throw new Error(error.message);
+  }
 }
 
 async function recalculateInventoryItem(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, inventoryItemId: string) {
@@ -705,6 +793,82 @@ export async function savePizzaFlavor(_previousState: FormActionState, formData:
   return { status: "success", message: "Sabor guardado correctamente." };
 }
 
+export async function savePizzaAddition(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const inventoryItemId = getString(formData, "inventory_item_id");
+  const maxAllowed = getInteger(formData, "max_allowed", 1);
+  const sizeInputs = getPizzaAdditionSizeInputs(formData);
+  const flavorIds = getJsonStringArray(formData, "compatible_flavor_ids");
+  const categoryIds = getJsonStringArray(formData, "compatible_category_ids");
+
+  if (!name) return { status: "error", message: "Ingresa el nombre de la adicion." };
+  if (!inventoryItemId) return { status: "error", message: "Selecciona el ingrediente que consume la adicion." };
+  if (maxAllowed <= 0) return { status: "error", message: "El maximo permitido debe ser mayor a cero." };
+  if (sizeInputs.length === 0) return { status: "error", message: "Configura cantidad y precio para al menos un tamano." };
+
+  try {
+    if (await hasDuplicateName(supabase, "pizza_additions", name, id)) {
+      return { status: "error", message: "Esta adicion ya esta registrada." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la adicion." };
+  }
+
+  const { data: ingredient, error: ingredientError } = await supabase
+    .from("inventory_items")
+    .select("id, unit, item_kind, is_active, average_cost_cop, presentation_quantity")
+    .eq("id", inventoryItemId)
+    .single();
+  if (ingredientError || !ingredient) return { status: "error", message: ingredientError?.message ?? "Ingrediente no encontrado." };
+  if (!ingredient.is_active || ingredient.item_kind !== "ingredient" || ingredient.presentation_quantity !== null) {
+    return { status: "error", message: "Las adiciones solo pueden consumir ingredientes activos." };
+  }
+
+  const baseUnit = canonicalStockUnit(ingredient.unit);
+  const averageCost = Number(ingredient.average_cost_cop ?? 0);
+  const normalizedSizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string; cost_cop: number }> = [];
+  try {
+    for (const item of sizeInputs) {
+      const submittedUnit = ["g", "kg", "ml", "l", "unit"].includes(item.unit) ? item.unit : "unit";
+      if (canonicalStockUnit(submittedUnit) !== baseUnit) throw new Error("Hay una unidad incompatible con el ingrediente seleccionado.");
+      const quantityBase = convertStockQuantity(Number(item.quantity), submittedUnit, baseUnit);
+      normalizedSizes.push({
+        ...item,
+        unit: submittedUnit,
+        price_cop: Math.max(0, Number(item.price_cop ?? 0)),
+        quantity_base: quantityBase,
+        base_unit: baseUnit,
+        cost_cop: Number((quantityBase * averageCost).toFixed(2))
+      });
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "Hay una unidad incompatible." };
+  }
+
+  const payload = {
+    name,
+    inventory_item_id: inventoryItemId,
+    max_allowed: maxAllowed,
+    is_active: getBoolean(formData, "is_active"),
+    is_available: getBoolean(formData, "is_available"),
+    updated_at: new Date().toISOString()
+  };
+  const query = id ? supabase.from("pizza_additions").update(payload).eq("id", id) : supabase.from("pizza_additions").insert(payload);
+  const { data, error } = await query.select("id").single();
+  if (error) return { status: "error", message: error.message };
+
+  try {
+    await savePizzaAdditionRelations(supabase, data.id, normalizedSizes, flavorIds, categoryIds);
+  } catch (saveError) {
+    return { status: "error", message: saveError instanceof Error ? saveError.message : "No se pudieron guardar los detalles de la adicion." };
+  }
+
+  revalidateInventory();
+  return { status: "success", message: "Adicion guardada correctamente." };
+}
+
 export async function moveMenuPizzaItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const section = getString(formData, "section");
   const id = getString(formData, "id");
@@ -770,6 +934,28 @@ export async function deletePizzaFlavor(_previousState: FormActionState, formDat
     return { status: "success", message: "Sabor eliminado correctamente." };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el sabor." };
+  }
+}
+
+export async function deletePizzaAddition(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Adicion no valida." };
+  const supabase = await createServerSupabaseClient();
+  try {
+    const [sizesDelete, flavorsDelete, categoriesDelete] = await Promise.all([
+      supabase.from("pizza_addition_sizes").delete().eq("addition_id", id),
+      supabase.from("pizza_addition_flavors").delete().eq("addition_id", id),
+      supabase.from("pizza_addition_categories").delete().eq("addition_id", id)
+    ]);
+    const deleteError = sizesDelete.error ?? flavorsDelete.error ?? categoriesDelete.error;
+    if (deleteError) return { status: "error", message: deleteError.message };
+
+    const { error } = await supabase.from("pizza_additions").delete().eq("id", id);
+    if (error) return { status: "error", message: error.message };
+    revalidateInventory();
+    return { status: "success", message: "Adicion eliminada correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar la adicion." };
   }
 }
 

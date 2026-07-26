@@ -6,10 +6,12 @@ import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, ImagePlus, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
 import {
+  deletePizzaAddition,
   deleteMenuCategory,
   deletePizzaFlavor,
   deletePizzaSize,
   moveMenuPizzaItem,
+  savePizzaAddition,
   saveMenuCategory,
   savePizzaFlavor,
   savePizzaSize,
@@ -17,9 +19,10 @@ import {
 } from "@/app/admin/actions";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 
-type SectionKey = "sabores" | "tamanos" | "categorias";
+type SectionKey = "sabores" | "tamanos" | "categorias" | "adiciones";
 type StatusFilter = "" | "active" | "inactive";
 type LimitFilter = "15" | "30" | "all";
+type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 type FlavorIngredientSource = {
   id: string;
   name: string;
@@ -29,6 +32,12 @@ type FlavorIngredientSelection = {
   source_kind: "inventory_item" | "preparation";
   source_id: string;
   source_name: string;
+};
+export type AdditionIngredientSource = {
+  id: string;
+  name: string;
+  unit: StockUnit;
+  average_cost_cop: number;
 };
 
 export type MenuCategoryRecord = {
@@ -69,25 +78,54 @@ export type PizzaFlavorRecord = {
   created_at: string;
 };
 
+export type PizzaAdditionRecord = {
+  id: string;
+  name: string;
+  inventory_item_id: string;
+  ingredient_name: string;
+  ingredient_unit: StockUnit;
+  ingredient_average_cost_cop: number;
+  max_allowed: number;
+  is_active: boolean;
+  is_available: boolean;
+  created_at: string;
+  sizes: {
+    pizza_size_id: string;
+    pizza_size_name: string;
+    quantity_base: number;
+    unit: "g" | "ml" | "unit";
+    display_quantity: number;
+    display_unit: StockUnit;
+    cost_cop: number;
+    price_cop: number;
+  }[];
+  compatible_flavors: { id: string; name: string }[];
+  compatible_categories: { id: string; name: string }[];
+};
+
 type FlavorColumn = "sku" | "photo" | "description" | "category" | "half" | "allergens" | "status" | "actions";
 type SizeColumn = "sku" | "diameter" | "slices" | "status" | "actions";
 type CategoryColumn = "sku" | "description" | "status" | "actions";
+type AdditionColumn = "ingredient" | "sizes" | "cost" | "price" | "max" | "compatibility" | "availability" | "status" | "actions";
 type ModalState =
   | { section: "sabores"; item: PizzaFlavorRecord | null }
   | { section: "tamanos"; item: PizzaSizeRecord | null }
-  | { section: "categorias"; item: MenuCategoryRecord | null };
+  | { section: "categorias"; item: MenuCategoryRecord | null }
+  | { section: "adiciones"; item: PizzaAdditionRecord | null };
 
 const initialState: FormActionState = { status: "idle", message: "" };
 const storageKey = "modopizzas.menu-pizzas.columns";
 const defaultColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
-  categorias: ["sku", "description", "status", "actions"] as CategoryColumn[]
+  categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
+  adiciones: ["ingredient", "sizes", "cost", "price", "max", "compatibility", "availability", "status", "actions"] as AdditionColumn[]
 };
 const allColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
-  categorias: ["sku", "description", "status", "actions"] as CategoryColumn[]
+  categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
+  adiciones: ["ingredient", "sizes", "cost", "price", "max", "compatibility", "availability", "status", "actions"] as AdditionColumn[]
 };
 
 function readColumns() {
@@ -99,7 +137,8 @@ function readColumns() {
     return {
       sabores: sanitizeColumns(parsed.sabores, "sabores"),
       tamanos: sanitizeColumns(parsed.tamanos, "tamanos"),
-      categorias: sanitizeColumns(parsed.categorias, "categorias")
+      categorias: sanitizeColumns(parsed.categorias, "categorias"),
+      adiciones: sanitizeColumns(parsed.adiciones, "adiciones")
     };
   } catch {
     window.localStorage.removeItem(storageKey);
@@ -117,12 +156,14 @@ function sanitizeColumns(columns: unknown, section: SectionKey) {
 function sectionTitle(section: SectionKey) {
   if (section === "sabores") return "Sabores";
   if (section === "tamanos") return "Tamanos";
+  if (section === "adiciones") return "Adiciones";
   return "Categorias";
 }
 
 function addLabel(section: SectionKey) {
   if (section === "sabores") return "Agregar sabor";
   if (section === "tamanos") return "Agregar tamano";
+  if (section === "adiciones") return "Agregar adicion";
   return "Agregar categoria";
 }
 
@@ -136,6 +177,13 @@ function columnLabel(section: SectionKey, column: string) {
     sku: "SKU",
     diameter: "Diametro",
     slices: "Porciones",
+    ingredient: "Ingrediente",
+    sizes: "Tamanos",
+    cost: "Costo",
+    price: "Precio",
+    max: "Maximo",
+    compatibility: "Compatibles",
+    availability: "Disponibilidad",
     status: "Estado",
     actions: "Acciones"
   };
@@ -148,6 +196,45 @@ function activeLabel(active: boolean) {
 
 function formatCm(value: number) {
   return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(value)} cm`;
+}
+
+function formatCop(value: number) {
+  return `$ ${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(value)}`;
+}
+
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 3 }).format(value);
+}
+
+function formatUnit(unit: StockUnit) {
+  if (unit === "unit") return "UND";
+  return unit.toUpperCase();
+}
+
+function canonicalUnit(unit: StockUnit) {
+  if (unit === "kg" || unit === "g") return "g";
+  if (unit === "l" || unit === "ml") return "ml";
+  return "unit";
+}
+
+function convertQuantity(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
+  if (fromUnit === toUnit) return quantity;
+  if (fromUnit === "kg" && toUnit === "g") return quantity * 1000;
+  if (fromUnit === "g" && toUnit === "kg") return quantity / 1000;
+  if (fromUnit === "l" && toUnit === "ml") return quantity * 1000;
+  if (fromUnit === "ml" && toUnit === "l") return quantity / 1000;
+  return quantity;
+}
+
+function unitOptionsFor(unit: StockUnit) {
+  const baseUnit = canonicalUnit(unit);
+  if (baseUnit === "g") return ["g", "kg"] as StockUnit[];
+  if (baseUnit === "ml") return ["ml", "l"] as StockUnit[];
+  return ["unit"] as StockUnit[];
+}
+
+function formatAdditionQuantity(quantity: number, unit: StockUnit) {
+  return `${formatDecimal(quantity)} ${formatUnit(unit)}`;
 }
 
 function orderedFirst<T extends { sort_order: number; name: string }>(items: T[]) {
@@ -171,12 +258,16 @@ export function MenuPizzasWorkspace({
   flavors,
   sizes,
   categories,
-  ingredientSources
+  additions,
+  ingredientSources,
+  additionIngredientSources
 }: {
   flavors: PizzaFlavorRecord[];
   sizes: PizzaSizeRecord[];
   categories: MenuCategoryRecord[];
+  additions: PizzaAdditionRecord[];
   ingredientSources: FlavorIngredientSource[];
+  additionIngredientSources: AdditionIngredientSource[];
 }) {
   const [section, setSection] = useState<SectionKey>("sabores");
   const [query, setQuery] = useState("");
@@ -225,6 +316,19 @@ export function MenuPizzasWorkspace({
     return limitItems(filtered, limit);
   }, [categories, limit, normalizedQuery, status]);
 
+  const filteredAdditions = useMemo(() => {
+    const filtered = [...additions]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .filter((item) => {
+        const compatibleText = [...item.compatible_flavors, ...item.compatible_categories].map((compatible) => compatible.name).join(" ");
+        const matchesQuery =
+          !normalizedQuery || normalizeMasterText(`${item.name} ${item.ingredient_name} ${compatibleText}`).includes(normalizedQuery);
+        const matchesStatus = status === "active" ? item.is_active : status === "inactive" ? !item.is_active : true;
+        return matchesQuery && matchesStatus;
+      });
+    return limitItems(filtered, limit);
+  }, [additions, limit, normalizedQuery, status]);
+
   function showColumn(column: string) {
     return visibleColumns.includes(column);
   }
@@ -253,7 +357,7 @@ export function MenuPizzasWorkspace({
   return (
     <>
       <nav aria-label="Secciones de pizzas" className="section-tabs inventory-section-tabs">
-        {(["sabores", "tamanos", "categorias"] as SectionKey[]).map((item) => (
+        {(["sabores", "adiciones", "tamanos", "categorias"] as SectionKey[]).map((item) => (
           <button className={`ghost-button${section === item ? " active-tab" : ""}`} key={item} onClick={() => changeSection(item)} type="button">
             {sectionTitle(item)}
           </button>
@@ -310,9 +414,22 @@ export function MenuPizzasWorkspace({
         {section === "categorias" ? (
           <CategoriesTable allItems={orderedFirst(categories)} categories={filteredCategories} onEdit={(item) => setModal({ section: "categorias", item })} showColumn={showColumn} />
         ) : null}
+        {section === "adiciones" ? (
+          <AdditionsTable additions={filteredAdditions} onEdit={(item) => setModal({ section: "adiciones", item })} showColumn={showColumn} />
+        ) : null}
       </section>
 
-      {modal ? <MenuPizzaModal categories={categories} ingredientSources={ingredientSources} modal={modal} onClose={() => setModal(null)} /> : null}
+      {modal ? (
+        <MenuPizzaModal
+          additionIngredientSources={additionIngredientSources}
+          categories={categories}
+          flavors={flavors}
+          ingredientSources={ingredientSources}
+          modal={modal}
+          onClose={() => setModal(null)}
+          sizes={sizes}
+        />
+      ) : null}
 
       {showSettings ? (
         <div className="modal-backdrop" role="presentation">
@@ -542,6 +659,88 @@ function CategoriesTable({
   );
 }
 
+function AdditionsTable({
+  additions,
+  showColumn,
+  onEdit
+}: {
+  additions: PizzaAdditionRecord[];
+  showColumn: (column: string) => boolean;
+  onEdit: (item: PizzaAdditionRecord) => void;
+}) {
+  return (
+    <div className="data-table-wrap menu-pizzas-table-wrap">
+      <table className="data-table rich-inventory-table menu-pizzas-table menu-additions-table">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            {showColumn("ingredient") ? <th>Ingrediente</th> : null}
+            {showColumn("sizes") ? <th>Tamanos</th> : null}
+            {showColumn("cost") ? <th>Costo</th> : null}
+            {showColumn("price") ? <th>Precio adicional</th> : null}
+            {showColumn("max") ? <th>Max.</th> : null}
+            {showColumn("compatibility") ? <th>Compatibles</th> : null}
+            {showColumn("availability") ? <th>Disponibilidad</th> : null}
+            {showColumn("status") ? <th>Estado</th> : null}
+            {showColumn("actions") ? <th className="actions-column compact-actions-column">Acciones</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {additions.map((item) => {
+            const sizeSummary = item.sizes.map((size) => `${size.pizza_size_name}: ${formatAdditionQuantity(size.display_quantity, size.display_unit)}`).join(", ");
+            const compatibility = [
+              ...item.compatible_categories.map((category) => category.name),
+              ...item.compatible_flavors.map((flavor) => flavor.name)
+            ].join(", ");
+            return (
+              <tr key={item.id}>
+                <td>
+                  <strong>{item.name}</strong>
+                </td>
+                {showColumn("ingredient") ? <td>{item.ingredient_name}</td> : null}
+                {showColumn("sizes") ? (
+                  <td title={sizeSummary || "Sin tamanos"}>
+                    <span className="truncated-cell">{sizeSummary || "Sin tamanos"}</span>
+                  </td>
+                ) : null}
+                {showColumn("cost") ? <td>{formatCop(item.sizes.reduce((sum, size) => sum + Number(size.cost_cop ?? 0), 0))}</td> : null}
+                {showColumn("price") ? <td>{formatCop(item.sizes.reduce((sum, size) => sum + Number(size.price_cop ?? 0), 0))}</td> : null}
+                {showColumn("max") ? <td>{item.max_allowed}</td> : null}
+                {showColumn("compatibility") ? (
+                  <td title={compatibility || "Todos"}>
+                    <span className="truncated-cell">{compatibility || "Todos"}</span>
+                  </td>
+                ) : null}
+                {showColumn("availability") ? (
+                  <td>
+                    <span className={`stock-pill ${item.is_available ? "ok" : "danger"}`}>{item.is_available ? "Disponible" : "No disponible"}</span>
+                  </td>
+                ) : null}
+                {showColumn("status") ? (
+                  <td>
+                    <span className={`stock-pill ${item.is_active ? "ok" : "danger"}`}>{activeLabel(item.is_active)}</span>
+                  </td>
+                ) : null}
+                {showColumn("actions") ? (
+                  <td className="actions-column compact-actions-column">
+                    <span className="row-actions center-actions">
+                      <button className="icon-button" onClick={() => onEdit(item)} title={`Editar ${item.name}`} type="button">
+                        <Pencil size={16} />
+                      </button>
+                      <MenuDeleteButton action={deletePizzaAddition} id={item.id} name={item.name} />
+                    </span>
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {additions.length === 0 ? <p className="muted">No hay adiciones con esos filtros.</p> : null}
+    </div>
+  );
+}
+
 function ReorderControls({
   id,
   section,
@@ -631,19 +830,26 @@ function MenuDeleteButton({
 function MenuPizzaModal({
   modal,
   categories,
+  sizes,
+  flavors,
   ingredientSources,
+  additionIngredientSources,
   onClose
 }: {
   modal: ModalState;
   categories: MenuCategoryRecord[];
+  sizes: PizzaSizeRecord[];
+  flavors: PizzaFlavorRecord[];
   ingredientSources: FlavorIngredientSource[];
+  additionIngredientSources: AdditionIngredientSource[];
   onClose: () => void;
 }) {
   const router = useRouter();
   const [categoryState, categoryAction] = useActionState(saveMenuCategory, initialState);
   const [sizeState, sizeAction] = useActionState(savePizzaSize, initialState);
   const [flavorState, flavorAction] = useActionState(savePizzaFlavor, initialState);
-  const activeState = modal.section === "sabores" ? flavorState : modal.section === "tamanos" ? sizeState : categoryState;
+  const [additionState, additionAction] = useActionState(savePizzaAddition, initialState);
+  const activeState = modal.section === "sabores" ? flavorState : modal.section === "tamanos" ? sizeState : modal.section === "adiciones" ? additionState : categoryState;
 
   useEffect(() => {
     if (activeState.status !== "success") return;
@@ -671,6 +877,18 @@ function MenuPizzaModal({
         ) : null}
         {modal.section === "tamanos" ? <SizeForm action={sizeAction} item={modal.item} state={sizeState} onClose={onClose} /> : null}
         {modal.section === "categorias" ? <CategoryForm action={categoryAction} item={modal.item} state={categoryState} onClose={onClose} /> : null}
+        {modal.section === "adiciones" ? (
+          <AdditionForm
+            action={additionAction}
+            categories={categories}
+            flavors={flavors}
+            ingredientSources={additionIngredientSources}
+            item={modal.item}
+            sizes={sizes}
+            state={additionState}
+            onClose={onClose}
+          />
+        ) : null}
       </section>
     </div>
   );
@@ -904,6 +1122,187 @@ function CategoryForm({
           Cancelar
         </button>
         <SubmitButton label={item ? "Actualizar categoria" : "Guardar categoria"} />
+      </div>
+    </form>
+  );
+}
+
+function AdditionForm({
+  item,
+  sizes,
+  categories,
+  flavors,
+  ingredientSources,
+  state,
+  action,
+  onClose
+}: {
+  item: PizzaAdditionRecord | null;
+  sizes: PizzaSizeRecord[];
+  categories: MenuCategoryRecord[];
+  flavors: PizzaFlavorRecord[];
+  ingredientSources: AdditionIngredientSource[];
+  state: FormActionState;
+  action: (payload: FormData) => void;
+  onClose: () => void;
+}) {
+  const initialIngredient = ingredientSources.find((source) => source.id === item?.inventory_item_id) ?? ingredientSources[0] ?? null;
+  const [ingredientId, setIngredientId] = useState(initialIngredient?.id ?? "");
+  const selectedIngredient = ingredientSources.find((source) => source.id === ingredientId) ?? null;
+  const initialRows = sizes.map((size) => {
+    const existing = item?.sizes.find((row) => row.pizza_size_id === size.id);
+    const unit = existing?.display_unit ?? unitOptionsFor(selectedIngredient?.unit ?? "unit")[0];
+    return {
+      pizza_size_id: size.id,
+      pizza_size_name: size.name,
+      quantity: existing?.display_quantity ? String(existing.display_quantity) : "",
+      unit,
+      price_cop: existing?.price_cop ? String(existing.price_cop) : ""
+    };
+  });
+  const [sizeRows, setSizeRows] = useState(initialRows);
+  const [compatibleFlavorIds, setCompatibleFlavorIds] = useState<string[]>(item?.compatible_flavors.map((flavor) => flavor.id) ?? []);
+  const [compatibleCategoryIds, setCompatibleCategoryIds] = useState<string[]>(item?.compatible_categories.map((category) => category.id) ?? []);
+  const unitOptions = useMemo(() => unitOptionsFor(selectedIngredient?.unit ?? "unit"), [selectedIngredient?.unit]);
+
+  const rowsPayload = sizeRows
+    .map((row) => ({
+      pizza_size_id: row.pizza_size_id,
+      quantity: Number(String(row.quantity).replace(",", ".")),
+      unit: row.unit,
+      price_cop: Number(String(row.price_cop).replace(/\D/g, ""))
+    }))
+    .filter((row) => row.quantity > 0);
+
+  function updateRow(sizeId: string, patch: Partial<(typeof sizeRows)[number]>) {
+    setSizeRows((current) => current.map((row) => (row.pizza_size_id === sizeId ? { ...row, ...patch } : row)));
+  }
+
+  function toggleValue(values: string[], value: string) {
+    return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+  }
+
+  function estimatedCost(row: (typeof sizeRows)[number]) {
+    if (!selectedIngredient) return 0;
+    const quantity = Number(String(row.quantity).replace(",", "."));
+    if (quantity <= 0) return 0;
+    return convertQuantity(quantity, row.unit, canonicalUnit(row.unit)) * selectedIngredient.average_cost_cop;
+  }
+
+  return (
+    <form action={action} className="compact-card">
+      {item ? <input name="id" type="hidden" value={item.id} /> : null}
+      <input name="inventory_item_id" type="hidden" value={ingredientId} />
+      <input name="addition_sizes" type="hidden" value={JSON.stringify(rowsPayload)} />
+      <input name="compatible_flavor_ids" type="hidden" value={JSON.stringify(compatibleFlavorIds)} />
+      <input name="compatible_category_ids" type="hidden" value={JSON.stringify(compatibleCategoryIds)} />
+      <div className="form-grid">
+        <div className="field">
+          <label>Nombre</label>
+          <input defaultValue={item?.name ?? ""} name="name" onInput={(event) => (event.currentTarget.value = uppercaseMasterName(event.currentTarget.value))} required />
+        </div>
+        <div className="field">
+          <label>Ingrediente</label>
+          <select
+            onChange={(event) => {
+              const nextId = event.target.value;
+              const nextIngredient = ingredientSources.find((ingredient) => ingredient.id === nextId);
+              const nextOptions = unitOptionsFor(nextIngredient?.unit ?? "unit");
+              setIngredientId(nextId);
+              setSizeRows((current) =>
+                current.map((row) => ({
+                  ...row,
+                  unit: nextOptions.includes(row.unit) ? row.unit : nextOptions[0]
+                }))
+              );
+            }}
+            required
+            value={ingredientId}
+          >
+            <option value="">Selecciona ingrediente</option>
+            {ingredientSources.map((ingredient) => (
+              <option key={ingredient.id} value={ingredient.id}>
+                {ingredient.name}
+              </option>
+            ))}
+          </select>
+          <p className="field-hint">Solo ingredientes activos. No consume productos para venta ni insumos.</p>
+        </div>
+        <div className="field">
+          <label>Maximo permitido</label>
+          <input defaultValue={item?.max_allowed ?? 1} min="1" name="max_allowed" type="number" />
+        </div>
+        <div className="field full">
+          <label>Cantidad y precio por tamano</label>
+          <div className="addition-size-grid">
+            {sizeRows.map((row) => (
+              <div className="addition-size-row" key={row.pizza_size_id}>
+                <strong>{row.pizza_size_name}</strong>
+                <input
+                  inputMode="decimal"
+                  onChange={(event) => updateRow(row.pizza_size_id, { quantity: event.target.value })}
+                  placeholder="Cantidad"
+                  value={row.quantity}
+                />
+                <select onChange={(event) => updateRow(row.pizza_size_id, { unit: event.target.value as StockUnit })} value={row.unit}>
+                  {unitOptions.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {formatUnit(unit)}
+                    </option>
+                  ))}
+                </select>
+                <span className="readonly-chip">Costo {formatCop(estimatedCost(row))}</span>
+                <input
+                  inputMode="numeric"
+                  onChange={(event) => updateRow(row.pizza_size_id, { price_cop: event.target.value.replace(/\D/g, "") })}
+                  placeholder="Precio COP"
+                  value={row.price_cop}
+                />
+              </div>
+            ))}
+          </div>
+          <p className="field-hint">Deja en blanco los tamanos donde esta adicion no aplique.</p>
+        </div>
+        <div className="field full">
+          <label>Compatibilidad por categorias</label>
+          <div className="column-settings-grid">
+            {categories.map((category) => (
+              <label className="check-option" key={category.id}>
+                <input checked={compatibleCategoryIds.includes(category.id)} onChange={() => setCompatibleCategoryIds((current) => toggleValue(current, category.id))} type="checkbox" />
+                <span>{category.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="field full">
+          <label>Compatibilidad por sabores</label>
+          <div className="column-settings-grid">
+            {flavors.map((flavor) => (
+              <label className="check-option" key={flavor.id}>
+                <input checked={compatibleFlavorIds.includes(flavor.id)} onChange={() => setCompatibleFlavorIds((current) => toggleValue(current, flavor.id))} type="checkbox" />
+                <span>{flavor.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className="field-hint">Si no eliges categorias ni sabores, la adicion queda disponible para todos.</p>
+        </div>
+      </div>
+      <div className="form-grid">
+        <label className="check-option">
+          <input defaultChecked={item?.is_active ?? true} name="is_active" type="checkbox" />
+          <span>Activo</span>
+        </label>
+        <label className="check-option">
+          <input defaultChecked={item?.is_available ?? true} name="is_available" type="checkbox" />
+          <span>Disponible</span>
+        </label>
+      </div>
+      {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+      <div className="form-actions modal-form-actions">
+        <button className="ghost-button" onClick={onClose} type="button">
+          Cancelar
+        </button>
+        <SubmitButton label={item ? "Actualizar adicion" : "Guardar adicion"} />
       </div>
     </form>
   );

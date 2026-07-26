@@ -2092,6 +2092,49 @@ a {
   padding: 0;
 }
 
+.menu-additions-table {
+  min-width: 940px;
+}
+
+.truncated-cell {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.addition-size-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.addition-size-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(120px, 1fr) 110px 90px minmax(120px, auto) 130px;
+}
+
+.addition-size-row input,
+.addition-size-row select {
+  min-width: 0;
+}
+
+.readonly-chip {
+  align-items: center;
+  background: color-mix(in srgb, var(--panel-strong) 86%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.88rem;
+  font-weight: 700;
+  min-height: 40px;
+  padding: 0 10px;
+}
+
 .inventory-detail-panel {
   margin-top: 16px;
 }
@@ -2828,6 +2871,10 @@ a {
   .modal-form-actions {
     grid-template-columns: 1fr;
     justify-content: stretch;
+  }
+
+  .addition-size-row {
+    grid-template-columns: 1fr;
   }
 
   .preparations-table {
