@@ -199,6 +199,7 @@ export default async function InventoryPage() {
     supabase
       .from("physical_inventory_counts")
       .select("id, source_kind, inventory_item_id, source_preparation_id, theoretical_quantity_base, physical_quantity_base, difference_quantity_base, base_unit, average_cost_cop, adjustment_kind, reason, created_at, created_by, inventory_items(name), preparations(name)")
+      .is("voided_at", null)
       .order("created_at", { ascending: false }),
     supabase.from("inventory_items").select("id, name, image_url, item_kind").is("presentation_quantity", null),
     supabase.from("brands").select("id, name").order("name"),

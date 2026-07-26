@@ -724,7 +724,7 @@ export function ProductionRegisterModule({
 
       <section className="form-panel">
         <div className="section-title-row inventory-toolbar-row">
-          <h2>Historial de producciones</h2>
+          <h2>Listado de Producciones</h2>
           <div className="purchase-toolbar">
             <form className="table-filters" onSubmit={(event) => event.preventDefault()}>
               <input autoComplete="off" onChange={(event) => setHistoryQuery(uppercaseMasterName(event.target.value))} placeholder="Buscar produccion" value={historyQuery} />

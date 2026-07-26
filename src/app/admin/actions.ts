@@ -63,6 +63,25 @@ export type PhysicalInventoryActionState = FormActionState & {
   };
 };
 
+type PhysicalInventoryCountRecord = {
+  id: string;
+  source_kind: "inventory_item" | "preparation";
+  inventory_item_id: string | null;
+  source_preparation_id: string | null;
+  theoretical_quantity_base: number;
+  physical_quantity_base: number;
+  difference_quantity_base: number;
+  base_unit: string;
+  average_cost_cop: number;
+  adjustment_kind: "waste" | "adjustment_in";
+  created_at: string;
+};
+
+type FlavorIngredientInput = {
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+};
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -168,6 +187,24 @@ function getFormFile(formData: FormData, key: string) {
   return value instanceof File && value.size > 0 ? value : null;
 }
 
+function getFlavorIngredientInputs(formData: FormData) {
+  const rawValue = getString(formData, "characteristic_ingredients");
+  if (!rawValue) return [];
+  try {
+    const parsed = JSON.parse(rawValue) as FlavorIngredientInput[];
+    const seen = new Set<string>();
+    return parsed.filter((item) => {
+      if (!item || (item.source_kind !== "inventory_item" && item.source_kind !== "preparation") || !item.source_id) return false;
+      const key = `${item.source_kind}:${item.source_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function uploadProductImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File, folder = "productos") {
   const extension = productImageTypes.get(file.type);
   if (!extension) throw new Error("La foto debe ser JPG, PNG, WEBP o GIF.");
@@ -193,6 +230,7 @@ function revalidateInventory() {
   revalidatePath("/panel/categorias");
   revalidatePath("/panel/configuracion");
   revalidatePath("/panel/produccion");
+  revalidatePath("/panel/menu/pizzas");
 }
 
 async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
@@ -201,9 +239,98 @@ async function relationCount(supabase: Awaited<ReturnType<typeof createServerSup
   return count ?? 0;
 }
 
+async function physicalCountSourceStockBase(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  sourceKind: "inventory_item" | "preparation",
+  sourceId: string,
+  baseUnit: string
+) {
+  let stock = 0;
+
+  if (sourceKind === "inventory_item") {
+    const { data: purchaseItems, error } = await supabase
+      .from("purchase_items")
+      .select("id, quantity, unit")
+      .eq("inventory_item_id", sourceId);
+    if (error) throw new Error(error.message);
+
+    const itemIds = (purchaseItems ?? []).map((item) => item.id);
+    stock = (purchaseItems ?? []).reduce((sum, item) => sum + convertStockQuantity(Number(item.quantity ?? 0), item.unit, baseUnit), 0);
+
+    if (itemIds.length > 0) {
+      const { data: allocations, error: allocationsError } = await supabase
+        .from("production_consumption_allocations")
+        .select("quantity_base, base_unit")
+        .in("purchase_item_id", itemIds);
+      if (allocationsError) throw new Error(allocationsError.message);
+      stock -= (allocations ?? []).reduce((sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit), 0);
+    }
+  } else {
+    const { data: batches, error } = await supabase
+      .from("production_batches")
+      .select("id, initial_quantity_base, base_unit")
+      .eq("preparation_id", sourceId);
+    if (error) throw new Error(error.message);
+
+    const batchIds = (batches ?? []).map((batch) => batch.id);
+    stock = (batches ?? []).reduce((sum, batch) => sum + convertStockQuantity(Number(batch.initial_quantity_base ?? 0), batch.base_unit, baseUnit), 0);
+
+    if (batchIds.length > 0) {
+      const { data: allocations, error: allocationsError } = await supabase
+        .from("production_consumption_allocations")
+        .select("quantity_base, base_unit")
+        .in("production_batch_id", batchIds);
+      if (allocationsError) throw new Error(allocationsError.message);
+      stock -= (allocations ?? []).reduce((sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit), 0);
+    }
+  }
+
+  const countColumn = sourceKind === "inventory_item" ? "inventory_item_id" : "source_preparation_id";
+  const { data: counts, error: countsError } = await supabase
+    .from("physical_inventory_counts")
+    .select("difference_quantity_base, base_unit")
+    .eq(countColumn, sourceId)
+    .is("voided_at", null);
+  if (countsError) throw new Error(countsError.message);
+
+  stock += (counts ?? []).reduce((sum, count) => sum + convertStockQuantity(Number(count.difference_quantity_base ?? 0), count.base_unit, baseUnit), 0);
+  return Number(stock.toFixed(3));
+}
+
+async function getEditablePhysicalCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, countId: string) {
+  const { data: count, error } = await supabase
+    .from("physical_inventory_counts")
+    .select("id, source_kind, inventory_item_id, source_preparation_id, theoretical_quantity_base, physical_quantity_base, difference_quantity_base, base_unit, average_cost_cop, adjustment_kind, created_at")
+    .eq("id", countId)
+    .is("voided_at", null)
+    .single();
+  if (error || !count) throw new Error(error?.message ?? "Ajuste no encontrado.");
+
+  const record = count as PhysicalInventoryCountRecord;
+  const sourceId = record.source_kind === "inventory_item" ? record.inventory_item_id : record.source_preparation_id;
+  if (!sourceId) throw new Error("El ajuste no tiene una fuente valida.");
+
+  const sourceColumn = record.source_kind === "inventory_item" ? "inventory_item_id" : "source_preparation_id";
+  const { data: latest, error: latestError } = await supabase
+    .from("physical_inventory_counts")
+    .select("id")
+    .eq("source_kind", record.source_kind)
+    .eq(sourceColumn, sourceId)
+    .is("voided_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+  if (latestError) throw new Error(latestError.message);
+  if (latest?.id !== record.id) {
+    throw new Error("Solo se puede editar o eliminar el ultimo ajuste de este producto para no dejar conteos posteriores inconsistentes.");
+  }
+
+  return { count: record, sourceId };
+}
+
 async function hasDuplicateName(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  table: "product_categories" | "brands" | "suppliers" | "conservation_profiles" | "preparations",
+  table: "product_categories" | "brands" | "suppliers" | "conservation_profiles" | "preparations" | "menu_categories" | "pizza_sizes" | "pizza_flavors",
   name: string,
   currentId?: string | null
 ) {
@@ -211,6 +338,49 @@ async function hasDuplicateName(
   if (error) throw new Error(error.message);
   const normalizedName = normalizeMasterText(name);
   return (data ?? []).some((item) => item.id !== currentId && normalizeMasterText(item.name ?? "") === normalizedName);
+}
+
+async function reserveMenuSku(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  section: "menu_categories" | "pizza_sizes" | "pizza_flavors",
+  name: string
+) {
+  const { data, error } = await supabase.rpc("reserve_menu_sku", { p_section: section, p_name: name });
+  if (error) throw new Error(error.message);
+  return String(data);
+}
+
+async function nextMenuSortOrder(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  table: "menu_categories" | "pizza_sizes" | "pizza_flavors"
+) {
+  const { data, error } = await supabase.from(table).select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw new Error(error.message);
+  return Number(data?.sort_order ?? 0) + 1;
+}
+
+async function normalizeMenuOrder(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, section: "menu_categories" | "pizza_sizes" | "pizza_flavors") {
+  const { error } = await supabase.rpc("normalize_menu_order", { p_section: section });
+  if (error) throw new Error(error.message);
+}
+
+async function saveFlavorIngredients(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  flavorId: string,
+  ingredients: FlavorIngredientInput[]
+) {
+  const { error: deleteError } = await supabase.from("pizza_flavor_ingredients").delete().eq("flavor_id", flavorId);
+  if (deleteError) throw new Error(deleteError.message);
+  if (ingredients.length === 0) return;
+
+  const payload = ingredients.map((ingredient) => ({
+    flavor_id: flavorId,
+    source_kind: ingredient.source_kind,
+    inventory_item_id: ingredient.source_kind === "inventory_item" ? ingredient.source_id : null,
+    source_preparation_id: ingredient.source_kind === "preparation" ? ingredient.source_id : null
+  }));
+  const { error } = await supabase.from("pizza_flavor_ingredients").insert(payload);
+  if (error) throw new Error(error.message);
 }
 
 async function recalculateInventoryItem(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, inventoryItemId: string) {
@@ -384,6 +554,223 @@ export async function saveSupplierState(_previousState: FormActionState, formDat
   if (error) return { status: "error", message: error.message };
   revalidateInventory();
   return { status: "success", message: "Proveedor guardado correctamente." };
+}
+
+export async function saveMenuCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+
+  if (!name) return { status: "error", message: "Ingresa el nombre de la categoria." };
+
+  try {
+    if (await hasDuplicateName(supabase, "menu_categories", name, id)) {
+      return { status: "error", message: "Esta categoria ya esta registrada." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la categoria." };
+  }
+
+  const payload = {
+    name,
+    description: getOptionalString(formData, "description"),
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString()
+  };
+  let query;
+  try {
+    query = id
+      ? supabase.from("menu_categories").update(payload).eq("id", id)
+      : supabase.from("menu_categories").insert({
+          ...payload,
+          sku: await reserveMenuSku(supabase, "menu_categories", name),
+          sort_order: await nextMenuSortOrder(supabase, "menu_categories")
+        });
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo generar el SKU." };
+  }
+  const { error } = await query;
+
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Categoria guardada correctamente." };
+}
+
+export async function savePizzaSize(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const diameterCm = getDecimal(formData, "diameter_cm");
+  const slicesCount = getInteger(formData, "slices_count");
+
+  if (!name) return { status: "error", message: "Ingresa el nombre del tamano." };
+  if (diameterCm <= 0) return { status: "error", message: "Ingresa un diametro mayor a cero." };
+  if (slicesCount <= 0) return { status: "error", message: "Ingresa el numero de porciones." };
+
+  try {
+    if (await hasDuplicateName(supabase, "pizza_sizes", name, id)) {
+      return { status: "error", message: "Este tamano ya esta registrado." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el tamano." };
+  }
+
+  const payload = {
+    name,
+    diameter_cm: diameterCm,
+    slices_count: slicesCount,
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString()
+  };
+  let query;
+  try {
+    query = id
+      ? supabase.from("pizza_sizes").update(payload).eq("id", id)
+      : supabase.from("pizza_sizes").insert({
+          ...payload,
+          sku: await reserveMenuSku(supabase, "pizza_sizes", name),
+          sort_order: await nextMenuSortOrder(supabase, "pizza_sizes")
+        });
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo generar el SKU." };
+  }
+  const { error } = await query;
+
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Tamano guardado correctamente." };
+}
+
+export async function savePizzaFlavor(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getOptionalString(formData, "id");
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const ingredients = getFlavorIngredientInputs(formData);
+
+  if (!name) return { status: "error", message: "Ingresa el nombre del sabor." };
+
+  try {
+    if (await hasDuplicateName(supabase, "pizza_flavors", name, id)) {
+      return { status: "error", message: "Este sabor ya esta registrado." };
+    }
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el sabor." };
+  }
+
+  let imageUrl = getOptionalString(formData, "existing_image_url");
+  if (getString(formData, "remove_image") === "1") {
+    imageUrl = null;
+  }
+
+  const imageFile = getFormFile(formData, "flavor_image");
+  if (imageFile) {
+    try {
+      imageUrl = await uploadProductImage(supabase, imageFile, "sabores");
+    } catch (error) {
+      return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la foto." };
+    }
+  }
+
+  const payload = {
+    name,
+    commercial_description: getOptionalString(formData, "commercial_description") ?? "",
+    image_url: imageUrl,
+    allows_half_and_half: getBoolean(formData, "allows_half_and_half"),
+    menu_category_id: getOptionalString(formData, "menu_category_id"),
+    allergens: upperText(getOptionalString(formData, "allergens")),
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString()
+  };
+  let query;
+  try {
+    query = id
+      ? supabase.from("pizza_flavors").update(payload).eq("id", id)
+      : supabase.from("pizza_flavors").insert({
+          ...payload,
+          sku: await reserveMenuSku(supabase, "pizza_flavors", name),
+          sort_order: await nextMenuSortOrder(supabase, "pizza_flavors")
+        });
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo generar el SKU." };
+  }
+  const { data, error } = await query.select("id").single();
+
+  if (error) return { status: "error", message: error.message };
+  try {
+    await saveFlavorIngredients(supabase, data.id, ingredients);
+  } catch (saveError) {
+    return { status: "error", message: saveError instanceof Error ? saveError.message : "No se pudieron guardar los ingredientes." };
+  }
+  revalidateInventory();
+  return { status: "success", message: "Sabor guardado correctamente." };
+}
+
+export async function moveMenuPizzaItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const section = getString(formData, "section");
+  const id = getString(formData, "id");
+  const direction = getString(formData, "direction");
+  if (!id) return { status: "error", message: "Registro no valido." };
+  if (!["menu_categories", "pizza_sizes", "pizza_flavors"].includes(section)) return { status: "error", message: "Seccion no valida." };
+  if (direction !== "up" && direction !== "down") return { status: "error", message: "Direccion no valida." };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("move_menu_item", { p_section: section, p_id: id, p_direction: direction });
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Orden actualizado." };
+}
+
+export async function deleteMenuCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Categoria no valida." };
+  const supabase = await createServerSupabaseClient();
+  try {
+    const usedIn: string[] = [];
+    if ((await relationCount(supabase, "pizza_flavors", "menu_category_id", id)) > 0) usedIn.push("Sabores");
+    if (usedIn.length > 0) return { status: "error", message: `No se puede eliminar esta categoria porque esta siendo utilizada en ${usedIn.join(" y ")}.` };
+
+    const { error } = await supabase.from("menu_categories").delete().eq("id", id);
+    if (error) return { status: "error", message: error.message };
+    await normalizeMenuOrder(supabase, "menu_categories");
+    revalidateInventory();
+    return { status: "success", message: "Categoria eliminada correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la categoria." };
+  }
+}
+
+export async function deletePizzaSize(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Tamano no valido." };
+  const supabase = await createServerSupabaseClient();
+  try {
+    const { error } = await supabase.from("pizza_sizes").delete().eq("id", id);
+    if (error) return { status: "error", message: error.message };
+    await normalizeMenuOrder(supabase, "pizza_sizes");
+    revalidateInventory();
+    return { status: "success", message: "Tamano eliminado correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar el tamano." };
+  }
+}
+
+export async function deletePizzaFlavor(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Sabor no valido." };
+  const supabase = await createServerSupabaseClient();
+  try {
+    const usedIn: string[] = [];
+    if ((await relationCount(supabase, "pizza_flavor_ingredients", "flavor_id", id)) > 0) usedIn.push("Ingredientes caracteristicos");
+    if (usedIn.length > 0) return { status: "error", message: `No se puede eliminar este sabor porque esta siendo utilizado en ${usedIn.join(" y ")}.` };
+
+    const { error } = await supabase.from("pizza_flavors").delete().eq("id", id);
+    if (error) return { status: "error", message: error.message };
+    await normalizeMenuOrder(supabase, "pizza_flavors");
+    revalidateInventory();
+    return { status: "success", message: "Sabor eliminado correctamente." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el sabor." };
+  }
 }
 
 export async function deleteProductCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -1101,6 +1488,115 @@ export async function recordPhysicalInventoryCount(
     message: "Conteo fisico registrado correctamente.",
     count: data as PhysicalInventoryActionState["count"]
   };
+}
+
+export async function updatePhysicalInventoryCount(
+  _previousState: PhysicalInventoryActionState,
+  formData: FormData
+): Promise<PhysicalInventoryActionState> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+
+  const countId = getString(formData, "count_id");
+  const physicalQuantity = getDecimal(formData, "physical_quantity", 0);
+  const physicalUnit = getStockUnit(formData, "physical_unit");
+  const reason = getString(formData, "reason");
+
+  if (!countId) return { status: "error", message: "Selecciona un ajuste valido." };
+  if (physicalQuantity < 0) return { status: "error", message: "El stock fisico no puede ser negativo." };
+  if (!reason) return { status: "error", message: "Ingresa el motivo del ajuste." };
+
+  try {
+    const { count, sourceId } = await getEditablePhysicalCount(supabase, countId);
+    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, count.base_unit);
+    const previousDifference = Number(count.difference_quantity_base ?? 0);
+    const revertedStock = Number((currentStock - previousDifference).toFixed(3));
+    if (revertedStock < 0) {
+      return { status: "error", message: "No se puede revertir el ajuste anterior sin dejar stock negativo." };
+    }
+
+    const physicalBase = convertStockQuantity(physicalQuantity, physicalUnit, count.base_unit);
+    const difference = Number((physicalBase - revertedStock).toFixed(3));
+    if (difference === 0) return { status: "error", message: "No hay diferencia entre el stock teorico y el stock fisico." };
+    if (physicalBase < 0) return { status: "error", message: "El stock final no puede ser negativo." };
+
+    const adjustmentKind = difference > 0 ? "adjustment_in" : "waste";
+    const { data, error } = await supabase
+      .from("physical_inventory_counts")
+      .update({
+        theoretical_quantity_base: revertedStock,
+        physical_quantity_base: physicalBase,
+        difference_quantity_base: difference,
+        adjustment_kind: adjustmentKind,
+        reason: upperText(reason),
+        updated_at: new Date().toISOString(),
+        updated_by: user.id
+      })
+      .eq("id", count.id)
+      .select("id, adjustment_kind, difference_quantity_base, base_unit")
+      .single();
+
+    if (error) return { status: "error", message: error.message };
+
+    revalidateInventory();
+    return {
+      status: "success",
+      message: "Ajuste de inventario actualizado correctamente.",
+      count: data as PhysicalInventoryActionState["count"]
+    };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo actualizar el ajuste." };
+  }
+}
+
+export async function voidPhysicalInventoryCount(
+  _previousState: PhysicalInventoryActionState,
+  formData: FormData
+): Promise<PhysicalInventoryActionState> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) return { status: "error", message: "Debes iniciar sesion." };
+
+  const countId = getString(formData, "count_id");
+  if (!countId) return { status: "error", message: "Selecciona un ajuste valido." };
+
+  try {
+    const { count, sourceId } = await getEditablePhysicalCount(supabase, countId);
+    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, count.base_unit);
+    const revertedStock = Number((currentStock - Number(count.difference_quantity_base ?? 0)).toFixed(3));
+    if (revertedStock < 0) {
+      return { status: "error", message: "No se puede eliminar este ajuste porque la reversion dejaria stock negativo." };
+    }
+
+    const { data, error } = await supabase
+      .from("physical_inventory_counts")
+      .update({
+        voided_at: new Date().toISOString(),
+        voided_by: user.id,
+        void_reason: "ANULADO DESDE INVENTARIO"
+      })
+      .eq("id", count.id)
+      .select("id, adjustment_kind, difference_quantity_base, base_unit")
+      .single();
+
+    if (error) return { status: "error", message: error.message };
+
+    revalidateInventory();
+    return {
+      status: "success",
+      message: "Ajuste de inventario eliminado correctamente.",
+      count: data as PhysicalInventoryActionState["count"]
+    };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar el ajuste." };
+  }
 }
 
 export async function assignUserRole(formData: FormData) {

@@ -1995,6 +1995,103 @@ a {
   justify-content: center;
 }
 
+.sr-only {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.menu-image-field {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.menu-check-option {
+  align-self: end;
+  min-height: 44px;
+}
+
+.menu-pizzas-table-wrap {
+  overflow-x: auto;
+}
+
+.menu-pizzas-table {
+  min-width: 760px;
+  table-layout: auto;
+}
+
+.menu-pizzas-table th,
+.menu-pizzas-table td {
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.menu-pizzas-table th:nth-child(1),
+.menu-pizzas-table td:nth-child(1) {
+  width: 76px;
+}
+
+.menu-pizzas-table .compact-actions-column {
+  min-width: 96px;
+  width: 96px;
+}
+
+.menu-pizzas-table .inventory-product-photo,
+.menu-pizzas-table .inventory-photo-placeholder {
+  flex: 0 0 auto;
+}
+
+.menu-pizzas-table td:nth-child(4),
+.menu-pizzas-table td:nth-child(5) {
+  white-space: normal;
+}
+
+.static-autocomplete-menu {
+  position: static;
+  margin-top: 6px;
+}
+
+.selected-ingredient-list {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.selected-ingredient-pill {
+  align-items: center;
+  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 7px;
+  padding: 6px 8px 6px 10px;
+}
+
+.selected-ingredient-pill small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.selected-ingredient-pill button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+
 .inventory-detail-panel {
   margin-top: 16px;
 }
@@ -2786,4 +2883,21 @@ a {
     width: 80mm;
     min-height: 130mm;
   }
+}
+.stock-value-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.inventory-adjustment-label {
+  color: #15803d;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.dark .inventory-adjustment-label {
+  color: #4ade80;
 }

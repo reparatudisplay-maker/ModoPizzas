@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown, Factory, Home, Menu, Package, Plus, ReceiptText, Settings, Tags, Truck, UserCog } from "lucide-react";
+import { ChevronDown, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, Tags, Truck, UserCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -18,6 +18,7 @@ type PanelShellProps = {
     | "marcas"
     | "categorias"
     | "configuracion"
+    | "menu-pizzas"
     | "produccion"
     | "produccion-preparaciones"
     | "produccion-registrar";
@@ -40,6 +41,9 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
     { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
   ];
+  const menuLinks = [
+    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Pizzas", icon: Pizza, show: isManager }
+  ];
   const productionLinks = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Registrar produccion", icon: Plus, show: isManager },
     { key: "produccion-preparaciones", href: "/panel/produccion", label: "Preparaciones", icon: ReceiptText, show: isManager }
@@ -48,6 +52,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "configuracion", href: "/panel/configuracion", label: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
+  const menuActive = menuLinks.some((link) => link.key === active);
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
 
   const renderLinks = (links: typeof masterLinks) =>
@@ -90,6 +95,16 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
               </details>
             ) : null}
             {renderLinks(inventoryLinks)}
+            {isManager ? (
+              <details className="worker-submenu" open={menuActive}>
+                <summary className={menuActive ? "active" : ""} title="Menu">
+                  <Pizza size={18} />
+                  <span>Menu</span>
+                  <ChevronDown className="submenu-chevron" size={16} />
+                </summary>
+                <div>{renderLinks(menuLinks)}</div>
+              </details>
+            ) : null}
             {isManager ? (
               <details className="worker-submenu" open={productionActive}>
                 <summary className={productionActive ? "active" : ""} title="Produccion">
