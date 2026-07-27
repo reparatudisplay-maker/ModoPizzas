@@ -43,10 +43,10 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
     { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
   ];
-  const menuLinks = [
-    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Pizzas", icon: Pizza, show: isManager },
-    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Precios / Adiciones", icon: Plus, show: isManager },
-    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Precios / Pizzas", icon: ReceiptText, show: isManager }
+  const menuMainLinks = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: isManager }];
+  const menuPriceLinks = [
+    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: isManager },
+    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: isManager }
   ];
   const productionLinks = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Registrar produccion", icon: Plus, show: isManager },
@@ -56,7 +56,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "configuracion", href: "/panel/configuracion", label: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
-  const menuActive = menuLinks.some((link) => link.key === active);
+  const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
+  const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
 
   const renderLinks = (links: typeof masterLinks) =>
@@ -106,7 +107,17 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
                   <span>Menu</span>
                   <ChevronDown className="submenu-chevron" size={16} />
                 </summary>
-                <div>{renderLinks(menuLinks)}</div>
+                <div>
+                  {renderLinks(menuMainLinks)}
+                  <details className="worker-submenu nested-submenu" open={menuPricesActive}>
+                    <summary className={menuPricesActive ? "active" : ""} title="Precios">
+                      <ReceiptText size={18} />
+                      <span>Precios</span>
+                      <ChevronDown className="submenu-chevron" size={16} />
+                    </summary>
+                    <div>{renderLinks(menuPriceLinks)}</div>
+                  </details>
+                </div>
               </details>
             ) : null}
             {isManager ? (

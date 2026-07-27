@@ -756,6 +756,14 @@ a {
   padding-left: 10px;
 }
 
+.worker-submenu.nested-submenu > div {
+  padding-left: 8px;
+}
+
+.worker-submenu.nested-submenu > summary {
+  min-height: 42px;
+}
+
 .worker-sidebar > details:not([open]) .worker-submenu > div {
   display: none;
 }
@@ -2014,6 +2022,14 @@ a {
   gap: 0.7rem;
 }
 
+.menu-image-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  height: 72px;
+  object-fit: cover;
+  width: 72px;
+}
+
 .menu-check-option {
   align-self: end;
   min-height: 44px;
@@ -2040,8 +2056,20 @@ a {
 }
 
 .menu-pizzas-table .compact-actions-column {
-  min-width: 96px;
-  width: 96px;
+  min-width: 150px;
+  width: 150px;
+}
+
+.compact-confirm-actions {
+  gap: 4px;
+}
+
+.compact-confirm-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  min-height: 34px;
+  padding-inline: 8px;
 }
 
 .menu-pizzas-table .inventory-product-photo,
@@ -2151,6 +2179,41 @@ a {
   font-weight: 700;
   min-height: 40px;
   padding: 0 10px;
+}
+
+.pizza-price-component-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pizza-price-component-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(150px, 1fr) minmax(82px, 100px) minmax(72px, max-content) minmax(150px, max-content) max-content;
+}
+
+.pizza-price-component-row input,
+.pizza-price-component-row select {
+  min-width: 0;
+}
+
+.price-summary-grid {
+  margin-top: 10px;
+}
+
+.price-summary-grid > div {
+  background: color-mix(in srgb, var(--panel-strong) 86%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.price-summary-grid span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 4px;
 }
 
 .block-text {
@@ -2931,6 +2994,10 @@ a {
   }
 
   .addition-size-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pizza-price-component-row {
     grid-template-columns: 1fr;
   }
 

@@ -3,13 +3,9 @@
 import Image from "next/image";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, ImagePlus, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowDown, ArrowUp, Check, ImagePlus, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
 import {
-  deletePizzaAddition,
-  deleteMenuCategory,
-  deletePizzaFlavor,
-  deletePizzaSize,
   moveMenuPizzaItem,
   savePizzaAddition,
   saveMenuCategory,
@@ -23,6 +19,10 @@ type SectionKey = "sabores" | "tamanos" | "categorias" | "adiciones";
 type StatusFilter = "" | "active" | "inactive";
 type LimitFilter = "15" | "30" | "all";
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
+const flavorImageMaxSize = 4 * 1024 * 1024;
+const flavorImageMaxSizeMb = flavorImageMaxSize / (1024 * 1024);
+const allowedFlavorImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
 type FlavorIngredientSource = {
   id: string;
   name: string;
@@ -135,17 +135,19 @@ const allColumns = {
   adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[]
 };
 
-function readColumns() {
+type ColumnsBySection = typeof defaultColumns;
+
+function readColumns(): ColumnsBySection {
   if (typeof window === "undefined") return defaultColumns;
   const saved = window.localStorage.getItem(storageKey);
   if (!saved) return defaultColumns;
   try {
     const parsed = JSON.parse(saved) as Partial<typeof defaultColumns>;
     return {
-      sabores: sanitizeColumns(parsed.sabores, "sabores"),
-      tamanos: sanitizeColumns(parsed.tamanos, "tamanos"),
-      categorias: sanitizeColumns(parsed.categorias, "categorias"),
-      adiciones: sanitizeColumns(parsed.adiciones, "adiciones")
+      sabores: sanitizeColumns(parsed.sabores, "sabores") as FlavorColumn[],
+      tamanos: sanitizeColumns(parsed.tamanos, "tamanos") as SizeColumn[],
+      categorias: sanitizeColumns(parsed.categorias, "categorias") as CategoryColumn[],
+      adiciones: sanitizeColumns(parsed.adiciones, "adiciones") as AdditionColumn[]
     };
   } catch {
     window.localStorage.removeItem(storageKey);
@@ -317,15 +319,28 @@ export function MenuPizzasWorkspace({
   const [status, setStatus] = useState<StatusFilter>("");
   const [limit, setLimit] = useState<LimitFilter>("15");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [columnsBySection, setColumnsBySection] = useState(readColumns);
+  const [columnsBySection, setColumnsBySection] = useState<ColumnsBySection>(defaultColumns);
+  const [columnsLoaded, setColumnsLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [modal, setModal] = useState<ModalState | null>(null);
+  const searchParams = useSearchParams();
+  const routeMessage = searchParams.get("message");
+  const routeMessageStatus = searchParams.get("message_status") === "success" ? "success" : "error";
   const visibleColumns = columnsBySection[section] as string[];
   const normalizedQuery = normalizeMasterText(query);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setColumnsBySection(readColumns());
+      setColumnsLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (!columnsLoaded) return;
     window.localStorage.setItem(storageKey, JSON.stringify(columnsBySection));
-  }, [columnsBySection]);
+  }, [columnsBySection, columnsLoaded]);
 
   const filteredFlavors = useMemo(() => {
     const filtered = orderedFirst(flavors).filter((item) => {
@@ -405,6 +420,8 @@ export function MenuPizzasWorkspace({
           </button>
         ))}
       </nav>
+
+      {routeMessage ? <p className={`form-status ${routeMessageStatus}`}>{routeMessage}</p> : null}
 
       <section className="form-panel">
         <div className="section-title-row inventory-toolbar-row">
@@ -568,7 +585,7 @@ function FlavorsTable({
                     <button className="icon-button" onClick={() => onEdit(item)} title={`Editar ${item.name}`} type="button">
                       <Pencil size={16} />
                     </button>
-                    <MenuDeleteButton action={deletePizzaFlavor} id={item.id} name={item.name} />
+                    <MenuDeleteButton id={item.id} name={item.name} section="pizza_flavors" />
                   </span>
                 </td>
               ) : null}
@@ -629,7 +646,7 @@ function SizesTable({
                     <button className="icon-button" onClick={() => onEdit(item)} title={`Editar ${item.name}`} type="button">
                       <Pencil size={16} />
                     </button>
-                    <MenuDeleteButton action={deletePizzaSize} id={item.id} name={item.name} />
+                    <MenuDeleteButton id={item.id} name={item.name} section="pizza_sizes" />
                   </span>
                 </td>
               ) : null}
@@ -688,7 +705,7 @@ function CategoriesTable({
                     <button className="icon-button" onClick={() => onEdit(item)} title={`Editar ${item.name}`} type="button">
                       <Pencil size={16} />
                     </button>
-                    <MenuDeleteButton action={deleteMenuCategory} id={item.id} name={item.name} />
+                    <MenuDeleteButton id={item.id} name={item.name} section="menu_categories" />
                   </span>
                 </td>
               ) : null}
@@ -783,7 +800,7 @@ function AdditionsTable({
                       <button className="icon-button" onClick={() => onEdit(item)} title={`Editar ${item.name}`} type="button">
                         <Pencil size={16} />
                       </button>
-                      <MenuDeleteButton action={deletePizzaAddition} id={item.id} name={item.name} />
+                      <MenuDeleteButton id={item.id} name={item.name} section="pizza_additions" />
                     </span>
                   </td>
                 ) : null}
@@ -852,34 +869,32 @@ function ReorderButton({
 function MenuDeleteButton({
   id,
   name,
-  action
+  section
 }: {
   id: string;
   name: string;
-  action: (previousState: FormActionState, formData: FormData) => Promise<FormActionState>;
+  section: "menu_categories" | "pizza_sizes" | "pizza_flavors" | "pizza_additions";
 }) {
-  const [state, formAction] = useActionState(action, initialState);
-  const router = useRouter();
-
-  useEffect(() => {
-    if (state.status === "success") router.refresh();
-  }, [router, state.status]);
+  const [confirming, setConfirming] = useState(false);
+  const href = `/api/admin/menu/delete?section=${encodeURIComponent(section)}&id=${encodeURIComponent(id)}`;
 
   return (
-    <form action={formAction} className="inline-form product-delete-form">
-      <input name="id" type="hidden" value={id} />
-      <button
-        className="icon-button danger-button"
-        onClick={(event) => {
-          if (!window.confirm(`Eliminar ${name}? Esta accion no se puede deshacer.`)) event.preventDefault();
-        }}
-        title={`Eliminar ${name}`}
-        type="submit"
-      >
-        <Trash2 size={16} />
-      </button>
-      {state.status !== "idle" ? <span className={`row-action-message ${state.status}`}>{state.message}</span> : null}
-    </form>
+    <span className="product-delete-form">
+      {confirming ? (
+        <span className="row-actions compact-confirm-actions">
+          <a className="ghost-button danger-button compact-confirm-button" href={href} title={`Confirmar eliminacion de ${name}`}>
+            <Check size={15} /> Eliminar
+          </a>
+          <button className="icon-button" onClick={() => setConfirming(false)} title="Cancelar eliminacion" type="button">
+            <X size={16} />
+          </button>
+        </span>
+      ) : (
+        <button className="icon-button danger-button" onClick={() => setConfirming(true)} title={`Eliminar ${name}`} type="button">
+          <Trash2 size={16} />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -966,6 +981,9 @@ function FlavorForm({
   onClose: () => void;
 }) {
   const [removeImage, setRemoveImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState(item?.image_src ?? "");
+  const [imageError, setImageError] = useState("");
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [ingredientQuery, setIngredientQuery] = useState("");
   const [selectedIngredients, setSelectedIngredients] = useState<FlavorIngredientSelection[]>(item?.characteristic_ingredients ?? []);
   const selectedKeys = new Set(selectedIngredients.map((ingredient) => `${ingredient.source_kind}:${ingredient.source_id}`));
@@ -990,8 +1008,20 @@ function FlavorForm({
     setSelectedIngredients((current) => current.filter((ingredient) => `${ingredient.source_kind}:${ingredient.source_id}` !== key));
   }
 
+  function revokePreviewIfNeeded() {
+    if (imagePreview.startsWith("blob:")) {
+      URL.revokeObjectURL(imagePreview);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
+
   return (
-    <form action={action} className="compact-card" encType="multipart/form-data">
+    <form action={action} className="compact-card">
       {item ? <input name="id" type="hidden" value={item.id} /> : null}
       {item?.image_url ? <input name="existing_image_url" type="hidden" value={item.image_url} /> : null}
       <input name="remove_image" type="hidden" value={removeImage ? "1" : "0"} />
@@ -1073,17 +1103,52 @@ function FlavorForm({
         <div className="field full">
           <label>Foto (opcional)</label>
           <div className="menu-image-field">
-            {item?.image_src && !removeImage ? imageCell(item.image_src, item.name) : <span className="inventory-photo-placeholder">Sin foto</span>}
+            {imagePreview && !removeImage ? <Image alt={item?.name ?? "Foto del sabor"} className="menu-image-preview" height={72} src={imagePreview} unoptimized width={72} /> : <span className="inventory-photo-placeholder">Sin foto</span>}
             <label className="ghost-button icon-text-button">
-              <ImagePlus size={16} /> Subir foto
-              <input accept="image/jpeg,image/png,image/webp,image/gif" className="sr-only" name="flavor_image" type="file" />
+              <ImagePlus size={16} /> {imagePreview && !removeImage ? "Cambiar" : "Subir foto"}
+              <input
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="sr-only"
+                key={fileInputKey}
+                name="flavor_image"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  if (!allowedFlavorImageTypes.has(file.type)) {
+                    setImageError("No se puede cargar la imagen. Usa JPG, PNG, WEBP o GIF.");
+                    event.currentTarget.value = "";
+                    return;
+                  }
+                  if (file.size > flavorImageMaxSize) {
+                    setImageError(`No se puede cargar la imagen. El tamaño máximo permitido es ${flavorImageMaxSizeMb} MB.`);
+                    event.currentTarget.value = "";
+                    return;
+                  }
+                  revokePreviewIfNeeded();
+                  setImagePreview(URL.createObjectURL(file));
+                  setRemoveImage(false);
+                  setImageError("");
+                }}
+                type="file"
+              />
             </label>
-            {item?.image_url && !removeImage ? (
-              <button className="ghost-button" onClick={() => setRemoveImage(true)} type="button">
+            {imagePreview && !removeImage ? (
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  revokePreviewIfNeeded();
+                  setImagePreview("");
+                  setRemoveImage(true);
+                  setImageError("");
+                  setFileInputKey((current) => current + 1);
+                }}
+                type="button"
+              >
                 Eliminar imagen
               </button>
             ) : null}
           </div>
+          {imageError ? <p className="form-status error">{imageError}</p> : <p className="field-hint">Formatos permitidos: JPG, PNG, WEBP o GIF. Máximo {flavorImageMaxSizeMb} MB.</p>}
         </div>
       </div>
       <label className="check-option">
