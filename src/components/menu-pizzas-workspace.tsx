@@ -36,7 +36,8 @@ type FlavorIngredientSelection = {
 export type AdditionIngredientSource = {
   id: string;
   name: string;
-  source_kind: "inventory_item" | "preparation";
+  image_src?: string | null;
+  source_kind: "inventory_item";
   unit: StockUnit;
   stock_base: number;
   unit_cost_cop: number | null;
@@ -87,6 +88,7 @@ export type PizzaAdditionRecord = {
   source_kind: "inventory_item" | "preparation";
   source_id: string;
   component_name: string;
+  component_image_src?: string | null;
   component_unit: StockUnit;
   component_stock_base: number;
   component_unit_cost_cop: number | null;
@@ -260,6 +262,19 @@ function costLabel(value: number | null) {
   return value === null ? "Sin costo disponible" : formatCop(value);
 }
 
+function skuStem(value: string) {
+  const normalized = value
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  return (normalized || "XXX").slice(0, 3).padEnd(3, "X");
+}
+
+function additionSkuPreview(value: string) {
+  return `AD${skuStem(value)}`;
+}
+
 function orderedFirst<T extends { sort_order: number; name: string }>(items: T[]) {
   return [...items].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
 }
@@ -283,7 +298,9 @@ export function MenuPizzasWorkspace({
   categories,
   additions,
   ingredientSources,
-  additionIngredientSources
+  additionIngredientSources,
+  sections = ["sabores", "tamanos", "categorias"],
+  initialSection
 }: {
   flavors: PizzaFlavorRecord[];
   sizes: PizzaSizeRecord[];
@@ -291,8 +308,11 @@ export function MenuPizzasWorkspace({
   additions: PizzaAdditionRecord[];
   ingredientSources: FlavorIngredientSource[];
   additionIngredientSources: AdditionIngredientSource[];
+  sections?: SectionKey[];
+  initialSection?: SectionKey;
 }) {
-  const [section, setSection] = useState<SectionKey>("sabores");
+  const availableSections = sections.length > 0 ? sections : (["sabores"] as SectionKey[]);
+  const [section, setSection] = useState<SectionKey>(initialSection && availableSections.includes(initialSection) ? initialSection : availableSections[0]);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("");
   const [limit, setLimit] = useState<LimitFilter>("15");
@@ -379,7 +399,7 @@ export function MenuPizzasWorkspace({
   return (
     <>
       <nav aria-label="Secciones de pizzas" className="section-tabs inventory-section-tabs">
-        {(["sabores", "adiciones", "tamanos", "categorias"] as SectionKey[]).map((item) => (
+        {availableSections.map((item) => (
           <button className={`ghost-button${section === item ? " active-tab" : ""}`} key={item} onClick={() => changeSection(item)} type="button">
             {sectionTitle(item)}
           </button>
@@ -734,7 +754,7 @@ function AdditionsTable({
                 {showColumn("component") ? (
                   <td>
                     {item.component_name}
-                    <small className="muted block-text">{item.source_kind === "preparation" ? "Preparacion" : "Ingrediente"}</small>
+                    <small className="muted block-text">Ingrediente</small>
                   </td>
                 ) : null}
                 {showColumn("sizes") ? (
@@ -902,7 +922,7 @@ function MenuPizzaModal({
         <header className="modal-header">
           <div>
             <strong>{modal.item ? `Editar ${sectionTitle(modal.section).slice(0, -1).toLowerCase()}` : addLabel(modal.section)}</strong>
-            <span>Dato maestro de Menu/Pizzas</span>
+            <span>{modal.section === "adiciones" ? "Menu/Precios" : "Menu/Pizzas"}</span>
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button">
             <X size={18} />
@@ -1182,9 +1202,16 @@ function AdditionForm({
   action: (payload: FormData) => void;
   onClose: () => void;
 }) {
-  const initialComponent = ingredientSources.find((source) => source.id === item?.source_id && source.source_kind === item?.source_kind) ?? ingredientSources[0] ?? null;
-  const [sourceKey, setSourceKey] = useState(initialComponent ? `${initialComponent.source_kind}:${initialComponent.id}` : "");
-  const selectedComponent = ingredientSources.find((source) => `${source.source_kind}:${source.id}` === sourceKey) ?? null;
+  const activeCategories = categories.filter((category) => category.is_active);
+  const activeFlavors = flavors.filter((flavor) => flavor.is_active);
+  const initialComponent = ingredientSources.find((source) => source.id === item?.source_id) ?? null;
+  const [selectedIngredientId, setSelectedIngredientId] = useState(initialComponent?.id ?? "");
+  const selectedComponent = ingredientSources.find((source) => source.id === selectedIngredientId) ?? null;
+  const [ingredientQuery, setIngredientQuery] = useState(initialComponent?.name ?? "");
+  const [showIngredientOptions, setShowIngredientOptions] = useState(false);
+  const [highlightedIngredient, setHighlightedIngredient] = useState(0);
+  const [useAlternateName, setUseAlternateName] = useState(Boolean(item && normalizeMasterText(item.name) !== normalizeMasterText(item.component_name)));
+  const [alternateName, setAlternateName] = useState(item && normalizeMasterText(item.name) !== normalizeMasterText(item.component_name) ? item.name : "");
   const initialRows = sizes.map((size) => {
     const existing = item?.sizes.find((row) => row.pizza_size_id === size.id);
     const unit = existing?.display_unit ?? unitOptionsFor(selectedComponent?.unit ?? "unit")[0];
@@ -1198,9 +1225,20 @@ function AdditionForm({
     };
   });
   const [sizeRows, setSizeRows] = useState(initialRows);
-  const [compatibleFlavorIds, setCompatibleFlavorIds] = useState<string[]>(item?.compatible_flavors.map((flavor) => flavor.id) ?? []);
-  const [compatibleCategoryIds, setCompatibleCategoryIds] = useState<string[]>(item?.compatible_categories.map((category) => category.id) ?? []);
+  const [compatibleFlavorIds, setCompatibleFlavorIds] = useState<string[]>(
+    item ? (item.compatible_flavors.length > 0 ? item.compatible_flavors.map((flavor) => flavor.id) : activeFlavors.map((flavor) => flavor.id)) : activeFlavors.map((flavor) => flavor.id)
+  );
+  const [compatibleCategoryIds, setCompatibleCategoryIds] = useState<string[]>(
+    item
+      ? item.compatible_categories.length > 0
+        ? item.compatible_categories.map((category) => category.id)
+        : activeCategories.map((category) => category.id)
+      : activeCategories.map((category) => category.id)
+  );
   const unitOptions = useMemo(() => unitOptionsFor(selectedComponent?.unit ?? "unit"), [selectedComponent?.unit]);
+  const filteredIngredientSources = ingredientSources
+    .filter((source) => !ingredientQuery || normalizeMasterText(source.name).includes(normalizeMasterText(ingredientQuery)))
+    .slice(0, 8);
 
   const rowsPayload = sizeRows
     .filter((row) => row.enabled)
@@ -1220,6 +1258,26 @@ function AdditionForm({
     return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
   }
 
+  function selectIngredient(source: AdditionIngredientSource) {
+    const nextOptions = unitOptionsFor(source.unit);
+    setSelectedIngredientId(source.id);
+    setIngredientQuery(source.name);
+    setShowIngredientOptions(false);
+    setHighlightedIngredient(0);
+    setSizeRows((current) =>
+      current.map((row) => ({
+        ...row,
+        unit: nextOptions.includes(row.unit) ? row.unit : nextOptions[0]
+      }))
+    );
+  }
+
+  function clearIngredient() {
+    setSelectedIngredientId("");
+    setIngredientQuery("");
+    setShowIngredientOptions(false);
+  }
+
   function estimatedCost(row: (typeof sizeRows)[number]) {
     if (!selectedComponent?.unit_cost_cop) return null;
     const quantity = Number(String(row.quantity).replace(",", "."));
@@ -1227,46 +1285,96 @@ function AdditionForm({
     return convertQuantity(quantity, row.unit, canonicalUnit(row.unit)) * selectedComponent.unit_cost_cop;
   }
 
+  const displayedName = useAlternateName && alternateName ? alternateName : selectedComponent?.name ?? "";
+  const skuValue = item?.sku ?? (displayedName ? additionSkuPreview(displayedName) : "Se generara al guardar");
+
   return (
     <form action={action} className="compact-card">
       {item ? <input name="id" type="hidden" value={item.id} /> : null}
-      <input name="source_kind" type="hidden" value={selectedComponent?.source_kind ?? ""} />
+      <input name="source_kind" type="hidden" value={selectedComponent ? "inventory_item" : ""} />
       <input name="source_id" type="hidden" value={selectedComponent?.id ?? ""} />
+      <input name="use_alternate_name" type="hidden" value={useAlternateName ? "on" : ""} />
+      <input name="alternate_name" type="hidden" value={useAlternateName ? alternateName : ""} />
       <input name="addition_sizes" type="hidden" value={JSON.stringify(rowsPayload)} />
       <input name="compatible_flavor_ids" type="hidden" value={JSON.stringify(compatibleFlavorIds)} />
       <input name="compatible_category_ids" type="hidden" value={JSON.stringify(compatibleCategoryIds)} />
       <div className="form-grid">
-        <div className="field">
-          <label>Nombre</label>
-          <input defaultValue={item?.name ?? ""} name="name" onInput={(event) => (event.currentTarget.value = uppercaseMasterName(event.currentTarget.value))} required />
+        <div className="field autocomplete-field">
+          <label>Ingrediente</label>
+          <div className="linked-field">
+            <input
+              autoComplete="off"
+              onBlur={() => window.setTimeout(() => setShowIngredientOptions(false), 120)}
+              onChange={(event) => {
+                setSelectedIngredientId("");
+                setIngredientQuery(uppercaseMasterName(event.target.value));
+                setShowIngredientOptions(true);
+                setHighlightedIngredient(0);
+              }}
+              onFocus={() => setShowIngredientOptions(true)}
+              onKeyDown={(event) => {
+                if (!showIngredientOptions && (event.key === "ArrowDown" || event.key === "ArrowUp")) setShowIngredientOptions(true);
+                if (event.key === "Escape") setShowIngredientOptions(false);
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setHighlightedIngredient((current) => Math.min(current + 1, Math.max(0, filteredIngredientSources.length - 1)));
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setHighlightedIngredient((current) => Math.max(0, current - 1));
+                }
+                if (event.key === "Enter" && showIngredientOptions && filteredIngredientSources[highlightedIngredient]) {
+                  event.preventDefault();
+                  selectIngredient(filteredIngredientSources[highlightedIngredient]);
+                }
+              }}
+              placeholder="Buscar ingrediente"
+              readOnly={Boolean(selectedComponent)}
+              required
+              value={ingredientQuery}
+            />
+            {selectedComponent ? (
+              <button className="icon-button" onClick={clearIngredient} title="Cambiar ingrediente" type="button">
+                <X size={16} />
+              </button>
+            ) : null}
+          </div>
+          {showIngredientOptions && !selectedComponent ? (
+            <div className="autocomplete-menu static-autocomplete-menu">
+              {filteredIngredientSources.map((source, index) => (
+                <button
+                  className={`autocomplete-option${highlightedIngredient === index ? " active" : ""}`}
+                  key={source.id}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    selectIngredient(source);
+                  }}
+                  type="button"
+                >
+                  <span>{source.name}</span>
+                </button>
+              ))}
+              {filteredIngredientSources.length === 0 ? <span className="autocomplete-option muted">Sin resultados</span> : null}
+            </div>
+          ) : null}
+          <p className="field-hint">Solo ingredientes activos. No consume preparaciones, productos para venta ni insumos.</p>
         </div>
         <div className="field">
-          <label>Ingrediente o preparacion</label>
-          <select
-            onChange={(event) => {
-              const nextKey = event.target.value;
-              const nextComponent = ingredientSources.find((source) => `${source.source_kind}:${source.id}` === nextKey);
-              const nextOptions = unitOptionsFor(nextComponent?.unit ?? "unit");
-              setSourceKey(nextKey);
-              setSizeRows((current) =>
-                current.map((row) => ({
-                  ...row,
-                  unit: nextOptions.includes(row.unit) ? row.unit : nextOptions[0]
-                }))
-              );
-            }}
-            required
-            value={sourceKey}
-          >
-            <option value="">Selecciona componente</option>
-            {ingredientSources.map((source) => (
-              <option key={`${source.source_kind}:${source.id}`} value={`${source.source_kind}:${source.id}`}>
-                {source.name} - {source.source_kind === "preparation" ? "PREPARACION" : "INGREDIENTE"}
-              </option>
-            ))}
-          </select>
-          <p className="field-hint">Solo ingredientes y preparaciones activas. No consume productos para venta ni insumos.</p>
+          <label>Foto</label>
+          <div className="menu-image-field compact-menu-image-field">
+            {selectedComponent?.image_src ? imageCell(selectedComponent.image_src, selectedComponent.name) : <span className="inventory-photo-placeholder">Sin foto</span>}
+          </div>
         </div>
+        <label className="check-option menu-check-option">
+          <input checked={useAlternateName} onChange={(event) => setUseAlternateName(event.target.checked)} type="checkbox" />
+          <span>Usar nombre alternativo</span>
+        </label>
+        {useAlternateName ? (
+          <div className="field">
+            <label>Nombre alternativo</label>
+            <input onChange={(event) => setAlternateName(uppercaseMasterName(event.target.value))} placeholder={selectedComponent?.name ?? "Nombre comercial"} value={alternateName} />
+          </div>
+        ) : null}
         <div className="field">
           <label>Maximo permitido</label>
           <input defaultValue={item?.max_allowed ?? 1} min="1" name="max_allowed" type="number" />
@@ -1311,9 +1419,17 @@ function AdditionForm({
         </div>
         <div className="field full">
           <label>Compatibilidad por categorias</label>
-          <div className="column-settings-grid">
-            {categories.map((category) => (
-              <label className="check-option" key={category.id}>
+          <div className="quick-actions-row">
+            <button className="ghost-button compact-action-button" onClick={() => setCompatibleCategoryIds(activeCategories.map((category) => category.id))} type="button">
+              Seleccionar todas
+            </button>
+            <button className="ghost-button compact-action-button" onClick={() => setCompatibleCategoryIds([])} type="button">
+              Quitar todas
+            </button>
+          </div>
+          <div className="compact-check-grid">
+            {activeCategories.map((category) => (
+              <label className="check-option compact-check-option" key={category.id}>
                 <input checked={compatibleCategoryIds.includes(category.id)} onChange={() => setCompatibleCategoryIds((current) => toggleValue(current, category.id))} type="checkbox" />
                 <span>{category.name}</span>
               </label>
@@ -1322,9 +1438,17 @@ function AdditionForm({
         </div>
         <div className="field full">
           <label>Compatibilidad por sabores</label>
-          <div className="column-settings-grid">
-            {flavors.map((flavor) => (
-              <label className="check-option" key={flavor.id}>
+          <div className="quick-actions-row">
+            <button className="ghost-button compact-action-button" onClick={() => setCompatibleFlavorIds(activeFlavors.map((flavor) => flavor.id))} type="button">
+              Seleccionar todos
+            </button>
+            <button className="ghost-button compact-action-button" onClick={() => setCompatibleFlavorIds([])} type="button">
+              Quitar todos
+            </button>
+          </div>
+          <div className="compact-check-grid">
+            {activeFlavors.map((flavor) => (
+              <label className="check-option compact-check-option" key={flavor.id}>
                 <input checked={compatibleFlavorIds.includes(flavor.id)} onChange={() => setCompatibleFlavorIds((current) => toggleValue(current, flavor.id))} type="checkbox" />
                 <span>{flavor.name}</span>
               </label>
@@ -1342,6 +1466,10 @@ function AdditionForm({
           <input defaultChecked={item?.is_available ?? true} name="is_available" type="checkbox" />
           <span>Disponible</span>
         </label>
+        <div className="field">
+          <label>SKU</label>
+          <input readOnly value={skuValue} />
+        </div>
       </div>
       {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
       <div className="form-actions modal-form-actions">

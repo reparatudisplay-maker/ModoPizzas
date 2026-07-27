@@ -43,7 +43,7 @@ type AdditionRow = {
   is_available: boolean;
   sort_order: number;
   created_at: string;
-  inventory_items: { name: string; unit: "g" | "kg" | "ml" | "l" | "unit"; average_cost_cop: number | null } | null;
+  inventory_items: { name: string; image_url: string | null; unit: "g" | "kg" | "ml" | "l" | "unit"; average_cost_cop: number | null } | null;
   preparations: { name: string; base_unit: StockUnit } | null;
 };
 
@@ -99,6 +99,10 @@ function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
 }
 
 export default async function MenuPizzasPage() {
+  return <MenuPizzasModule mode="pizzas" />;
+}
+
+export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" }) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
@@ -141,7 +145,7 @@ export default async function MenuPizzasPage() {
     supabase.from("pizza_flavor_ingredients").select("flavor_id, source_kind, inventory_item_id, source_preparation_id"),
     supabase
       .from("inventory_items")
-      .select("id, name, unit, average_cost_cop")
+      .select("id, name, image_url, unit, average_cost_cop")
       .eq("item_kind", "ingredient")
       .eq("is_active", true)
       .is("presentation_quantity", null)
@@ -149,7 +153,7 @@ export default async function MenuPizzasPage() {
     supabase.from("preparations").select("id, name, base_unit").eq("is_active", true).order("name"),
     supabase
       .from("pizza_additions")
-      .select("id, sku, name, source_kind, inventory_item_id, source_preparation_id, max_allowed, is_active, is_available, sort_order, created_at, inventory_items(name, unit, average_cost_cop), preparations(name, base_unit)")
+      .select("id, sku, name, source_kind, inventory_item_id, source_preparation_id, max_allowed, is_active, is_available, sort_order, created_at, inventory_items(name, image_url, unit, average_cost_cop), preparations(name, base_unit)")
       .order("sort_order")
       .order("name"),
     supabase.from("pizza_addition_sizes").select("addition_id, pizza_size_id, quantity_base, unit, display_quantity, display_unit, price_cop, pizza_sizes(name)"),
@@ -224,6 +228,17 @@ export default async function MenuPizzasPage() {
     })
   );
   const imageSrcById = new Map(signedImageEntries);
+  const signedIngredientImageEntries = await Promise.all(
+    (inventorySourcesResult.data ?? []).map(async (item) => {
+      if (!item.image_url || isDirectImageUrl(item.image_url)) {
+        return [item.id, item.image_url ?? null] as const;
+      }
+
+      const { data } = await supabase.storage.from("product-images").createSignedUrl(item.image_url, 60 * 60);
+      return [item.id, data?.signedUrl ?? null] as const;
+    })
+  );
+  const ingredientImageSrcById = new Map(signedIngredientImageEntries);
   const flavors = flavorRows.map((flavor) => ({
     ...flavor,
     menu_category_name: flavor.menu_categories?.name ?? null,
@@ -308,25 +323,13 @@ export default async function MenuPizzasPage() {
     return {
       id: item.id,
       name: item.name,
+      image_src: ingredientImageSrcById.get(item.id) ?? null,
       source_kind: "inventory_item" as const,
       unit: item.unit,
       stock_base: cost?.stock_base ?? 0,
       unit_cost_cop: cost?.unit_cost_cop ?? null
     };
   }) as AdditionIngredientSource[];
-  const additionPreparationSources = (preparationSourcesResult.data ?? []).map((item) => {
-    const source = item as { id: string; name: string; base_unit?: StockUnit };
-    const cost = preparationCostById.get(source.id);
-    return {
-      id: source.id,
-      name: source.name,
-      source_kind: "preparation" as const,
-      unit: source.base_unit ?? "unit",
-      stock_base: cost?.stock_base ?? 0,
-      unit_cost_cop: cost?.unit_cost_cop ?? null
-    };
-  }) as AdditionIngredientSource[];
-
   const additionSizesById = new Map<string, PizzaAdditionRecord["sizes"]>();
   for (const row of (additionSizesResult.data ?? []) as unknown as AdditionSizeRow[]) {
     additionSizesById.set(row.addition_id, [
@@ -363,6 +366,7 @@ export default async function MenuPizzasPage() {
     source_kind: addition.source_kind,
     source_id: addition.source_kind === "preparation" ? addition.source_preparation_id ?? "" : addition.inventory_item_id ?? "",
     component_name: addition.source_kind === "preparation" ? addition.preparations?.name ?? "Sin preparacion" : addition.inventory_items?.name ?? "Sin ingrediente",
+    component_image_src: addition.source_kind === "inventory_item" ? ingredientImageSrcById.get(addition.inventory_item_id ?? "") ?? null : null,
     component_unit: addition.source_kind === "preparation" ? addition.preparations?.base_unit ?? "unit" : addition.inventory_items?.unit ?? "unit",
     component_stock_base: addition.source_kind === "preparation" ? preparationCostById.get(addition.source_preparation_id ?? "")?.stock_base ?? 0 : itemCostById.get(addition.inventory_item_id ?? "")?.stock_base ?? 0,
     component_unit_cost_cop:
@@ -378,14 +382,16 @@ export default async function MenuPizzasPage() {
   })) as PizzaAdditionRecord[];
 
   return (
-    <PanelShell active="menu-pizzas" hideHeader roleNames={roleNames} title="Pizzas" userEmail={user.email ?? "usuario"}>
+    <PanelShell active={mode === "adiciones" ? "menu-precios-adiciones" : "menu-pizzas"} hideHeader roleNames={roleNames} title={mode === "adiciones" ? "Adiciones" : "Pizzas"} userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
         <MenuPizzasWorkspace
-        additionIngredientSources={[...additionIngredientSources, ...additionPreparationSources]}
+        additionIngredientSources={additionIngredientSources}
         additions={additions}
         categories={categories}
         flavors={flavors}
         ingredientSources={[...inventorySources, ...preparationSources]}
+        initialSection={mode === "adiciones" ? "adiciones" : "sabores"}
+        sections={mode === "adiciones" ? ["adiciones"] : ["sabores", "tamanos", "categorias"]}
         sizes={sizes}
       />
     </PanelShell>

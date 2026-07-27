@@ -19,6 +19,8 @@ type PanelShellProps = {
     | "categorias"
     | "configuracion"
     | "menu-pizzas"
+    | "menu-precios-adiciones"
+    | "menu-precios-pizzas"
     | "produccion"
     | "produccion-preparaciones"
     | "produccion-registrar";
@@ -42,7 +44,9 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
   ];
   const menuLinks = [
-    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Pizzas", icon: Pizza, show: isManager }
+    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Pizzas", icon: Pizza, show: isManager },
+    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Precios / Adiciones", icon: Plus, show: isManager },
+    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Precios / Pizzas", icon: ReceiptText, show: isManager }
   ];
   const productionLinks = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Registrar produccion", icon: Plus, show: isManager },

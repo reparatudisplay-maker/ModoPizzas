@@ -231,6 +231,8 @@ function revalidateInventory() {
   revalidatePath("/panel/configuracion");
   revalidatePath("/panel/produccion");
   revalidatePath("/panel/menu/pizzas");
+  revalidatePath("/panel/menu/precios/adiciones");
+  revalidatePath("/panel/menu/precios/pizzas");
 }
 
 async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
@@ -795,7 +797,8 @@ export async function savePizzaFlavor(_previousState: FormActionState, formData:
 export async function savePizzaAddition(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const id = getOptionalString(formData, "id");
   const supabase = await createServerSupabaseClient();
-  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const alternateName = upperText(getOptionalString(formData, "alternate_name"));
+  const useAlternateName = getBoolean(formData, "use_alternate_name");
   const sourceKind = getString(formData, "source_kind");
   const sourceId = getString(formData, "source_id");
   const maxAllowed = getInteger(formData, "max_allowed", 1);
@@ -803,37 +806,35 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
   const flavorIds = getJsonStringArray(formData, "compatible_flavor_ids");
   const categoryIds = getJsonStringArray(formData, "compatible_category_ids");
 
-  if (!name) return { status: "error", message: "Ingresa el nombre de la adicion." };
-  if (sourceKind !== "inventory_item" && sourceKind !== "preparation") return { status: "error", message: "Selecciona un componente valido." };
-  if (!sourceId) return { status: "error", message: "Selecciona el componente que consume la adicion." };
+  if (sourceKind !== "inventory_item") return { status: "error", message: "Selecciona un ingrediente valido." };
+  if (!sourceId) return { status: "error", message: "Selecciona el ingrediente que consume la adicion." };
   if (maxAllowed <= 0) return { status: "error", message: "El maximo permitido debe ser mayor a cero." };
   if (sizeInputs.length === 0) return { status: "error", message: "Configura cantidad y precio para al menos un tamano." };
 
-  try {
-    if (await hasDuplicateName(supabase, "pizza_additions", name, id)) {
-      return { status: "error", message: "Esta adicion ya esta registrada." };
-    }
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar la adicion." };
-  }
-
   let baseUnit = "unit";
-  if (sourceKind === "inventory_item") {
-    const { data: ingredient, error: ingredientError } = await supabase
-      .from("inventory_items")
-      .select("id, unit, item_kind, is_active, presentation_quantity")
-      .eq("id", sourceId)
-      .single();
-    if (ingredientError || !ingredient) return { status: "error", message: ingredientError?.message ?? "Ingrediente no encontrado." };
-    if (!ingredient.is_active || ingredient.item_kind !== "ingredient" || ingredient.presentation_quantity !== null) {
-      return { status: "error", message: "Las adiciones solo pueden consumir ingredientes activos." };
-    }
-    baseUnit = canonicalStockUnit(ingredient.unit);
-  } else {
-    const { data: preparation, error: preparationError } = await supabase.from("preparations").select("id, base_unit, is_active").eq("id", sourceId).single();
-    if (preparationError || !preparation) return { status: "error", message: preparationError?.message ?? "Preparacion no encontrada." };
-    if (!preparation.is_active) return { status: "error", message: "Las adiciones solo pueden consumir preparaciones activas." };
-    baseUnit = canonicalStockUnit(preparation.base_unit);
+  const { data: ingredient, error: ingredientError } = await supabase
+    .from("inventory_items")
+    .select("id, name, unit, item_kind, is_active, presentation_quantity")
+    .eq("id", sourceId)
+    .single();
+  if (ingredientError || !ingredient) return { status: "error", message: ingredientError?.message ?? "Ingrediente no encontrado." };
+  if (!ingredient.is_active || ingredient.item_kind !== "ingredient" || ingredient.presentation_quantity !== null) {
+    return { status: "error", message: "Las adiciones solo pueden consumir ingredientes activos." };
+  }
+  baseUnit = canonicalStockUnit(ingredient.unit);
+
+  const name = useAlternateName && alternateName ? alternateName : upperText(ingredient.name) ?? "";
+  if (!name) return { status: "error", message: "Selecciona el ingrediente de la adicion." };
+
+  const { data: existingAdditions, error: existingAdditionsError } = await supabase
+    .from("pizza_additions")
+    .select("id, name")
+    .eq("inventory_item_id", sourceId);
+  if (existingAdditionsError) return { status: "error", message: existingAdditionsError.message };
+  const normalizedAdditionName = normalizeMasterText(name);
+  const duplicateAddition = (existingAdditions ?? []).find((addition) => addition.id !== id && normalizeMasterText(addition.name ?? "") === normalizedAdditionName);
+  if (duplicateAddition) {
+    return { status: "error", message: "Ya existe una adicion con este ingrediente y nombre mostrado." };
   }
 
   const normalizedSizes: Array<PizzaAdditionSizeInput & { quantity_base: number; base_unit: string }> = [];
@@ -856,9 +857,9 @@ export async function savePizzaAddition(_previousState: FormActionState, formDat
 
   const payload = {
     name,
-    source_kind: sourceKind,
-    inventory_item_id: sourceKind === "inventory_item" ? sourceId : null,
-    source_preparation_id: sourceKind === "preparation" ? sourceId : null,
+    source_kind: "inventory_item",
+    inventory_item_id: sourceId,
+    source_preparation_id: null,
     max_allowed: maxAllowed,
     is_active: getBoolean(formData, "is_active"),
     is_available: getBoolean(formData, "is_available"),
