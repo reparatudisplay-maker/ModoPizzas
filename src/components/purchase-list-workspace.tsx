@@ -18,23 +18,31 @@ type PurchaseListRow = {
   supplier: string;
   brand: string;
   total_cop: number;
+  unit_cost: string;
   purchased_at: string;
   notes: string;
 };
 
-type ColumnKey = "photo" | "sku" | "product" | "presentation" | "quantity" | "supplier" | "brand" | "total" | "date" | "notes" | "actions";
+type ColumnKey = "photo" | "sku" | "product" | "presentation" | "quantity" | "supplier" | "brand" | "total" | "unitCost" | "date" | "notes" | "actions";
 
-const allColumns: ColumnKey[] = ["photo", "sku", "product", "presentation", "quantity", "supplier", "brand", "total", "date", "notes", "actions"];
-const defaultColumns: ColumnKey[] = ["photo", "actions", "sku", "product", "presentation", "quantity", "supplier", "brand", "total", "date", "notes"];
+const allColumns: ColumnKey[] = ["photo", "sku", "product", "presentation", "quantity", "supplier", "brand", "total", "unitCost", "date", "notes", "actions"];
+const defaultColumns: ColumnKey[] = ["photo", "actions", "sku", "product", "presentation", "quantity", "supplier", "brand", "total", "unitCost", "date", "notes"];
 const storageKey = "modopizzas.purchases.columns";
+const unitCostPreferenceKey = "modopizzas.purchases.columns.unit-cost-defaulted";
 
-function readColumns() {
+function readColumns(): ColumnKey[] {
   if (typeof window === "undefined") return defaultColumns;
   const saved = window.localStorage.getItem(storageKey);
   if (!saved) return defaultColumns;
   try {
     const parsed = JSON.parse(saved) as ColumnKey[];
     const sanitized = parsed.filter((column) => allColumns.includes(column));
+    if (sanitized.length && !sanitized.includes("unitCost") && window.localStorage.getItem(unitCostPreferenceKey) !== "1") {
+      window.localStorage.setItem(unitCostPreferenceKey, "1");
+      const totalIndex = sanitized.indexOf("total");
+      if (totalIndex >= 0) return [...sanitized.slice(0, totalIndex + 1), "unitCost", ...sanitized.slice(totalIndex + 1)];
+      return [...sanitized, "unitCost"];
+    }
     return sanitized.length ? sanitized : defaultColumns;
   } catch {
     window.localStorage.removeItem(storageKey);
@@ -52,6 +60,7 @@ function columnLabel(column: ColumnKey) {
     supplier: "Proveedor",
     brand: "Marca",
     total: "Total pagado",
+    unitCost: "Costo unitario",
     date: "Fecha",
     notes: "Notas",
     actions: "Acciones"
@@ -112,6 +121,7 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
               {showColumn("supplier") ? <th>Proveedor</th> : null}
               {showColumn("brand") ? <th>Marca</th> : null}
               {showColumn("total") ? <th>Total pagado</th> : null}
+              {showColumn("unitCost") ? <th>Costo unitario</th> : null}
               {showColumn("date") ? <th>Fecha</th> : null}
               {showColumn("notes") ? <th>Notas</th> : null}
             </tr>
@@ -141,6 +151,7 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                 {showColumn("supplier") ? <td>{purchase.supplier}</td> : null}
                 {showColumn("brand") ? <td>{purchase.brand}</td> : null}
                 {showColumn("total") ? <td>{formatCop(Number(purchase.total_cop))}</td> : null}
+                {showColumn("unitCost") ? <td>{purchase.unit_cost}</td> : null}
                 {showColumn("date") ? <td>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</td> : null}
                 {showColumn("notes") ? <td>{purchase.notes}</td> : null}
               </tr>

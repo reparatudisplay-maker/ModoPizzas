@@ -5,7 +5,7 @@ import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
+import { canonicalStockUnit, formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
 
 type InventoryItem = {
   id: string;
@@ -46,6 +46,7 @@ type Purchase = {
     purchased_quantity: number | null;
     quantity: number;
     unit: "g" | "kg" | "ml" | "l" | "unit";
+    line_total_cop: number | null;
     presentation_quantity: number | null;
     presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null;
     expiration_date: string | null;
@@ -135,7 +136,7 @@ function getPurchaseQuantity(purchase: Purchase) {
   if (!item) return "-";
   const product = item.inventory_items;
   if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
-    return formatStockQuantity(Number(item.quantity ?? 0), item.unit);
+    return formatStockQuantity(Number(item.quantity ?? 0), canonicalStockUnit(product.unit ?? item.unit));
   }
   return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.purchased_quantity ?? item.quantity))} ${unitLabel("unit")}`;
 }
@@ -148,6 +149,26 @@ function getPurchasePresentation(purchase: Purchase) {
 
 function getPurchaseSku(purchase: Purchase) {
   return purchase.purchase_items[0]?.inventory_items?.sku ?? "-";
+}
+
+function formatPurchaseUnitCost(purchase: Purchase) {
+  const line = purchase.purchase_items[0];
+  if (!line) return "Sin costo";
+  const baseUnit = canonicalStockUnit(line.inventory_items?.unit ?? line.unit);
+  const normalizedQuantity = Number(line.quantity ?? 0);
+  const total = Number(line.line_total_cop ?? purchase.total_cop ?? 0);
+  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0 || !Number.isFinite(total) || total <= 0) return "Sin costo";
+  const unit = baseUnit === "g" ? "G" : baseUnit === "ml" ? "ML" : "UND";
+  const unitCost = total / normalizedQuantity;
+  const truncated = Math.trunc(unitCost * 1000) / 1000;
+  const formatter = new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3
+  });
+  const formatted = truncated > 0 ? formatter.format(truncated) : `< ${formatter.format(0.001)}`;
+  return `${formatted} / ${unit}`;
 }
 
 function isDirectImageUrl(value: string) {
@@ -186,7 +207,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   let purchasesQuery = supabase
     .from("purchases")
     .select(
-      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, image_url, brand_id, presentation_quantity, presentation_unit))"
+      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, line_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, image_url, brand_id, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
     .limit(60);
@@ -283,6 +304,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       supplier: purchase.suppliers?.name ?? "Sin proveedor",
       brand: purchase.brands?.name ?? "Sin marca",
       total_cop: Number(purchase.total_cop),
+      unit_cost: formatPurchaseUnitCost(purchase),
       purchased_at: purchase.purchased_at,
       notes: purchase.notes || "Sin notas"
     };

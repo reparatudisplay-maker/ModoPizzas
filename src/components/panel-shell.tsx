@@ -49,8 +49,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: isManager }
   ];
   const productionLinks = [
-    { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Registrar produccion", icon: Plus, show: isManager },
-    { key: "produccion-preparaciones", href: "/panel/produccion", label: "Preparaciones", icon: ReceiptText, show: isManager }
+    { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: isManager },
+    { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: isManager }
   ];
   const adminLinks = [
     { key: "configuracion", href: "/panel/configuracion", label: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager }

@@ -163,6 +163,7 @@ a {
 .nav-links a,
 .ghost-button,
 .primary-button,
+.positive-button,
 .icon-button {
   min-height: 40px;
   border: 1px solid var(--border);
@@ -172,7 +173,8 @@ a {
 
 .nav-links a,
 .ghost-button,
-.primary-button {
+.primary-button,
+.positive-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,6 +194,13 @@ a {
   font-weight: 700;
 }
 
+.positive-button {
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+  font-weight: 700;
+}
+
 .ghost-button:hover,
 .nav-links a:hover,
 .icon-button:hover {
@@ -199,11 +208,13 @@ a {
   background: color-mix(in srgb, var(--secondary) 10%, var(--panel));
 }
 
-.primary-button:hover {
+.primary-button:hover,
+.positive-button:hover {
   filter: brightness(0.96);
 }
 
-.primary-button:disabled {
+.primary-button:disabled,
+.positive-button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
@@ -1317,22 +1328,25 @@ a {
 }
 
 .form-actions .primary-button,
+.form-actions .positive-button,
 .form-actions .ghost-button {
   min-height: 42px;
 }
 
 .modal-form-actions {
   position: sticky;
-  z-index: 30;
+  z-index: 50;
   bottom: 0;
   grid-template-columns: auto auto;
   justify-content: end;
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
-  padding-top: 12px;
+  background: var(--panel);
+  box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.08);
+  padding: 12px 0 0;
 }
 
 .modal-form-actions .primary-button,
+.modal-form-actions .positive-button,
 .modal-form-actions .ghost-button {
   width: auto;
 }
@@ -2442,17 +2456,47 @@ a {
 .production-register-modal {
   display: grid;
   gap: 0;
-  width: min(1080px, 100%);
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1100px, calc(100vw - 24px));
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.production-register-form-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  margin: 0;
 }
 
 .production-register-modal .production-register-panel {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 24px;
+  scroll-padding-bottom: 24px;
 }
 
 .production-register-panel {
   overflow: visible;
+}
+
+.production-register-modal .autocomplete-menu {
+  z-index: 70;
+}
+
+.production-register-form-shell > .modal-form-actions {
+  position: relative;
+  bottom: auto;
+  margin: 0;
+  padding: 12px 14px 14px;
+}
+
+.production-register-panel .form-status {
+  margin-bottom: 12px;
 }
 
 .production-selected-card {
@@ -2476,7 +2520,7 @@ a {
 }
 
 .production-history-table {
-  min-width: 1080px;
+  min-width: 980px;
 }
 
 .production-dates-grid {
@@ -2530,6 +2574,10 @@ a {
   border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
   background: color-mix(in srgb, var(--danger) 8%, var(--panel));
   color: var(--danger);
+}
+
+.readonly-stock-control.neutral {
+  color: var(--text);
 }
 
 .production-summary-grid {
@@ -2599,11 +2647,15 @@ a {
 }
 
 .modal-header {
+  position: sticky;
+  z-index: 55;
+  top: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   border-bottom: 1px solid var(--border);
+  background: var(--panel);
   padding: 14px;
 }
 
@@ -2650,7 +2702,7 @@ a {
 }
 
 .recipe-line.production-line {
-  grid-template-columns: minmax(140px, 0.76fr) minmax(88px, 0.2fr) minmax(84px, 0.18fr) minmax(210px, 0.52fr) 42px;
+  grid-template-columns: minmax(120px, 0.72fr) minmax(82px, 0.18fr) minmax(72px, 0.14fr) minmax(160px, 0.38fr) minmax(130px, 0.28fr) 42px;
   align-items: end;
 }
 
@@ -2693,7 +2745,7 @@ a {
 
   .production-line > .icon-button {
     grid-column: 2;
-    grid-row: 1 / span 4;
+    grid-row: 1 / span 5;
     align-self: center;
     margin-bottom: 0;
   }

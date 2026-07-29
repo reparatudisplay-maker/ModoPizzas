@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Edit3, Eye, Plus, Settings, Trash2, X } from "lucide-react";
@@ -216,6 +216,56 @@ function lineKey(sourceKind: SourceKind, sourceId: string) {
   return `${sourceKind}:${sourceId}`;
 }
 
+function stockUnitCostLabel(unit: StockUnit) {
+  if (unit === "g" || unit === "kg") return "G";
+  if (unit === "ml" || unit === "l") return "ML";
+  return "UND";
+}
+
+function formatProductionUnitCost(value: number, unit: StockUnit) {
+  if (value <= 0) return "Sin costo";
+  const formatted = new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(value);
+  return `${formatted} / ${stockUnitCostLabel(unit)}`;
+}
+
+function formatSourceUnitCost(source: ProductionSourceOption | null) {
+  if (!source) return "Sin costo";
+  return formatProductionUnitCost(source.average_unit_cost_cop, source.base_unit);
+}
+
+function autocompleteMenuStyle(anchor: HTMLElement | null, optionCount: number): CSSProperties {
+  if (!anchor || typeof window === "undefined") return {};
+  const rect = anchor.getBoundingClientRect();
+  const modalRect = anchor.closest(".production-register-modal")?.getBoundingClientRect();
+  const footerRect = anchor.closest(".production-register-form-shell")?.querySelector(".modal-form-actions")?.getBoundingClientRect();
+  const gap = 6;
+  const viewportPadding = 10;
+  const topLimit = (modalRect?.top ?? 0) + gap;
+  const bottomLimit = Math.min(footerRect?.top ?? window.innerHeight, modalRect?.bottom ?? window.innerHeight, window.innerHeight - viewportPadding) - gap;
+  const desiredHeight = Math.min(260, Math.max(44, optionCount * 44 + 10));
+  const belowSpace = bottomLimit - rect.bottom;
+  const aboveSpace = rect.top - topLimit;
+  const openUp = belowSpace < Math.min(desiredHeight, 132) && aboveSpace > belowSpace;
+  const availableHeight = Math.max(72, openUp ? aboveSpace : belowSpace);
+  const maxHeight = Math.min(desiredHeight, availableHeight);
+  const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding));
+  const top = openUp ? Math.max(topLimit, rect.top - maxHeight - gap) : rect.bottom + gap;
+
+  return {
+    left,
+    maxHeight,
+    position: "fixed",
+    top,
+    width: rect.width,
+    zIndex: 90
+  };
+}
+
 export function ProductionRegisterModule({
   preparations,
   sources,
@@ -251,6 +301,8 @@ export function ProductionRegisterModule({
   const [showHistorySettings, setShowHistorySettings] = useState(false);
   const [detailProduction, setDetailProduction] = useState<ProductionHistoryRow | null>(null);
   const [editBlockedProduction, setEditBlockedProduction] = useState<ProductionHistoryRow | null>(null);
+  const preparationAutocompleteRef = useRef<HTMLDivElement>(null);
+  const [preparationMenuStyle, setPreparationMenuStyle] = useState<CSSProperties>({});
 
   const sourceByKey = useMemo(() => new Map(sources.map((source) => [lineKey(source.source_kind, source.id), source])), [sources]);
   const preparationMatches = preparations
@@ -312,6 +364,19 @@ export function ProductionRegisterModule({
       JSON.stringify(visibleHistoryColumns.filter((column) => historyColumns.includes(column)))
     );
   }, [visibleHistoryColumns]);
+
+  useEffect(() => {
+    if (!isPreparationOpen || selectedPreparation) return;
+    const updatePosition = () => setPreparationMenuStyle(autocompleteMenuStyle(preparationAutocompleteRef.current, preparationMatches.length));
+    updatePosition();
+    const panel = preparationAutocompleteRef.current?.closest(".production-register-panel");
+    window.addEventListener("resize", updatePosition);
+    panel?.addEventListener("scroll", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      panel?.removeEventListener("scroll", updatePosition);
+    };
+  }, [isPreparationOpen, preparationMatches.length, preparationQuery, selectedPreparation]);
 
   function pickPreparation(preparation: ProductionPreparationOption) {
     setSelectedPreparation(preparation);
@@ -436,7 +501,6 @@ export function ProductionRegisterModule({
             <header className="modal-header">
               <div>
                 <strong>Registrar produccion</strong>
-                <span>El codigo se asigna automaticamente al guardar.</span>
               </div>
               <button className="icon-button" onClick={cancelForm} title="Cerrar" type="button">
                 <X size={18} />
@@ -444,17 +508,18 @@ export function ProductionRegisterModule({
             </header>
             <form
               action={formAction}
-              className="form-panel production-register-panel"
+              className="production-register-form-shell"
               onSubmit={() => {
                 setSubmitted(true);
                 setHideFormStatus(false);
               }}
             >
+              <div className="form-panel production-register-panel">
 
         <section className="form-section">
           <h3>Seleccion</h3>
           <div className="form-grid">
-            <div className="field autocomplete-field full">
+            <div className="field autocomplete-field full" ref={preparationAutocompleteRef}>
               <label>Preparacion</label>
               <div className="locked-input">
                 <input
@@ -471,19 +536,27 @@ export function ProductionRegisterModule({
                     if (event.key === "ArrowDown") {
                       event.preventDefault();
                       setIsPreparationOpen(true);
-                      setActivePreparationIndex((current) => Math.min(current + 1, Math.max(preparationMatches.length - 1, 0)));
+                      setActivePreparationIndex((current) => (preparationMatches.length ? (current + 1) % preparationMatches.length : 0));
                     }
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
-                      setActivePreparationIndex((current) => Math.max(current - 1, 0));
+                      setIsPreparationOpen(true);
+                      setActivePreparationIndex((current) => (preparationMatches.length ? (current - 1 + preparationMatches.length) % preparationMatches.length : 0));
                     }
-                    if (event.key === "Enter" && preparationMatches[activePreparationIndex]) {
+                    if (event.key === "Enter" && isPreparationOpen && preparationMatches[activePreparationIndex]?.recipe_items.length) {
                       event.preventDefault();
                       pickPreparation(preparationMatches[activePreparationIndex]);
                     }
-                    if (event.key === "Escape") setIsPreparationOpen(false);
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setIsPreparationOpen(false);
+                    }
                   }}
                   placeholder="Buscar preparacion activa"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls="production-preparation-options"
+                  aria-expanded={isPreparationOpen ? "true" : "false"}
                   value={selectedPreparation?.name ?? preparationQuery}
                 />
                 {selectedPreparation ? (
@@ -505,9 +578,10 @@ export function ProductionRegisterModule({
                 ) : null}
               </div>
               {isPreparationOpen && !selectedPreparation ? (
-                <div className="autocomplete-menu">
+                <div className="autocomplete-menu" id="production-preparation-options" role="listbox" style={preparationMenuStyle}>
                   {preparationMatches.map((preparation, index) => (
                     <button
+                      aria-selected={index === activePreparationIndex}
                       className={`autocomplete-option${index === activePreparationIndex ? " active" : ""}`}
                       disabled={preparation.recipe_items.length === 0}
                       key={preparation.id}
@@ -516,10 +590,11 @@ export function ProductionRegisterModule({
                         if (preparation.recipe_items.length > 0) pickPreparation(preparation);
                       }}
                       type="button"
+                      role="option"
                     >
                       <span>{preparation.name}</span>
                       <span className={`availability-badge ${preparation.recipe_items.length ? "ok" : "danger"}`}>
-                        {preparation.recipe_items.length ? "CON RECETA" : "SIN RECETA"}
+                        {preparation.recipe_items.length ? "CONFIGURADA" : "SIN RECETA"}
                       </span>
                     </button>
                   ))}
@@ -711,6 +786,7 @@ export function ProductionRegisterModule({
             {state.message}
           </p>
         ) : null}
+              </div>
         <div className="form-actions modal-form-actions">
           <button className="ghost-button" onClick={cancelForm} type="button">
             Cancelar
@@ -739,7 +815,7 @@ export function ProductionRegisterModule({
             <button className="ghost-button icon-text-button" onClick={() => setShowHistorySettings(true)} type="button">
               <Settings size={18} /> Configuracion
             </button>
-            <button className="primary-button icon-text-button" onClick={openRegisterModal} type="button">
+            <button className="positive-button icon-text-button" onClick={openRegisterModal} type="button">
               <Plus size={18} /> Registrar produccion
             </button>
           </div>
@@ -774,7 +850,7 @@ export function ProductionRegisterModule({
                     {showHistoryColumn("stock") ? <td>{formatStockQuantity(row.stock_base, row.base_unit)}</td> : null}
                     {showHistoryColumn("expiration") ? <td>{row.expiration_date}</td> : null}
                     {showHistoryColumn("totalCost") ? <td>{formatCop(row.total_cost_cop, { decimals: true })}</td> : null}
-                    {showHistoryColumn("unitCost") ? <td>{formatCop(row.unit_cost_cop, { decimals: true })}</td> : null}
+                    {showHistoryColumn("unitCost") ? <td>{formatProductionUnitCost(row.unit_cost_cop, row.base_unit)}</td> : null}
                     {showHistoryColumn("user") ? <td><span className="truncate-cell" title={row.user_label}>{row.user_label}</span></td> : null}
                     {showHistoryColumn("status") ? <td><span className={`stock-pill ${status.className}`}>{status.label}</span></td> : null}
                     {showHistoryColumn("actions") ? (
@@ -891,7 +967,7 @@ function ProductionDetailModal({ production, onClose }: { production: Production
           <div className="highlight"><strong>Cantidad producida</strong><span>{formatStockQuantity(production.actual_quantity_base, production.base_unit)}</span></div>
           <div><strong>Saldo</strong><span>{formatStockQuantity(production.stock_base, production.base_unit)}</span></div>
           <div className="highlight"><strong>Costo total</strong><span>{formatCop(production.total_cost_cop, { decimals: true })}</span></div>
-          <div className="highlight"><strong>Costo unitario</strong><span>{formatCop(production.unit_cost_cop, { decimals: true })}</span></div>
+          <div className="highlight"><strong>Costo unitario</strong><span>{formatProductionUnitCost(production.unit_cost_cop, production.base_unit)}</span></div>
           <div><strong>Usuario</strong><span>{production.user_label}</span></div>
           <div><strong>Estado</strong><span className={`stock-pill ${status.className}`}>{status.label}</span></div>
         </div>
@@ -997,6 +1073,8 @@ function ProductionLineEditor({
   const [query, setQuery] = useState(line.source?.name ?? "");
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const sourceAutocompleteRef = useRef<HTMLDivElement>(null);
+  const [sourceMenuStyle, setSourceMenuStyle] = useState<CSSProperties>({});
   const filteredSources = sources
     .filter((source) => !onlyAvailable || source.stock_base > 0)
     .filter((source) => normalizeMasterText(source.name).includes(normalizeMasterText(query)))
@@ -1009,17 +1087,31 @@ function ProductionLineEditor({
     setIsOpen(false);
     setActiveIndex(0);
   }
+
+  useEffect(() => {
+    if (!isOpen || line.source) return;
+    const updatePosition = () => setSourceMenuStyle(autocompleteMenuStyle(sourceAutocompleteRef.current, filteredSources.length));
+    updatePosition();
+    const panel = sourceAutocompleteRef.current?.closest(".production-register-panel");
+    window.addEventListener("resize", updatePosition);
+    panel?.addEventListener("scroll", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      panel?.removeEventListener("scroll", updatePosition);
+    };
+  }, [filteredSources.length, isOpen, line.source, query]);
   const stockText = line.source
     ? status && status.missing > 0
       ? `Disponible: ${formatStockQuantity(line.source.stock_base, line.source.base_unit)} · Faltan ${formatStockQuantity(status.missing, line.source.base_unit)}`
       : formatStockQuantity(line.source.stock_base, line.source.base_unit)
     : "Pendiente";
+  const unitCostText = formatSourceUnitCost(line.source);
 
   return (
     <div className="recipe-line production-line">
       <input name={`production_items[${index}][source_kind]`} type="hidden" value={line.source?.source_kind ?? ""} />
       <input name={`production_items[${index}][source_id]`} type="hidden" value={line.source?.id ?? ""} />
-      <div className="field autocomplete-field recipe-source-field">
+      <div className="field autocomplete-field recipe-source-field" ref={sourceAutocompleteRef}>
         <label>Ingrediente o preparacion</label>
         <div className="locked-input">
           <input
@@ -1036,17 +1128,21 @@ function ProductionLineEditor({
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setIsOpen(true);
-                setActiveIndex((current) => Math.min(current + 1, Math.max(filteredSources.length - 1, 0)));
+                setActiveIndex((current) => (filteredSources.length ? (current + 1) % filteredSources.length : 0));
               }
               if (event.key === "ArrowUp") {
                 event.preventDefault();
-                setActiveIndex((current) => Math.max(current - 1, 0));
+                setIsOpen(true);
+                setActiveIndex((current) => (filteredSources.length ? (current - 1 + filteredSources.length) % filteredSources.length : 0));
               }
-              if (event.key === "Enter" && filteredSources[activeIndex]) {
+              if (event.key === "Enter" && isOpen && filteredSources[activeIndex]) {
                 event.preventDefault();
                 pickSource(filteredSources[activeIndex]);
               }
-              if (event.key === "Escape") setIsOpen(false);
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setIsOpen(false);
+              }
             }}
             placeholder="Buscar ingrediente o preparacion"
             value={line.source?.name ?? query}
@@ -1066,7 +1162,7 @@ function ProductionLineEditor({
           ) : null}
         </div>
         {isOpen && !line.source ? (
-          <div className="autocomplete-menu">
+          <div className="autocomplete-menu" style={sourceMenuStyle}>
             {filteredSources.map((source, optionIndex) => (
               <button
                 className={`autocomplete-option${optionIndex === activeIndex ? " active" : ""}`}
@@ -1106,6 +1202,12 @@ function ProductionLineEditor({
           <span>{stockText}</span>
         </div>
       </div>
+      <div className="field">
+        <label>Costo unitario</label>
+        <div aria-readonly="true" className="readonly-stock-control neutral" role="textbox" title={unitCostText}>
+          <span>{unitCostText}</span>
+        </div>
+      </div>
       <button className="icon-button danger-button" onClick={onRemove} title="Eliminar ingrediente" type="button">
         <X size={16} />
       </button>
@@ -1116,7 +1218,7 @@ function ProductionLineEditor({
 function ProductionSubmitButton({ disabled }: { disabled: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <button className="primary-button" disabled={disabled || pending} type="submit">
+    <button className="positive-button" disabled={disabled || pending} type="submit">
       {pending ? "Registrando..." : "Registrar produccion"}
     </button>
   );
