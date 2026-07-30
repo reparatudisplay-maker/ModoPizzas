@@ -22,13 +22,20 @@ export type FormActionState = {
 export type ConservationProfileActionState = FormActionState & {
   profile?: {
     id: string;
+    sku: string;
     name: string;
+    description: string | null;
+    sort_order: number;
+    temperature_min: number | null;
+    temperature_max: number | null;
     is_active: boolean;
     conservation_profile_rules: Array<{
       id: string;
       storage_method: "ambient" | "refrigerated" | "frozen";
       duration_value: number;
-      duration_unit: "hours" | "days" | "weeks" | "months";
+      duration_unit: "hours" | "days";
+      temperature_min: number | null;
+      temperature_max: number | null;
       notes: string | null;
     }>;
   };
@@ -102,6 +109,14 @@ function getDecimal(formData: FormData, key: string, fallback = 0) {
   const value = getString(formData, key).replace(/\./g, "").replace(/,/g, ".");
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
+function getSignedDecimal(formData: FormData, key: string) {
+  const rawValue = getOptionalString(formData, key);
+  if (!rawValue) return null;
+  const value = rawValue.replace(/\./g, "").replace(/,/g, ".");
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function getMachineDecimal(formData: FormData, key: string, fallback = 0) {
@@ -238,6 +253,7 @@ function revalidateInventory() {
   revalidatePath("/panel/proveedores");
   revalidatePath("/panel/marcas");
   revalidatePath("/panel/categorias");
+  revalidatePath("/panel/perfiles-conservacion");
   revalidatePath("/panel/configuracion");
   revalidatePath("/panel/produccion");
   revalidatePath("/panel/menu/pizzas");
@@ -1422,9 +1438,9 @@ export async function deletePurchase(_previousState: FormActionState, formData: 
   }
 }
 
-function getDurationUnit(formData: FormData, key: string) {
+function getConservationDurationUnit(formData: FormData, key: string) {
   const value = getString(formData, key);
-  return ["hours", "days", "weeks", "months"].includes(value) ? value : "days";
+  return value === "hours" || value === "days" ? value : "days";
 }
 
 function getStorageMethod(value: string) {
@@ -1484,19 +1500,25 @@ export async function saveConservationProfile(_previousState: ConservationProfil
       const enabled = formData.get(`rules[${index}][enabled]`) === "on";
       const storageMethod = getStorageMethod(getString(formData, `rules[${index}][storage_method]`));
       const durationValue = getInteger(formData, `rules[${index}][duration_value]`, 0);
+      const temperatureMin = getSignedDecimal(formData, `rules[${index}][temperature_min]`);
+      const temperatureMax = getSignedDecimal(formData, `rules[${index}][temperature_max]`);
       return {
         enabled,
         storage_method: storageMethod,
         duration_value: durationValue,
-        duration_unit: getDurationUnit(formData, `rules[${index}][duration_unit]`),
-        notes: upperText(getOptionalString(formData, `rules[${index}][notes]`))
+        duration_unit: getConservationDurationUnit(formData, `rules[${index}][duration_unit]`),
+        temperature_min: temperatureMin,
+        temperature_max: temperatureMax
       };
     })
     .filter((rule) => rule.enabled);
 
-  if (rules.length === 0) return { status: "error", message: "Agrega al menos una regla de conservacion." };
+  if (rules.length === 0) return { status: "error", message: "Habilita al menos un metodo de conservacion." };
   if (rules.some((rule) => !rule.storage_method || rule.duration_value <= 0)) {
-    return { status: "error", message: "Cada regla necesita metodo y duracion mayor a cero." };
+    return { status: "error", message: "Cada metodo habilitado necesita duracion mayor que cero." };
+  }
+  if (rules.some((rule) => rule.temperature_min !== null && rule.temperature_max !== null && rule.temperature_min > rule.temperature_max)) {
+    return { status: "error", message: "La temperatura minima no puede superar la maxima." };
   }
   if (new Set(rules.map((rule) => rule.storage_method)).size !== rules.length) {
     return { status: "error", message: "No puedes repetir metodos de conservacion en el mismo perfil." };
@@ -1505,21 +1527,35 @@ export async function saveConservationProfile(_previousState: ConservationProfil
   const payload = {
     name,
     description: upperText(getOptionalString(formData, "description")),
+    temperature_min: null,
+    temperature_max: null,
     is_active: getBoolean(formData, "is_active"),
     updated_at: new Date().toISOString()
   };
-  const profileResult = id
-    ? await supabase.from("conservation_profiles").update(payload).eq("id", id).select("id").single()
-    : await supabase.from("conservation_profiles").insert(payload).select("id").single();
+
+  let profileResult;
+  if (id) {
+    profileResult = await supabase.from("conservation_profiles").update(payload).eq("id", id).select("id").single();
+  } else {
+    const [{ data: skuData, error: skuError }, { data: sortData, error: sortError }] = await Promise.all([
+      supabase.rpc("reserve_conservation_profile_sku", { p_name: name }),
+      supabase.from("conservation_profiles").select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle()
+    ]);
+    if (skuError) return { status: "error", message: skuError.message };
+    if (sortError) return { status: "error", message: sortError.message };
+    profileResult = await supabase
+      .from("conservation_profiles")
+      .insert({ ...payload, sku: skuData, sort_order: Number(sortData?.sort_order ?? 0) + 1 })
+      .select("id")
+      .single();
+  }
 
   if (profileResult.error) return { status: "error", message: profileResult.error.message };
   const profileId = profileResult.data?.id;
   if (!profileId) return { status: "error", message: "No se pudo guardar el perfil." };
 
-  if (id) {
-    const { error: deleteRulesError } = await supabase.from("conservation_profile_rules").delete().eq("profile_id", profileId);
-    if (deleteRulesError) return { status: "error", message: deleteRulesError.message };
-  }
+  const { error: deleteRulesError } = await supabase.from("conservation_profile_rules").delete().eq("profile_id", profileId);
+  if (deleteRulesError) return { status: "error", message: deleteRulesError.message };
 
   const { error: rulesError } = await supabase.from("conservation_profile_rules").insert(
     rules.map((rule) => ({
@@ -1527,20 +1563,46 @@ export async function saveConservationProfile(_previousState: ConservationProfil
       storage_method: rule.storage_method,
       duration_value: rule.duration_value,
       duration_unit: rule.duration_unit,
-      notes: rule.notes
+      temperature_min: rule.temperature_min,
+      temperature_max: rule.temperature_max,
+      notes: null
     }))
   );
   if (rulesError) return { status: "error", message: rulesError.message };
 
   const { data: savedProfile, error: savedProfileError } = await supabase
     .from("conservation_profiles")
-    .select("id, name, is_active, conservation_profile_rules(id, storage_method, duration_value, duration_unit, notes)")
+    .select("id, sku, name, description, sort_order, temperature_min, temperature_max, is_active, conservation_profile_rules(id, storage_method, duration_value, duration_unit, temperature_min, temperature_max, notes)")
     .eq("id", profileId)
     .single();
   if (savedProfileError) return { status: "error", message: savedProfileError.message };
 
   revalidateInventory();
   return { status: "success", message: "Perfil guardado correctamente.", profile: savedProfile as ConservationProfileActionState["profile"] };
+}
+
+export async function moveConservationProfile(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  const direction = getString(formData, "direction");
+  if (!id) return { status: "error", message: "Perfil no valido." };
+  if (direction !== "up" && direction !== "down") return { status: "error", message: "Direccion no valida." };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("move_conservation_profile", { p_id: id, p_direction: direction });
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Orden actualizado." };
+}
+
+export async function deleteConservationProfile(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Perfil no valido." };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("delete_conservation_profile", { p_id: id });
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Perfil eliminado correctamente." };
 }
 
 export async function savePreparation(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -1720,6 +1782,16 @@ export async function registerProduction(_previousState: ProductionActionState, 
 
   if (!Array.isArray(items) || items.length === 0) {
     return { status: "error", message: "La produccion necesita al menos un ingrediente." };
+  }
+
+  const { data: activeProfileRule, error: activeProfileRuleError } = await supabase
+    .from("preparations")
+    .select("id, conservation_profiles!inner(is_active, conservation_profile_rules(storage_method))")
+    .eq("id", preparationId)
+    .eq("conservation_profiles.is_active", true)
+    .single();
+  if (activeProfileRuleError || !activeProfileRule) {
+    return { status: "error", message: activeProfileRuleError?.message ?? "La preparacion no tiene un perfil de conservacion activo." };
   }
 
   const { data, error } = await supabase.rpc("create_production", {

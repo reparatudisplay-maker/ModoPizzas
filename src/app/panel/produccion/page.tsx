@@ -87,7 +87,7 @@ export default async function ProductionPage() {
       .order("name"),
     supabase
       .from("conservation_profiles")
-      .select("id, name, is_active, conservation_profile_rules(id, storage_method, duration_value, duration_unit, notes)")
+      .select("id, name, is_active, conservation_profile_rules(id, storage_method, duration_value, duration_unit, temperature_min, temperature_max, notes)")
       .eq("is_active", true)
       .order("name")
   ]);

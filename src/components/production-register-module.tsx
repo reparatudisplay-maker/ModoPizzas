@@ -6,7 +6,7 @@ import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Edit3, Eye, Plus, Settings, Trash2, X } from "lucide-react";
 import { deleteProduction, registerProduction, type FormActionState, type ProductionActionState } from "@/app/admin/actions";
-import { formatCop, formatNumber } from "@/lib/format";
+import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, unitLabel } from "@/lib/units";
 
@@ -199,9 +199,22 @@ function convertQuantity(quantity: number, fromUnit: StockUnit, toUnit: StockUni
   return toUnit === "kg" ? grams / 1000 : grams;
 }
 
+function practicalMeasurementQuantity(quantity: number, unit: StockUnit, source: ProductionSourceOption) {
+  const baseQuantity = convertQuantity(quantity, unit, source.base_unit, source.density);
+  if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) return 0;
+  const roundedBaseQuantity = Math.round(baseQuantity);
+  return convertQuantity(roundedBaseQuantity, source.base_unit, unit, source.density);
+}
+
+function formatPracticalInputQuantity(quantity: number, unit: StockUnit) {
+  if (quantity <= 0) return "";
+  const maxDecimals = unit === "kg" || unit === "l" ? 3 : 0;
+  return formatTrimmedDecimal(quantity, maxDecimals);
+}
+
 function addDuration(dateValue: string, value: number, unit: string) {
   const date = new Date(`${dateValue}T00:00:00`);
-  if (unit === "hours") date.setDate(date.getDate() + Math.ceil(value / 24));
+  if (unit === "hours") date.setHours(date.getHours() + value);
   if (unit === "days") date.setDate(date.getDate() + value);
   if (unit === "weeks") date.setDate(date.getDate() + value * 7);
   if (unit === "months") date.setMonth(date.getMonth() + value);
@@ -230,6 +243,30 @@ function formatProductionUnitCost(value: number, unit: StockUnit) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2
   }).format(value);
+  return `${formatted} / ${stockUnitCostLabel(unit)}`;
+}
+
+function formatTrimmedDecimal(value: number, maxDecimals: number) {
+  return new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxDecimals
+  }).format(value);
+}
+
+function formatExactBaseQuantity(value: number, unit: StockUnit) {
+  return `${formatTrimmedDecimal(value, 4)} ${unitLabel(unit)}`;
+}
+
+function formatExactUnitCost(totalCost: number, quantity: number, unit: StockUnit) {
+  if (!Number.isFinite(quantity) || quantity <= 0) return "Sin costo";
+  const unitCost = totalCost / quantity;
+  if (!Number.isFinite(unitCost) || unitCost <= 0) return "Sin costo";
+  const formatted = new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4
+  }).format(unitCost);
   return `${formatted} / ${stockUnitCostLabel(unit)}`;
 }
 
@@ -289,7 +326,6 @@ export function ProductionRegisterModule({
   const [expectedUnit, setExpectedUnit] = useState<StockUnit>("unit");
   const [actualQuantity, setActualQuantity] = useState("");
   const [actualUnit, setActualUnit] = useState<StockUnit>("unit");
-  const [actualTouched, setActualTouched] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -386,7 +422,6 @@ export function ProductionRegisterModule({
     setActualQuantity("");
     setExpectedUnit(preferredVisibleUnit(preparation.unit_kind));
     setActualUnit(preferredVisibleUnit(preparation.unit_kind));
-    setActualTouched(false);
     const firstMethod = preparation.conservation_rules[0]?.storage_method ?? "";
     setStorageMethod(firstMethod);
     setExpirationDate(firstMethod ? suggestedExpiration(preparation, firstMethod, elaboratedAt) : "");
@@ -419,8 +454,9 @@ export function ProductionRegisterModule({
         if (!line.fromRecipe || !line.source) return line;
         const recipeLine = selectedPreparation.recipe_items.find((item) => lineKey(item.source_kind, item.source_id) === lineKey(line.source!.source_kind, line.source!.id));
         if (!recipeLine) return line;
-        const quantity = recipeLine.quantity * nextScale;
-        return { ...line, quantity: quantity > 0 ? formatNumber(quantity, quantity % 1 === 0 ? 0 : 3) : "" };
+        const scaledQuantity = recipeLine.quantity * nextScale;
+        const practicalQuantity = practicalMeasurementQuantity(scaledQuantity, recipeLine.unit, line.source);
+        return { ...line, quantity: formatPracticalInputQuantity(practicalQuantity, recipeLine.unit) };
       })
     );
   }
@@ -429,10 +465,6 @@ export function ProductionRegisterModule({
     const cleaned = quantity.replace(/[^\d.,]/g, "");
     setExpectedQuantity(cleaned);
     rescaleRecipe(cleaned, unit);
-    if (!actualTouched) {
-      setActualQuantity(cleaned);
-      setActualUnit(unit);
-    }
   }
 
   function resetForm() {
@@ -448,7 +480,6 @@ export function ProductionRegisterModule({
     setExpectedUnit("unit");
     setActualQuantity("");
     setActualUnit("unit");
-    setActualTouched(false);
     setLines([]);
     setSubmitted(false);
   }
@@ -569,7 +600,6 @@ export function ProductionRegisterModule({
                       setLines([]);
                       setExpectedQuantity("");
                       setActualQuantity("");
-                      setActualTouched(false);
                     }}
                     type="button"
                   >
@@ -702,6 +732,7 @@ export function ProductionRegisterModule({
               <div className="section-title-row">
                 <h3>Ingredientes escalados</h3>
               </div>
+              <p className="section-help">Las cantidades fueron ajustadas a unidades practicas de medicion.</p>
               <div className="recipe-lines">
                 {lines.map((line, index) => {
                   const status = lineStates.find((item) => item.key === line.key);
@@ -739,7 +770,6 @@ export function ProductionRegisterModule({
                     <input
                       name="actual_quantity"
                       onChange={(event) => {
-                        setActualTouched(true);
                         setActualQuantity(event.target.value.replace(/[^\d.,]/g, ""));
                       }}
                       value={actualQuantity}
@@ -747,7 +777,6 @@ export function ProductionRegisterModule({
                     <select
                       name="actual_unit"
                       onChange={(event) => {
-                        setActualTouched(true);
                         setActualUnit(event.target.value as StockUnit);
                       }}
                       value={actualUnit}
@@ -981,7 +1010,8 @@ function ProductionDetailModal({ production, onClose }: { production: Production
                     <th>Ingrediente</th>
                     <th>Tipo</th>
                     <th>Cantidad</th>
-                    <th>Costo</th>
+                    <th>Costo unitario</th>
+                    <th>Costo total</th>
                     <th>Origen</th>
                   </tr>
                 </thead>
@@ -990,14 +1020,20 @@ function ProductionDetailModal({ production, onClose }: { production: Production
                     <tr key={ingredient.id}>
                       <td>{ingredient.source_name}</td>
                       <td>{ingredient.source_kind === "preparation" ? "Preparacion" : "Ingrediente"}</td>
-                      <td>{formatStockQuantity(ingredient.quantity_base, ingredient.base_unit)}</td>
+                      <td>{formatExactBaseQuantity(ingredient.quantity_base, ingredient.base_unit)}</td>
+                      <td>{formatExactUnitCost(ingredient.cost_cop, ingredient.quantity_base, ingredient.base_unit)}</td>
                       <td>{formatCop(ingredient.cost_cop, { decimals: true })}</td>
                       <td>
                         {(ingredient.allocations ?? []).length > 0
                           ? (ingredient.allocations ?? []).map((allocation) => (
-                              <span className="origin-cell" key={allocation.id} title={`${formatStockQuantity(allocation.quantity_base, allocation.base_unit)} - ${formatCop(allocation.cost_cop, { decimals: true })}`}>
+                              <span
+                                className="origin-cell"
+                                key={allocation.id}
+                                title={`${formatExactBaseQuantity(allocation.quantity_base, allocation.base_unit)} - ${formatExactUnitCost(allocation.cost_cop, allocation.quantity_base, allocation.base_unit)} - ${formatCop(allocation.cost_cop, { decimals: true })}`}
+                              >
                                 <strong>{allocation.origin_label}</strong>
-                                <small>{formatStockQuantity(allocation.quantity_base, allocation.base_unit)}</small>
+                                <small>{formatExactBaseQuantity(allocation.quantity_base, allocation.base_unit)}</small>
+                                <small>{formatExactUnitCost(allocation.cost_cop, allocation.quantity_base, allocation.base_unit)}</small>
                               </span>
                             ))
                           : "-"}

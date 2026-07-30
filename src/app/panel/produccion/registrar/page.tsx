@@ -30,6 +30,7 @@ type PreparationRow = {
   is_active: boolean;
   conservation_profiles: {
     name: string;
+    is_active: boolean;
     conservation_profile_rules: Array<{
       storage_method: "ambient" | "refrigerated" | "frozen";
       duration_value: number;
@@ -182,7 +183,7 @@ export default async function RegisterProductionPage() {
       supabase
         .from("preparations")
         .select(
-          "id, name, image_url, unit_kind, base_unit, alternative_unit, density, conservation_profile_id, base_yield_quantity, base_yield_unit, is_active, conservation_profiles(name, conservation_profile_rules(storage_method, duration_value, duration_unit))"
+          "id, name, image_url, unit_kind, base_unit, alternative_unit, density, conservation_profile_id, base_yield_quantity, base_yield_unit, is_active, conservation_profiles(name, is_active, conservation_profile_rules(storage_method, duration_value, duration_unit))"
         )
         .eq("is_active", true)
         .order("name"),
@@ -316,8 +317,8 @@ export default async function RegisterProductionPage() {
     density: preparation.density ? Number(preparation.density) : null,
     base_yield_quantity: Number(preparation.base_yield_quantity),
     base_yield_unit: preparation.base_yield_unit,
-    conservation_profile_name: preparation.conservation_profiles?.name ?? null,
-    conservation_rules: preparation.conservation_profiles?.conservation_profile_rules ?? [],
+    conservation_profile_name: preparation.conservation_profiles?.is_active ? preparation.conservation_profiles.name : null,
+    conservation_rules: preparation.conservation_profiles?.is_active ? preparation.conservation_profiles.conservation_profile_rules ?? [] : [],
     recipe_items: recipeByPreparation.get(preparation.id) ?? []
   }));
 

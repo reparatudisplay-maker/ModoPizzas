@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, Tags, Truck, UserCog } from "lucide-react";
+import { ChevronDown, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, Tags, Thermometer, Truck, UserCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -17,6 +17,7 @@ type PanelShellProps = {
     | "compras"
     | "marcas"
     | "categorias"
+    | "perfiles-conservacion"
     | "configuracion"
     | "menu-pizzas"
     | "menu-precios-adiciones"
@@ -37,7 +38,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: isManager },
     { key: "categorias", href: "/panel/categorias", label: "Categorias", icon: Tags, show: isManager },
     { key: "marcas", href: "/panel/marcas", label: "Marcas", icon: Tags, show: isManager },
-    { key: "proveedores", href: "/panel/proveedores", label: "Proveedores", icon: Truck, show: isManager }
+    { key: "proveedores", href: "/panel/proveedores", label: "Proveedores", icon: Truck, show: isManager },
+    { key: "perfiles-conservacion", href: "/panel/perfiles-conservacion", label: "Perfiles de conservacion", icon: Thermometer, show: isManager }
   ];
   const inventoryLinks = [
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },

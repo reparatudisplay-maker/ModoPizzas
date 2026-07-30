@@ -2729,10 +2729,39 @@ a {
   grid-template-columns: minmax(150px, 0.45fr) minmax(110px, 0.25fr) minmax(130px, 0.25fr) minmax(180px, 1fr);
 }
 
+.conservation-rule-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.conservation-rule-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.conservation-rule-card.active {
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+}
+
+.conservation-rule-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.75fr) minmax(110px, 0.8fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr);
+  gap: 8px;
+}
+
 @media (max-width: 760px) {
   .recipe-line,
   .conservation-rule-line {
     grid-template-columns: 1fr;
+  }
+
+  .conservation-rule-fields {
+    grid-template-columns: 1fr 1fr;
   }
 
   .recipe-line.production-line {

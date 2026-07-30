@@ -31,6 +31,8 @@ export type ConservationProfileOption = {
     storage_method: "ambient" | "refrigerated" | "frozen";
     duration_value: number;
     duration_unit: "hours" | "days" | "weeks" | "months";
+    temperature_min?: number | null;
+    temperature_max?: number | null;
     notes: string | null;
   }>;
 };

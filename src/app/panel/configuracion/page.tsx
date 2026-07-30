@@ -1,6 +1,5 @@
 import { notFound, redirect } from "next/navigation";
 import { assignUserRole, removeUserRole } from "@/app/admin/actions";
-import { ConservationProfilesModule, type ConservationProfile } from "@/components/conservation-profiles-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -35,26 +34,12 @@ export default async function SettingsPanelPage() {
         .order("created_at", { ascending: false })
         .limit(50)
     : { data: null };
-  const [conservationProfilesResult, allConservationProfilesResult] = await Promise.all([
-    supabase
-      .from("conservation_profiles")
-      .select("id, name, description, is_active, created_at, conservation_profile_rules(id, storage_method, duration_value, duration_unit, notes)")
-      .order("created_at", { ascending: false }),
-    supabase.from("conservation_profiles").select("id, name, is_active").order("name")
-  ]);
-  const conservationProfiles = (conservationProfilesResult.data ?? []) as unknown as ConservationProfile[];
-  const allConservationProfiles = (allConservationProfilesResult.data ?? []) as Pick<ConservationProfile, "id" | "name" | "is_active">[];
-  const conservationError = conservationProfilesResult.error ?? allConservationProfilesResult.error;
-
   return (
     <PanelShell active="configuracion" hideHeader roleNames={roleNames} title="Configuracion" userEmail={user.email ?? "usuario"}>
       <section className="module-stack">
         <div className="section-title-row">
           <h1>Configuracion</h1>
         </div>
-        {conservationError ? <p className="alert">{conservationError.message}</p> : null}
-        <ConservationProfilesModule allProfiles={allConservationProfiles} profiles={conservationProfiles} />
-
         {isAdmin ? (
           <section className="form-panel">
             <h2>Roles de usuarios</h2>
