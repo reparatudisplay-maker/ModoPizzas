@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, Tags, Thermometer, Truck, UserCog } from "lucide-react";
+import { ChevronDown, ClipboardList, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -22,6 +22,8 @@ type PanelShellProps = {
     | "menu-pizzas"
     | "menu-precios-adiciones"
     | "menu-precios-pizzas"
+    | "pedidos-nuevo"
+    | "pedidos-listado"
     | "produccion"
     | "produccion-preparaciones"
     | "produccion-registrar";
@@ -30,9 +32,11 @@ type PanelShellProps = {
 };
 
 const managerRoles = new Set(["gerente", "admin_sistema"]);
+const orderRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 
 export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
   const isManager = roleNames.some((role) => managerRoles.has(role));
+  const canSell = roleNames.some((role) => orderRoles.has(role));
   const isAdmin = roleNames.includes("admin_sistema");
   const masterLinks = [
     { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: isManager },
@@ -44,6 +48,10 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const inventoryLinks = [
     { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
     { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
+  ];
+  const orderLinks = [
+    { key: "pedidos-nuevo", href: "/panel/pedidos/nuevo", label: "Crear pedido", icon: ShoppingCart, show: canSell },
+    { key: "pedidos-listado", href: "/panel/pedidos", label: "Listado de pedidos", icon: ClipboardList, show: canSell }
   ];
   const menuMainLinks = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: isManager }];
   const menuPriceLinks = [
@@ -58,6 +66,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "configuracion", href: "/panel/configuracion", label: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
+  const ordersActive = orderLinks.some((link) => link.key === active);
   const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
   const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
@@ -99,6 +108,16 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
                   <ChevronDown className="submenu-chevron" size={16} />
                 </summary>
                 <div>{renderLinks(masterLinks)}</div>
+              </details>
+            ) : null}
+            {canSell ? (
+              <details className="worker-submenu" open={ordersActive}>
+                <summary className={ordersActive ? "active" : ""} title="Pedidos y caja">
+                  <ShoppingCart size={18} />
+                  <span>Pedidos / Caja</span>
+                  <ChevronDown className="submenu-chevron" size={16} />
+                </summary>
+                <div>{renderLinks(orderLinks)}</div>
               </details>
             ) : null}
             {renderLinks(inventoryLinks)}

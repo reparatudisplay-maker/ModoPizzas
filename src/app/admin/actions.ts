@@ -61,6 +61,14 @@ export type ProductionActionState = FormActionState & {
   };
 };
 
+export type PosOrderActionState = FormActionState & {
+  order?: {
+    id: string;
+    code: string;
+    total_cop: number;
+  };
+};
+
 export type PhysicalInventoryActionState = FormActionState & {
   count?: {
     id: string;
@@ -259,6 +267,8 @@ function revalidateInventory() {
   revalidatePath("/panel/menu/pizzas");
   revalidatePath("/panel/menu/precios/adiciones");
   revalidatePath("/panel/menu/precios/pizzas");
+  revalidatePath("/panel/pedidos");
+  revalidatePath("/panel/pedidos/nuevo");
 }
 
 async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
@@ -2048,6 +2058,66 @@ export async function voidPhysicalInventoryCount(
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo eliminar el ajuste." };
   }
+}
+
+export async function createPosOrder(_previousState: PosOrderActionState, formData: FormData): Promise<PosOrderActionState> {
+  const supabase = await createServerSupabaseClient();
+  const kind = getString(formData, "kind");
+  const paymentMethod = getString(formData, "payment_method");
+  const itemsRaw = getString(formData, "items");
+  const customerName = getString(formData, "customer_name");
+  const customerPhone = getString(formData, "customer_phone");
+  const discountCop = getDecimal(formData, "discount_cop", 0);
+  const deliveryCop = getDecimal(formData, "delivery_cop", 0);
+  const notes = getString(formData, "notes");
+
+  if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
+  if (!["cash", "card", "transfer", "mixed", "pending"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
+
+  let items: unknown;
+  try {
+    items = JSON.parse(itemsRaw);
+  } catch {
+    return { status: "error", message: "El pedido no tiene productos validos." };
+  }
+
+  if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
+
+  const { data, error } = await supabase.rpc("create_pos_order", {
+    p_kind: kind,
+    p_customer_name: upperText(customerName),
+    p_customer_phone: customerPhone,
+    p_discount_cop: discountCop,
+    p_delivery_cop: deliveryCop,
+    p_payment_method: paymentMethod,
+    p_notes: upperText(notes),
+    p_items: items
+  });
+
+  if (error) return { status: "error", message: error.message };
+
+  revalidateInventory();
+  return {
+    status: "success",
+    message: "Pedido confirmado correctamente.",
+    order: data as PosOrderActionState["order"]
+  };
+}
+
+export async function cancelPosOrder(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const orderId = getString(formData, "order_id");
+  const reason = getString(formData, "reason");
+  if (!orderId) return { status: "error", message: "Pedido no valido." };
+
+  const { error } = await supabase.rpc("cancel_pos_order", {
+    p_order_id: orderId,
+    p_reason: upperText(reason)
+  });
+
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Pedido cancelado correctamente." };
 }
 
 export async function assignUserRole(formData: FormData) {
