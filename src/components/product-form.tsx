@@ -12,6 +12,7 @@ import {
   type CategoryActionState,
   type FormActionState
 } from "@/app/admin/actions";
+import { optimizeImageInput } from "@/lib/client-images";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
@@ -101,6 +102,7 @@ export function ProductForm({
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>(item?.purchase_mode ?? "total_weight");
   const [productName, setProductName] = useState(item?.name ?? "");
   const [imagePreview, setImagePreview] = useState(item?.image_src ?? item?.image_url ?? "");
+  const [imageError, setImageError] = useState("");
   const [removeImage, setRemoveImage] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [categoryOptions, setCategoryOptions] = useState(categories);
@@ -116,7 +118,7 @@ export function ProductForm({
   const canRegisterName = normalizedName.length > 0 && !duplicateProduct;
   const brandHint = itemKind === "sale_product" ? "Recomendada para diferenciar referencias comerciales." : "Opcional.";
   const categoryHint = itemKind === "sale_product" ? "Recomendada para organizar productos de venta." : "Opcional.";
-  const imageHint = itemKind === "sale_product" ? "Recomendada. JPG, PNG, WEBP o GIF hasta 4 MB." : "Opcional. JPG, PNG, WEBP o GIF hasta 4 MB.";
+  const imageHint = itemKind === "sale_product" ? "Recomendada. JPG, PNG o WebP hasta 4 MB." : "Opcional. JPG, PNG o WebP hasta 4 MB.";
 
   function handleItemKindChange(nextKind: ItemKind) {
     setItemKind(nextKind);
@@ -288,21 +290,28 @@ export function ProductForm({
           <input name="existing_image_url" type="hidden" value={item?.image_url ?? ""} />
           <input name="remove_image" type="hidden" value={removeImage ? "1" : "0"} />
           <input
-            accept="image/gif,image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp"
             key={fileInputKey}
             name="product_image"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
+            onChange={async (event) => {
+              const input = event.currentTarget;
               if (imagePreview.startsWith("blob:")) {
                 URL.revokeObjectURL(imagePreview);
               }
-              setImagePreview(URL.createObjectURL(file));
+              const result = await optimizeImageInput(input);
+              if (result.error) {
+                setImagePreview(item?.image_src ?? item?.image_url ?? "");
+                setImageError(result.error);
+                return;
+              }
+              if (!result.previewUrl) return;
+              setImagePreview(result.previewUrl);
               setRemoveImage(false);
+              setImageError("");
             }}
             type="file"
           />
-          <p className="field-hint">{imageHint}</p>
+          {imageError ? <p className="form-status error">{imageError}</p> : <p className="field-hint">{imageHint}</p>}
           {imagePreview ? (
             <div className="product-photo-box">
               <Image alt="Foto del producto" className="product-photo-preview" height={135} src={imagePreview} unoptimized width={180} />
@@ -314,6 +323,7 @@ export function ProductForm({
                   }
                   setImagePreview("");
                   setRemoveImage(true);
+                  setImageError("");
                   setFileInputKey((current) => current + 1);
                 }}
                 type="button"

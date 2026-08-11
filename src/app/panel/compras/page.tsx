@@ -5,7 +5,7 @@ import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { canonicalStockUnit, formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
+import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
 
 type InventoryItem = {
   id: string;
@@ -141,10 +141,15 @@ function getPurchaseQuantity(purchase: Purchase) {
   return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.purchased_quantity ?? item.quantity))} ${unitLabel("unit")}`;
 }
 
-function getPurchasePresentation(purchase: Purchase) {
+function getPurchasePresentation(purchase: Purchase, masterItem?: InventoryItem | null) {
   const item = purchase.purchase_items[0];
   if (!item?.presentation_quantity || !item.presentation_unit) return "-";
-  return formatQuantity(Number(item.presentation_quantity), item.presentation_unit);
+  const effectiveUnit = item.presentation_unit === "unit" && masterItem?.unit && masterItem.unit !== "unit" ? masterItem.unit : item.presentation_unit;
+  if (effectiveUnit !== "unit") {
+    const baseUnit = canonicalStockUnit(effectiveUnit);
+    return formatStockQuantity(convertStockQuantity(Number(item.presentation_quantity), effectiveUnit, baseUnit), baseUnit);
+  }
+  return formatQuantity(Number(item.presentation_quantity), effectiveUnit);
 }
 
 function getPurchaseSku(purchase: Purchase) {
@@ -252,18 +257,25 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const imageSrcById = new Map(signedImageEntries);
   const editPurchaseSource = purchases.find((purchase) => purchase.id === editId);
   const editLine = editPurchaseSource?.purchase_items[0];
+  const editItemRecord = editLine?.inventory_items ?? null;
+  const editProductName = editPurchaseSource ? getPurchaseProduct(editPurchaseSource) : "";
+  const editMasterItem = editItemRecord
+    ? masterByKey.get(`${editItemRecord.item_kind ?? ""}:${editProductName.toUpperCase()}`) ?? masterByKey.get(masterKey(editItemRecord))
+    : null;
+  const editPresentationUnit =
+    editLine?.presentation_unit === "unit" && editMasterItem?.unit && editMasterItem.unit !== "unit" ? editMasterItem.unit : editLine?.presentation_unit ?? null;
   const editPurchase: EditablePurchase | null =
     editPurchaseSource && editLine
       ? {
           id: editPurchaseSource.id,
-          inventory_item_id: editLine.inventory_item_id,
+          inventory_item_id: editMasterItem?.id ?? editLine.inventory_item_id,
           supplier_id: editPurchaseSource.supplier_id,
           brand_id: editPurchaseSource.brand_id,
           purchased_quantity: Number(editLine.purchased_quantity ?? editLine.quantity ?? 0),
           quantity: Number(editLine.quantity ?? 0),
           unit: editLine.unit,
           presentation_quantity: editLine.presentation_quantity,
-          presentation_unit: editLine.presentation_unit,
+          presentation_unit: editPresentationUnit,
           total_cop: Number(editPurchaseSource.total_cop ?? 0),
           notes: editPurchaseSource.notes,
           purchase_date: new Date(editPurchaseSource.purchased_at).toISOString().slice(0, 10),
@@ -299,7 +311,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       image_src: imageItem ? imageSrcById.get(imageItem.id) ?? null : null,
       sku: getPurchaseSku(purchase),
       product: productName,
-      presentation: getPurchasePresentation(purchase),
+      presentation: getPurchasePresentation(purchase, masterItem),
       quantity: getPurchaseQuantity(purchase),
       supplier: purchase.suppliers?.name ?? "Sin proveedor",
       brand: purchase.brands?.name ?? "Sin marca",

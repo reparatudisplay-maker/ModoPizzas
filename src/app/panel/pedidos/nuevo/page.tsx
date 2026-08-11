@@ -45,6 +45,15 @@ type FlavorRow = {
   menu_categories: { name: string } | null;
 };
 
+type FlavorIngredientRow = {
+  flavor_id: string;
+  source_kind: "inventory_item" | "preparation";
+  inventory_item_id: string | null;
+  source_preparation_id: string | null;
+  inventory_items: { name: string } | { name: string }[] | null;
+  preparations: { name: string } | { name: string }[] | null;
+};
+
 type AdditionRow = {
   id: string;
   sku: string;
@@ -63,6 +72,7 @@ type PurchaseLine = {
   inventory_item_id: string;
   quantity: number;
   unit: StockUnit;
+  line_total_cop: number | null;
 };
 
 type AllocationLine = {
@@ -71,11 +81,28 @@ type AllocationLine = {
   base_unit: StockUnit;
 };
 
+type SaleProductRow = {
+  id: string;
+  sku: string | null;
+  name: string;
+  image_url: string | null;
+  presentation_quantity: number | null;
+  presentation_unit: StockUnit | null;
+  sale_price_cop: number | null;
+  sale_is_enabled: boolean | null;
+  unit: StockUnit;
+};
+
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
   if (!path) return null;
   if (path.startsWith("http")) return path;
   const { data } = await supabase.storage.from(productImageBucket).createSignedUrl(path, 60 * 60);
   return data?.signedUrl ?? null;
+}
+
+function relationName(relation: { name: string } | { name: string }[] | null) {
+  if (Array.isArray(relation)) return relation[0]?.name ?? null;
+  return relation?.name ?? null;
 }
 
 export default async function NuevoPedidoPage() {
@@ -94,6 +121,7 @@ export default async function NuevoPedidoPage() {
     flavorsResult,
     sizesResult,
     pricesResult,
+    flavorIngredientsResult,
     additionsResult,
     saleProductsResult,
     purchaseItemsResult,
@@ -115,18 +143,21 @@ export default async function NuevoPedidoPage() {
       .eq("is_active", true)
       .order("created_at", { ascending: false }),
     supabase
+      .from("pizza_flavor_ingredients")
+      .select("flavor_id, source_kind, inventory_item_id, source_preparation_id, inventory_items(name), preparations(name)"),
+    supabase
       .from("pizza_additions")
       .select("id, sku, name, source_kind, inventory_item_id, max_allowed, inventory_items(image_url), pizza_addition_sizes(pizza_size_id, price_cop), pizza_addition_flavors(flavor_id), pizza_addition_categories(menu_category_id)")
       .eq("is_active", true)
       .eq("is_available", true)
       .order("sort_order"),
     supabase
-      .from("inventory_items")
-      .select("id, sku, name, image_url, presentation_quantity, presentation_unit, unit")
-      .eq("item_kind", "sale_product")
-      .eq("is_active", true)
+      .from("pos_sale_product_references")
+      .select("id, sku, name, image_url, presentation_quantity, presentation_unit, sale_price_cop, sale_is_enabled, unit")
+      .eq("sale_is_enabled", true)
+      .gt("sale_price_cop", 0)
       .order("name"),
-    supabase.from("purchase_items").select("id, inventory_item_id, quantity, unit"),
+    supabase.from("purchase_items").select("id, inventory_item_id, quantity, unit, line_total_cop"),
     supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
     supabase
       .from("pos_order_consumption_allocations")
@@ -139,11 +170,22 @@ export default async function NuevoPedidoPage() {
     flavorsResult.error ??
     sizesResult.error ??
     pricesResult.error ??
+    flavorIngredientsResult.error ??
     additionsResult.error ??
     saleProductsResult.error ??
     purchaseItemsResult.error ??
     productionAllocationsResult.error ??
     posAllocationsResult.error;
+
+  const signedImageCache = new Map<string, Promise<string | null>>();
+  function signedCachedImage(path: string | null) {
+    if (!path) return Promise.resolve(null);
+    const cached = signedImageCache.get(path);
+    if (cached) return cached;
+    const promise = signedImage(supabase, path);
+    signedImageCache.set(path, promise);
+    return promise;
+  }
 
   const purchaseAllocationByLine = new Map<string, number>();
   for (const allocation of [...((productionAllocationsResult.data ?? []) as AllocationLine[]), ...((posAllocationsResult.data ?? []) as unknown as AllocationLine[])]) {
@@ -152,6 +194,7 @@ export default async function NuevoPedidoPage() {
   }
 
   const stockByProduct = new Map<string, number>();
+  const costByProduct = new Map<string, { quantity: number; total: number }>();
   for (const line of (purchaseItemsResult.data ?? []) as PurchaseLine[]) {
     let quantity = Number(line.quantity ?? 0);
     try {
@@ -161,9 +204,29 @@ export default async function NuevoPedidoPage() {
     }
     const available = Math.max(0, quantity - (purchaseAllocationByLine.get(line.id) ?? 0));
     stockByProduct.set(line.inventory_item_id, (stockByProduct.get(line.inventory_item_id) ?? 0) + available);
+    const lineTotal = Number(line.line_total_cop ?? 0);
+    if (available > 0 && quantity > 0 && lineTotal > 0) {
+      const current = costByProduct.get(line.inventory_item_id) ?? { quantity: 0, total: 0 };
+      current.quantity += available;
+      current.total += (lineTotal / quantity) * available;
+      costByProduct.set(line.inventory_item_id, current);
+    }
   }
 
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
+  const ingredientsByFlavor = new Map<string, PosPizzaOption["characteristic_ingredients"]>();
+  for (const ingredient of (flavorIngredientsResult.data ?? []) as unknown as FlavorIngredientRow[]) {
+    const sourceId = ingredient.source_kind === "preparation" ? ingredient.source_preparation_id : ingredient.inventory_item_id;
+    const sourceName = ingredient.source_kind === "preparation" ? relationName(ingredient.preparations) : relationName(ingredient.inventory_items);
+    if (!sourceId || !sourceName) continue;
+    const list = ingredientsByFlavor.get(ingredient.flavor_id) ?? [];
+    list.push({
+      source_id: sourceId,
+      source_kind: ingredient.source_kind,
+      source_name: sourceName
+    });
+    ingredientsByFlavor.set(ingredient.flavor_id, list);
+  }
   const sizeRows = ((sizesResult.data ?? []) as unknown as SizeRow[]).sort(
     (a, b) => Number(a.diameter_cm ?? 0) - Number(b.diameter_cm ?? 0) || Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || a.name.localeCompare(b.name)
   );
@@ -176,6 +239,7 @@ export default async function NuevoPedidoPage() {
       category_name: flavor.menu_categories?.name ?? null,
       image_src: await signedImage(supabase, flavor.image_url ?? null),
       allows_half_and_half: flavor.allows_half_and_half,
+      characteristic_ingredients: ingredientsByFlavor.get(flavor.id) ?? [],
       min_price_cop: null,
       prices: sizeRows.map((size) => ({
         id: null,
@@ -236,19 +300,25 @@ export default async function NuevoPedidoPage() {
     }
   }
 
+  const saleProductRows = (saleProductsResult.data ?? []) as SaleProductRow[];
   const saleProducts: PosSaleProductOption[] = await Promise.all(
-    (saleProductsResult.data ?? []).map(async (product) => ({
-      id: product.id,
-      sku: product.sku,
-      name: product.name,
-      image_src: await signedImage(supabase, product.image_url),
-      presentation:
-        product.presentation_quantity && product.presentation_unit
-          ? formatStockQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
-          : null,
-      stock_base: stockByProduct.get(product.id) ?? 0,
-      unit: "unit"
-    }))
+    saleProductRows.map(async (product) => {
+      const cost = costByProduct.get(product.id);
+      return {
+        id: product.id,
+        sku: product.sku,
+        name: product.name,
+        image_src: await signedCachedImage(product.image_url),
+        presentation:
+          product.presentation_quantity && product.presentation_unit
+            ? formatStockQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
+            : null,
+        sale_price_cop: Number(product.sale_price_cop ?? 0),
+        stock_base: stockByProduct.get(product.id) ?? 0,
+        unit_cost_cop: cost && cost.quantity > 0 ? cost.total / cost.quantity : null,
+        unit: "unit"
+      };
+    })
   );
 
   return (

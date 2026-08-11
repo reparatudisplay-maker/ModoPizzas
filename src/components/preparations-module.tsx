@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Check, Copy, Eye, ImagePlus, Power, Plus, Settings, X } from "lucide-react";
 import { savePreparation, togglePreparationState, type FormActionState } from "@/app/admin/actions";
 import { ConservationProfileModal } from "@/components/conservation-profiles-module";
+import { optimizeImageInput } from "@/lib/client-images";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
@@ -459,6 +460,7 @@ function PreparationModal({
   const [profileOptions, setProfileOptions] = useState<ConservationProfileOption[]>(profiles);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [imagePreview, setImagePreview] = useState(preparation?.image_src ?? preparation?.image_url ?? "");
+  const [imageError, setImageError] = useState("");
   const [removeImage, setRemoveImage] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [recipeLines, setRecipeLines] = useState<RecipeDraftLine[]>(initialRecipeLines(preparation));
@@ -831,15 +833,22 @@ function PreparationModal({
                 <div className="image-upload-row">
                   <label className="upload-dropzone compact-upload-dropzone">
                     <input
-                      accept="image/gif,image/jpeg,image/png,image/webp"
+                      accept="image/jpeg,image/png,image/webp"
                       key={fileInputKey}
                       name="preparation_image"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) return;
+                      onChange={async (event) => {
+                        const input = event.currentTarget;
                         if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
-                        setImagePreview(URL.createObjectURL(file));
+                        const result = await optimizeImageInput(input);
+                        if (result.error) {
+                          setImagePreview(preparation?.image_src ?? preparation?.image_url ?? "");
+                          setImageError(result.error);
+                          return;
+                        }
+                        if (!result.previewUrl) return;
+                        setImagePreview(result.previewUrl);
                         setRemoveImage(false);
+                        setImageError("");
                       }}
                       type="file"
                     />
@@ -856,13 +865,20 @@ function PreparationModal({
                       <label className="ghost-button compact-file-button">
                         Cambiar
                         <input
-                          accept="image/gif,image/jpeg,image/png,image/webp"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={async (event) => {
+                            const input = event.currentTarget;
                             if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
-                            setImagePreview(URL.createObjectURL(file));
+                            const result = await optimizeImageInput(input);
+                            if (result.error) {
+                              setImagePreview(preparation?.image_src ?? preparation?.image_url ?? "");
+                              setImageError(result.error);
+                              return;
+                            }
+                            if (!result.previewUrl) return;
+                            setImagePreview(result.previewUrl);
                             setRemoveImage(false);
+                            setImageError("");
                           }}
                           type="file"
                         />
@@ -873,6 +889,7 @@ function PreparationModal({
                           if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
                           setImagePreview("");
                           setRemoveImage(true);
+                          setImageError("");
                           setFileInputKey((current) => current + 1);
                         }}
                         type="button"
@@ -882,6 +899,7 @@ function PreparationModal({
                     </div>
                   ) : null}
                 </div>
+                {imageError ? <p className="form-status error">{imageError}</p> : <p className="field-hint">Formatos permitidos: JPG, PNG o WebP. Maximo 4 MB.</p>}
               </div>
             </div>
           </section>

@@ -370,6 +370,10 @@ export function PurchaseForm({
     editPurchase && editItem?.item_kind === "ingredient" && editItem.presentation_quantity === null
       ? toPreferredDisplayQuantity(editPurchase.quantity, editPurchase.unit)
       : null;
+  const editPresentationDisplay =
+    editPurchase?.presentation_quantity && editPurchase.presentation_unit
+      ? toPreferredDisplayQuantity(editPurchase.presentation_quantity, editPurchase.presentation_unit)
+      : null;
   const [quantity, setQuantity] = useState(
     editPurchase ? formatQuantity(String(editDisplayQuantity?.value ?? editPurchase.purchased_quantity).replace(".", ",")) : ""
   );
@@ -379,18 +383,17 @@ export function PurchaseForm({
   const selectableItems = items.filter((item) => item.is_active && item.presentation_quantity === null);
   const selectedItem = selectableItems.find((item) => item.id === selectedItemId) ?? editItem;
   const purchaseKind: PurchaseKind | null = selectedItem?.item_kind ?? null;
-  const selectedPurchaseMode: PurchaseMode = selectedItem?.purchase_mode === "packages" ? "packages" : "total_weight";
-  const unitOptions = compatibleUnits(selectedItem?.unit ?? "unit");
+  const selectedPurchaseMode: PurchaseMode = selectedItem?.item_kind === "ingredient" && selectedItem.purchase_mode !== "packages" ? "total_weight" : "packages";
+  const presentationUnitSource = purchaseKind !== "ingredient" && editPresentationDisplay?.unit ? editPresentationDisplay.unit : selectedItem?.unit ?? "unit";
+  const unitOptions = compatibleUnits(presentationUnitSource);
   const [presentationUnit, setPresentationUnit] = useState<InventoryItem["unit"]>(
-    editDisplayQuantity?.unit ?? editPurchase?.presentation_unit ?? selectedItem?.presentation_unit ?? compatibleUnits(selectedItem?.unit ?? "unit")[0]?.value ?? "unit"
+    editDisplayQuantity?.unit ?? editPresentationDisplay?.unit ?? selectedItem?.presentation_unit ?? compatibleUnits(selectedItem?.unit ?? "unit")[0]?.value ?? "unit"
   );
   const [referenceSku, setReferenceSku] = useState("");
   const [referenceSkuEdited, setReferenceSkuEdited] = useState(false);
   const [selectedBrandId, setSelectedBrandId] = useState(editPurchase?.brand_id ?? editItem?.brand_id ?? "");
   const [packageContent, setPackageContent] = useState(
-    editPurchase?.presentation_quantity
-      ? formatQuantity(String(editPurchase.presentation_quantity).replace(".", ","))
-      : ""
+    editPresentationDisplay ? formatQuantity(String(editPresentationDisplay.value).replace(".", ",")) : ""
   );
 
   const referenceSkuPlaceholder =

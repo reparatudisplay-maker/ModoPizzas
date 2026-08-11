@@ -13,15 +13,13 @@ import {
   savePizzaSize,
   type FormActionState
 } from "@/app/admin/actions";
+import { optimizeImageInput } from "@/lib/client-images";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 
 type SectionKey = "sabores" | "tamanos" | "categorias" | "adiciones";
 type StatusFilter = "" | "active" | "inactive";
 type LimitFilter = "15" | "30" | "all";
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
-const flavorImageMaxSize = 4 * 1024 * 1024;
-const flavorImageMaxSizeMb = flavorImageMaxSize / (1024 * 1024);
-const allowedFlavorImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 type FlavorIngredientSource = {
   id: string;
@@ -1107,25 +1105,21 @@ function FlavorForm({
             <label className="ghost-button icon-text-button">
               <ImagePlus size={16} /> {imagePreview && !removeImage ? "Cambiar" : "Subir foto"}
               <input
-                accept="image/jpeg,image/png,image/webp,image/gif"
+                accept="image/jpeg,image/png,image/webp"
                 className="sr-only"
                 key={fileInputKey}
                 name="flavor_image"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  if (!allowedFlavorImageTypes.has(file.type)) {
-                    setImageError("No se puede cargar la imagen. Usa JPG, PNG, WEBP o GIF.");
-                    event.currentTarget.value = "";
-                    return;
-                  }
-                  if (file.size > flavorImageMaxSize) {
-                    setImageError(`No se puede cargar la imagen. El tamaño máximo permitido es ${flavorImageMaxSizeMb} MB.`);
-                    event.currentTarget.value = "";
-                    return;
-                  }
+                onChange={async (event) => {
+                  const input = event.currentTarget;
                   revokePreviewIfNeeded();
-                  setImagePreview(URL.createObjectURL(file));
+                  const result = await optimizeImageInput(input);
+                  if (result.error) {
+                    setImagePreview(item?.image_src ?? "");
+                    setImageError(result.error);
+                    return;
+                  }
+                  if (!result.previewUrl) return;
+                  setImagePreview(result.previewUrl);
                   setRemoveImage(false);
                   setImageError("");
                 }}
@@ -1148,7 +1142,7 @@ function FlavorForm({
               </button>
             ) : null}
           </div>
-          {imageError ? <p className="form-status error">{imageError}</p> : <p className="field-hint">Formatos permitidos: JPG, PNG, WEBP o GIF. Máximo {flavorImageMaxSizeMb} MB.</p>}
+          {imageError ? <p className="form-status error">{imageError}</p> : <p className="field-hint">Formatos permitidos: JPG, PNG o WebP. Maximo 4 MB.</p>}
         </div>
       </div>
       <label className="check-option">

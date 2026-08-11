@@ -1,10 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import type { CSSProperties, ReactNode } from "react";
-import { useActionState, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { ChevronLeft, Minus, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { Banknote, CheckCircle2, ChevronLeft, Minus, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, type PosOrderActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -13,8 +13,21 @@ import { formatStockQuantity, type StockUnit } from "@/lib/units";
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending";
 type CatalogTab = "pizzas" | "products";
-type PizzaStep = "size" | "type" | "half" | "additions" | "quantity" | "summary";
+type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
+type AdditionScope = "whole" | "left" | "right";
+
+type FlavorIngredientOption = {
+  source_id: string;
+  source_kind: "inventory_item" | "preparation";
+  source_name: string;
+};
+
+type PizzaIngredientChoice = FlavorIngredientOption & {
+  key: string;
+  side: "first" | "second";
+  flavor_name: string;
+};
 
 export type PosPizzaSizePrice = {
   id: string | null;
@@ -36,6 +49,7 @@ export type PosPizzaOption = {
   category_name: string | null;
   image_src: string | null;
   allows_half_and_half: boolean;
+  characteristic_ingredients: FlavorIngredientOption[];
   min_price_cop: number | null;
   prices: PosPizzaSizePrice[];
 };
@@ -58,16 +72,21 @@ export type PosSaleProductOption = {
   name: string;
   image_src: string | null;
   presentation: string | null;
+  sale_price_cop: number;
   stock_base: number;
+  unit_cost_cop: number | null;
   unit: StockUnit;
 };
 
 type CartAddition = {
+  key: string;
   id: string;
   name: string;
   sku: string;
   quantity: number;
   unit_price_cop: number;
+  scope: AdditionScope;
+  scope_label?: string;
 };
 
 type CartLine = {
@@ -91,14 +110,41 @@ type PizzaWizard = {
   mode: PizzaMode;
   secondFlavor: PosPizzaOption | null;
   quantity: number;
-  removeNotes: string;
+  removedIngredientKeys: string[];
 };
 
 const initialState: PosOrderActionState = { status: "idle", message: "" };
+const minCardScale = 0;
+const maxCardScale = 2;
+const pizzaCardScaleKey = "modo-pos-pizza-card-scale";
+const productCardScaleKey = "modo-pos-product-card-scale";
+const cashDenominations = [2000, 5000, 10000, 20000, 50000, 100000];
+
+function initialCardScale(storageKey: string) {
+  if (typeof window === "undefined") return 1;
+  const parsed = Number(window.localStorage.getItem(storageKey));
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(maxCardScale, Math.max(minCardScale, Math.round(parsed)));
+}
+
+function cashQuickSuggestions(total: number) {
+  if (total <= 0) return [];
+  const denominationValues = new Set(cashDenominations);
+  const suggestions: number[] = [];
+  let candidate = Math.ceil(total / 5000) * 5000;
+  if (candidate <= total) candidate += 5000;
+
+  while (suggestions.length < 2 && candidate <= total + 30000) {
+    if (!denominationValues.has(candidate) && !suggestions.includes(candidate)) suggestions.push(candidate);
+    candidate += 5000;
+  }
+
+  return suggestions;
+}
 
 function productKey(line: Omit<CartLine, "key" | "quantity">) {
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
-  const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.quantity}`).sort().join("|");
+  const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.scope}:${addition.quantity}`).sort().join("|");
   return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${additionsKey}`;
 }
 
@@ -116,6 +162,73 @@ function paymentLabel(method: PaymentMethod) {
   return "Pendiente";
 }
 
+function formatPosUnitCost(value: number | null) {
+  if (!value || !Number.isFinite(value) || value <= 0) return "Sin costo";
+  return `Costo: ${formatCop(value, { decimals: !Number.isInteger(value) })} / UND`;
+}
+
+function ingredientChoiceKey(flavorId: string, side: "first" | "second", ingredient: FlavorIngredientOption) {
+  return `${side}:${flavorId}:${ingredient.source_kind}:${ingredient.source_id}`;
+}
+
+function ingredientChoicesForWizard(wizard: PizzaWizard) {
+  const first = wizard.flavor.characteristic_ingredients
+    .filter(isRemovablePizzaIngredient)
+    .map((ingredient) => ({
+      ...ingredient,
+      key: ingredientChoiceKey(wizard.flavor.flavor_id, "first", ingredient),
+      side: "first" as const,
+      flavor_name: wizard.flavor.flavor_name
+    }));
+  const second =
+    wizard.mode === "half" && wizard.secondFlavor
+      ? wizard.secondFlavor.characteristic_ingredients
+          .filter(isRemovablePizzaIngredient)
+          .map((ingredient) => ({
+            ...ingredient,
+            key: ingredientChoiceKey(wizard.secondFlavor!.flavor_id, "second", ingredient),
+            side: "second" as const,
+            flavor_name: wizard.secondFlavor!.flavor_name
+          }))
+      : [];
+  return [...first, ...second];
+}
+
+function isRemovablePizzaIngredient(ingredient: FlavorIngredientOption) {
+  const name = normalizeMasterText(ingredient.source_name);
+  return !(
+    name === "MASA" ||
+    name.startsWith("MASA ") ||
+    name.includes("MASA BASE") ||
+    name === "SALSA" ||
+    name.includes("SALSA BASE") ||
+    name.includes("BASE SALSA")
+  );
+}
+
+function removedIngredientNotes(wizard: PizzaWizard) {
+  const removed = ingredientChoicesForWizard(wizard).filter((ingredient) => wizard.removedIngredientKeys.includes(ingredient.key));
+  if (removed.length === 0) return "";
+  return removed
+    .map((ingredient) =>
+      wizard.mode === "half" ? `Sin ${ingredient.source_name} (${ingredient.flavor_name})` : `Sin ${ingredient.source_name}`
+    )
+    .join(", ");
+}
+
+function previousStepForSummary(wizard: PizzaWizard) {
+  if (wizard.mode === "half") return "half";
+  return "type";
+}
+
+function additionSelectionKey(id: string, scope: AdditionScope) {
+  return `${id}:${scope}`;
+}
+
+function additionLabel(addition: CartAddition) {
+  return addition.scope_label ? `+ ${addition.name} x${addition.quantity} (${addition.scope_label})` : `+ ${addition.name} x${addition.quantity}`;
+}
+
 export function PosOrderWorkspace({
   pizzas,
   additions,
@@ -129,35 +242,68 @@ export function PosOrderWorkspace({
   const [tab, setTab] = useState<CatalogTab>("pizzas");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [cardScale, setCardScale] = useState(1);
+  const [pizzaCardScale, setPizzaCardScale] = useState(() => initialCardScale(pizzaCardScaleKey));
+  const [productCardScale, setProductCardScale] = useState(() => initialCardScale(productCardScaleKey));
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
-  const [discount, setDiscount] = useState("");
   const [delivery, setDelivery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [wizard, setWizard] = useState<PizzaWizard | null>(null);
   const [selectedAdditions, setSelectedAdditions] = useState<Record<string, number>>({});
+  const [additionScopes, setAdditionScopes] = useState<Record<string, AdditionScope>>({});
+  const [ingredientModalOpen, setIngredientModalOpen] = useState(false);
+  const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [cashReceived, setCashReceived] = useState("");
+  const [cashConfirmed, setCashConfirmed] = useState(false);
+  const [cashSubmitting, setCashSubmitting] = useState(false);
+  const [cashSelectedOption, setCashSelectedOption] = useState<string | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const cashSubmitLockRef = useRef(false);
   const normalizedQuery = normalizeMasterText(query);
+  const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
+
+  useEffect(() => {
+    window.localStorage.setItem(pizzaCardScaleKey, String(pizzaCardScale));
+  }, [pizzaCardScale]);
+
+  useEffect(() => {
+    window.localStorage.setItem(productCardScaleKey, String(productCardScale));
+  }, [productCardScale]);
 
   useEffect(() => {
     if (state.status === "success") {
       const timeout = window.setTimeout(() => {
         setCart([]);
-        setDiscount("");
         setDelivery("");
         setCustomerName("");
         setCustomerPhone("");
         setNotes("");
         setOrderKind("local");
         setPaymentMethod("cash");
+        setCashModalOpen(false);
+        setCashReceived("");
+        setCashConfirmed(false);
+        setCashSubmitting(false);
+        setCashSelectedOption(null);
+        cashSubmitLockRef.current = false;
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    if (state.status === "error" && paymentMethod === "cash" && cashConfirmed) {
+      const timeout = window.setTimeout(() => {
+        setCashConfirmed(false);
+        setCashSubmitting(false);
+        setCashModalOpen(true);
+        cashSubmitLockRef.current = false;
       }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [state.status]);
+  }, [cashConfirmed, paymentMethod, state.status]);
 
   const categories = useMemo(() => {
     const unique = new Map<string, string>();
@@ -194,9 +340,12 @@ export function PosOrderWorkspace({
     const additionsSubtotal = line.additions.reduce((additionSum, addition) => additionSum + addition.quantity * addition.unit_price_cop, 0);
     return sum + line.quantity * (line.unit_price_cop + additionsSubtotal);
   }, 0);
-  const discountValue = Number(discount || 0);
-  const deliveryValue = Number(delivery || 0);
-  const total = Math.max(0, subtotal - discountValue + deliveryValue);
+  const deliveryValue = orderKind === "delivery" ? Number(delivery || 0) : 0;
+  const total = Math.max(0, subtotal + deliveryValue);
+  const cashReceivedValue = Number(cashReceived || 0);
+  const cashChange = Math.max(0, cashReceivedValue - total);
+  const cashSuggestions = useMemo(() => cashQuickSuggestions(total), [total]);
+  const validCashDenominations = useMemo(() => cashDenominations.filter((amount) => amount >= total), [total]);
 
   const selectedPizzaPrice = wizard?.selectedSize ?? null;
   const halfAvailable = Boolean(wizard && selectedPizzaPrice && wizard.flavor.allows_half_and_half);
@@ -209,9 +358,11 @@ export function PosOrderWorkspace({
       .filter((addition) => addition.size_id === wizard.selectedSize?.size_id)
       .filter((addition) => additionCompatible(addition, flavors));
   }, [additions, wizard]);
-  const selectedAdditionsList = selectedAdditionItems(selectedAdditions, compatibleAdditions);
+  const selectedAdditionsList = selectedAdditionItems(selectedAdditions, compatibleAdditions, wizard);
   const additionsSubtotal = selectedAdditionsList.reduce((sum, addition) => sum + addition.quantity * addition.unit_price_cop, 0);
   const wizardUnitPrice = (activePrice?.price_cop ?? 0) + additionsSubtotal;
+  const wizardIngredientChoices = wizard ? ingredientChoicesForWizard(wizard) : [];
+  const wizardRemovedNotes = wizard ? removedIngredientNotes(wizard) : "";
 
   function addLine(line: Omit<CartLine, "key" | "quantity">, quantity = 1) {
     const key = productKey(line);
@@ -224,21 +375,21 @@ export function PosOrderWorkspace({
 
   function openPizzaWizard(flavor: PosPizzaOption) {
     setSelectedAdditions({});
-    setWizard({ flavor, step: "size", selectedSize: null, mode: "whole", secondFlavor: null, quantity: 1, removeNotes: "" });
+    setAdditionScopes({});
+    setIngredientModalOpen(false);
+    setWizard({ flavor, step: "size", selectedSize: null, mode: "whole", secondFlavor: null, quantity: 1, removedIngredientKeys: [] });
   }
 
   function selectPizzaSize(size: PosPizzaSizePrice) {
     if (!wizard) return;
     if (!size.is_active || !size.id || size.price_cop === null) return;
-    const nextWizard = { ...wizard, selectedSize: size, step: "type" as PizzaStep, mode: "whole" as PizzaMode, secondFlavor: null };
-    const additionsForSize = additions
-      .filter((addition) => addition.size_id === size.size_id)
-      .filter((addition) => additionCompatible(addition, [wizard.flavor]));
+    const nextWizard = { ...wizard, selectedSize: size, step: "type" as PizzaStep, mode: "whole" as PizzaMode, secondFlavor: null, removedIngredientKeys: [] };
     if (!wizard.flavor.allows_half_and_half) {
-      nextWizard.step = additionsForSize.length > 0 ? "additions" : "quantity";
+      nextWizard.step = "summary";
     }
     setWizard(nextWizard);
     setSelectedAdditions({});
+    setAdditionScopes({});
   }
 
   function addConfiguredPizza(source = wizard, additionsToUse = selectedAdditionsList, quantity = wizard?.quantity ?? 1) {
@@ -246,7 +397,8 @@ export function PosOrderWorkspace({
     const firstPrice = source.selectedSize;
     const secondPrice = source.mode === "half" && source.secondFlavor ? priceForSize(source.secondFlavor, firstPrice.size_id) : null;
     const orderPrice = selectedOrderPrice(source, firstPrice, secondPrice);
-    if (!orderPrice?.id || orderPrice.price_cop === null) return;
+    if (!firstPrice.id || !orderPrice?.id || orderPrice.price_cop === null) return;
+    if (source.mode === "half" && (!secondPrice?.id || secondPrice.id === firstPrice.id)) return;
     const name =
       source.mode === "half" && source.secondFlavor
         ? `${source.flavor.flavor_name} / ${source.secondFlavor.flavor_name} ${firstPrice.size_name}`
@@ -255,19 +407,21 @@ export function PosOrderWorkspace({
     addLine(
       {
         kind: "pizza",
-        id: orderPrice.id,
+        id: firstPrice.id,
         secondary_id: secondPrice?.id ?? null,
         name,
         sku: orderPrice.sku,
         image_src: source.flavor.image_src,
         unit_price_cop: orderPrice.price_cop,
         additions: additionsToUse,
-        notes: source.removeNotes ? `RETIRAR: ${source.removeNotes}` : undefined
+        notes: removedIngredientNotes(source) || undefined
       },
       quantity
     );
     setWizard(null);
     setSelectedAdditions({});
+    setAdditionScopes({});
+    setIngredientModalOpen(false);
   }
 
   function updateQuantity(key: string, delta: number) {
@@ -278,9 +432,13 @@ export function PosOrderWorkspace({
     );
   }
 
-  function updateProductPrice(key: string, value: string) {
-    const price = Number(value.replace(/\D/g, "") || 0);
-    setCart((current) => current.map((line) => (line.key === key ? { ...line, unit_price_cop: price } : line)));
+  function updateActiveCardScale(delta: number) {
+    const update = (value: number) => Math.min(maxCardScale, Math.max(minCardScale, value + delta));
+    if (tab === "pizzas") {
+      setPizzaCardScale(update);
+      return;
+    }
+    setProductCardScale(update);
   }
 
   const payload = cart.map((line) => ({
@@ -290,19 +448,59 @@ export function PosOrderWorkspace({
     quantity: line.quantity,
     unit_price_cop: line.unit_price_cop,
     notes: line.notes ?? "",
-    additions: line.additions.map((addition) => ({ id: addition.id, quantity: addition.quantity }))
+    additions: line.additions.map((addition) => ({
+      id: addition.id,
+      quantity: addition.quantity,
+      scope: addition.scope,
+      scope_label: addition.scope_label ?? null
+    }))
   }));
+  const hasInvalidSaleProductPrice = cart.some((line) => line.kind === "sale_product" && (!Number.isFinite(line.unit_price_cop) || line.unit_price_cop <= 0));
+
+  function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
+    if (paymentMethod !== "cash" || cashConfirmed) return;
+    event.preventDefault();
+    if (cart.length === 0 || hasInvalidSaleProductPrice) return;
+    setCashReceived("");
+    setCashSelectedOption(null);
+    setCashSubmitting(false);
+    cashSubmitLockRef.current = false;
+    setCashModalOpen(true);
+  }
+
+  function confirmCashPayment(received: number) {
+    if (received < total) return;
+    if (cashSubmitLockRef.current) return;
+    cashSubmitLockRef.current = true;
+    setCashReceived(String(received));
+    setCashConfirmed(true);
+    setCashSubmitting(true);
+    setCashSelectedOption(null);
+    setCashModalOpen(false);
+    window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+  }
+
+  function closeCashModal() {
+    setCashModalOpen(false);
+    setCashReceived("");
+    setCashConfirmed(false);
+    setCashSubmitting(false);
+    setCashSelectedOption(null);
+    cashSubmitLockRef.current = false;
+  }
 
   return (
     <>
-      <form action={action} className="pos-layout">
+      <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
         <input name="kind" type="hidden" value={orderKind} />
         <input name="payment_method" type="hidden" value={paymentMethod} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
-        <input name="discount_cop" type="hidden" value={discount} />
-        <input name="delivery_cop" type="hidden" value={delivery} />
+        <input name="discount_cop" type="hidden" value={0} />
+        <input name="delivery_cop" type="hidden" value={deliveryValue} />
+        <input name="cash_received_cop" type="hidden" value={paymentMethod === "cash" ? cashReceivedValue : 0} />
+        <input name="cash_change_cop" type="hidden" value={paymentMethod === "cash" ? cashChange : 0} />
         <input name="notes" type="hidden" value={notes} />
 
         <section className="pos-catalog-panel">
@@ -334,7 +532,7 @@ export function PosOrderWorkspace({
             ) : null}
           </div>
 
-          <div className={`pos-product-grid pos-card-scale-${cardScale}`}>
+          <div className={`pos-product-grid pos-card-scale-${activeCardScale}`}>
             {tab === "pizzas"
               ? filteredPizzas.map((pizza) => (
                   <button
@@ -352,7 +550,8 @@ export function PosOrderWorkspace({
                 ))
               : filteredProducts.map((product) => (
                   <button
-                    className="pos-product-card"
+                    className="pos-product-card pos-sale-product-card"
+                    disabled={product.sale_price_cop <= 0}
                     key={product.id}
                     onClick={() =>
                       addLine({
@@ -361,7 +560,7 @@ export function PosOrderWorkspace({
                         name: product.name,
                         sku: product.sku,
                         image_src: product.image_src,
-                        unit_price_cop: 0,
+                        unit_price_cop: product.sale_price_cop,
                         additions: []
                       })
                     }
@@ -369,17 +568,21 @@ export function PosOrderWorkspace({
                   >
                     <ProductImage alt={product.name} src={product.image_src} />
                     <span className="pos-product-title">{product.name}</span>
-                    <span className="pos-product-meta">{product.presentation ?? "Sin presentacion"}</span>
-                    <small>Stock {formatStockQuantity(product.stock_base, product.unit)}</small>
+                    <strong className="pos-product-presentation">{product.presentation ?? "Sin presentacion"}</strong>
+                    <small className={product.sale_price_cop > 0 ? "pos-product-price" : "danger-text"}>
+                      {product.sale_price_cop > 0 ? `Precio: ${formatCop(product.sale_price_cop)}` : "Sin precio de venta"}
+                    </small>
+                    <small>{formatPosUnitCost(product.unit_cost_cop)}</small>
+                    <small className="pos-product-stock">Stock: {formatStockQuantity(product.stock_base, product.unit)}</small>
                   </button>
                 ))}
             {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
           </div>
-          {tab === "pizzas" ? (
-            <div className="pos-card-size-controls" aria-label="Tamano de tarjetas">
-              <button disabled={cardScale === 0} onClick={() => setCardScale((value) => Math.max(0, value - 1))} type="button"><Minus size={18} /></button>
+          {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) > 0 ? (
+            <div className="pos-card-size-controls" aria-label={`Tamano de tarjetas de ${tab === "pizzas" ? "pizzas" : "productos"}`}>
+              <button disabled={activeCardScale === minCardScale} onClick={() => updateActiveCardScale(-1)} type="button"><Minus size={18} /></button>
               <span>Tarjetas</span>
-              <button disabled={cardScale === 2} onClick={() => setCardScale((value) => Math.min(2, value + 1))} type="button"><Plus size={18} /></button>
+              <button disabled={activeCardScale === maxCardScale} onClick={() => updateActiveCardScale(1)} type="button"><Plus size={18} /></button>
             </div>
           ) : null}
         </section>
@@ -404,22 +607,12 @@ export function PosOrderWorkspace({
               <article className="pos-cart-line" key={line.key}>
                 <div>
                   <strong>{line.name}</strong>
-                  <small>{line.sku ?? "Sin SKU"}</small>
+                  {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
                   {line.notes ? <small>{line.notes}</small> : null}
                   {line.additions.map((addition) => (
-                    <small key={addition.id}>+ {addition.name} x {addition.quantity}</small>
+                    <small key={addition.key}>{additionLabel(addition)} +{formatCop(addition.quantity * addition.unit_price_cop)}</small>
                   ))}
-                  {line.kind === "sale_product" ? (
-                    <input
-                      aria-label={`Precio de ${line.name}`}
-                      inputMode="numeric"
-                      onChange={(event) => updateProductPrice(line.key, event.target.value)}
-                      placeholder="Precio venta"
-                      value={line.unit_price_cop ? String(line.unit_price_cop) : ""}
-                    />
-                  ) : (
-                    <span>{formatCop(line.unit_price_cop)}</span>
-                  )}
+                  <span>{line.unit_price_cop > 0 ? formatCop(line.unit_price_cop) : "Sin precio"}</span>
                 </div>
                 <div className="pos-qty-controls">
                   <button onClick={() => updateQuantity(line.key, -1)} title="Disminuir" type="button"><Minus size={16} /></button>
@@ -432,16 +625,38 @@ export function PosOrderWorkspace({
             {cart.length === 0 ? <p className="empty-state">Toca una pizza o producto para empezar.</p> : null}
           </div>
 
-          <div className="pos-client-grid">
-            <input onChange={(event) => setCustomerName(uppercaseMasterName(event.target.value))} placeholder="Cliente opcional" value={customerName} />
-            <input inputMode="tel" onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Telefono" value={customerPhone} />
-            <input inputMode="numeric" onChange={(event) => setDiscount(event.target.value.replace(/\D/g, ""))} placeholder="Descuento" value={discount} />
-            <input inputMode="numeric" onChange={(event) => setDelivery(event.target.value.replace(/\D/g, ""))} placeholder="Domicilio" value={delivery} />
-          </div>
+          {orderKind === "local" && (customerName || customerPhone) ? (
+            <div className="pos-customer-compact">
+              <span>
+                Cliente: <strong>{customerName || customerPhone}</strong>
+              </span>
+              <div className="row-actions">
+                <button className="ghost-button" onClick={() => setCustomerModalOpen(true)} type="button">Editar</button>
+                <button
+                  className="ghost-button"
+                  onClick={() => {
+                    setCustomerName("");
+                    setCustomerPhone("");
+                  }}
+                  type="button"
+                >
+                  Quitar
+                </button>
+              </div>
+            </div>
+          ) : orderKind !== "local" ? (
+            <div className="pos-client-grid">
+              <input onChange={(event) => setCustomerName(uppercaseMasterName(event.target.value))} placeholder="Cliente opcional" value={customerName} />
+              <input inputMode="tel" onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Telefono" value={customerPhone} />
+              {orderKind === "delivery" ? (
+                <input inputMode="numeric" onChange={(event) => setDelivery(event.target.value.replace(/\D/g, ""))} placeholder="Domicilio" value={delivery} />
+              ) : null}
+            </div>
+          ) : null}
           <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" value={notes} />
 
           <div className="pos-payment-grid">
-            {(["cash", "card", "transfer", "mixed", "pending"] as PaymentMethod[]).map((method) => (
+            {(["cash", "transfer", "mixed", "pending"] as PaymentMethod[]).map((method) => (
               <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => setPaymentMethod(method)} type="button">
                 {paymentLabel(method)}
               </button>
@@ -449,7 +664,6 @@ export function PosOrderWorkspace({
           </div>
 
           <div className="pos-total-box">
-            <span>Subtotal <strong>{formatCop(subtotal)}</strong></span>
             <span>Total <strong>{formatCop(total)}</strong></span>
           </div>
           {state.status !== "idle" ? (
@@ -457,7 +671,13 @@ export function PosOrderWorkspace({
               {state.status === "success" && state.order ? `Pedido ${state.order.code} confirmado por ${formatCop(state.order.total_cop)}.` : state.message}
             </p>
           ) : null}
-          <SubmitOrderButton disabled={cart.length === 0} />
+          {hasInvalidSaleProductPrice ? <p className="form-status error">Hay productos sin precio de venta configurado.</p> : null}
+          <div className="pos-final-actions">
+            <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
+              {customerName || customerPhone ? "Editar cliente" : "+ Agregar cliente"}
+            </button>
+            <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice} />
+          </div>
         </aside>
       </form>
 
@@ -466,14 +686,24 @@ export function PosOrderWorkspace({
           <section aria-label="Configurar pizza" aria-modal="true" className="modal-panel pos-pizza-modal" role="dialog">
             <header className="modal-header">
               <div>
-                <strong>{wizard.flavor.flavor_name}</strong>
-                <span>{wizard.flavor.category_name ?? "Sin categoria"}</span>
+                <strong>Configurar pizza</strong>
+                <span>{wizard.step === "summary" ? "Resumen final" : "Selecciona las opciones"}</span>
               </div>
-              <button className="icon-button" onClick={() => setWizard(null)} title="Cerrar" type="button"><X size={18} /></button>
+              <button
+                className="icon-button"
+                onClick={() => {
+                  setIngredientModalOpen(false);
+                  setWizard(null);
+                }}
+                title="Cerrar"
+                type="button"
+              >
+                <X size={18} />
+              </button>
             </header>
 
             <div className="pos-wizard-body">
-              <PizzaSummary wizard={wizard} unitPrice={wizardUnitPrice} additions={selectedAdditionsList} />
+              {wizard.step !== "summary" ? <PizzaSummary wizard={wizard} unitPrice={wizardUnitPrice} additions={selectedAdditionsList} /> : null}
 
               {wizard.step === "size" ? (
                 <WizardStep title="Tamano">
@@ -504,7 +734,17 @@ export function PosOrderWorkspace({
                   <div className="pos-option-grid">
                     <button
                       className={wizard.mode === "whole" ? "pos-type-card selected" : "pos-type-card"}
-                      onClick={() => setWizard({ ...wizard, mode: "whole", secondFlavor: null, step: compatibleAdditions.length > 0 ? "additions" : "quantity" })}
+                      onClick={() => {
+                        setSelectedAdditions({});
+                        setAdditionScopes({});
+                        setWizard({
+                          ...wizard,
+                          mode: "whole",
+                          secondFlavor: null,
+                          removedIngredientKeys: [],
+                          step: "summary"
+                        });
+                      }}
                       type="button"
                     >
                       <span className="pizza-type-illustration whole" />
@@ -512,7 +752,15 @@ export function PosOrderWorkspace({
                       <span>{formatCop(selectedPizzaPrice.price_cop ?? 0)}</span>
                     </button>
                     {halfAvailable ? (
-                      <button className={wizard.mode === "half" ? "pos-type-card selected" : "pos-type-card"} onClick={() => setWizard({ ...wizard, mode: "half", step: "half" })} type="button">
+                      <button
+                        className={wizard.mode === "half" ? "pos-type-card selected" : "pos-type-card"}
+                        onClick={() => {
+                          setSelectedAdditions({});
+                          setAdditionScopes({});
+                          setWizard({ ...wizard, mode: "half", removedIngredientKeys: [], step: "half" });
+                        }}
+                        type="button"
+                      >
                         <span className="pizza-type-illustration half" />
                         <strong>Mitad y mitad</strong>
                         <span>Precio del sabor mayor</span>
@@ -535,10 +783,9 @@ export function PosOrderWorkspace({
                             className={wizard.secondFlavor?.flavor_id === pizza.flavor_id ? "pos-product-card pos-second-flavor-card active" : "pos-product-card pos-second-flavor-card"}
                             key={pizza.flavor_id}
                             onClick={() => {
-                              const nextAdditions = additions
-                                .filter((addition) => addition.size_id === selectedPizzaPrice.size_id)
-                                .filter((addition) => additionCompatible(addition, [wizard.flavor, pizza]));
-                              setWizard({ ...wizard, secondFlavor: pizza, step: nextAdditions.length > 0 ? "additions" : "quantity" });
+                              setSelectedAdditions({});
+                              setAdditionScopes({});
+                              setWizard({ ...wizard, secondFlavor: pizza, removedIngredientKeys: [], step: "summary" });
                             }}
                             type="button"
                           >
@@ -552,103 +799,249 @@ export function PosOrderWorkspace({
                 </WizardStep>
               ) : null}
 
-              {wizard.step === "additions" ? (
-                <WizardStep onBack={() => setWizard({ ...wizard, step: wizard.mode === "half" ? "half" : "type" })} title="Adiciones">
-                  {compatibleAdditions.length > 0 ? (
-                    <div className="pos-addition-grid">
-                      {compatibleAdditions.map((addition) => {
-                        const selected = selectedAdditions[addition.id] ?? 0;
-                        return (
-                          <article
-                            className={selected > 0 ? "pos-addition-card active" : "pos-addition-card"}
-                            key={addition.id}
-                          >
-                            <ProductImage alt={addition.name} src={addition.image_src} />
-                            <span>{addition.name}</span>
-                            <strong>{formatCop(addition.price_cop)}</strong>
-                            <div className="pos-addition-controls">
-                              <button
-                                disabled={selected === 0}
-                                onClick={() =>
-                                  setSelectedAdditions((current) => ({
-                                    ...current,
-                                    [addition.id]: Math.max(0, selected - 1)
-                                  }))
-                                }
-                                type="button"
-                              >
-                                <Minus size={16} />
-                              </button>
-                              <b>{selected}</b>
-                              <button
-                                disabled={selected >= addition.max_allowed}
-                                onClick={() =>
-                                  setSelectedAdditions((current) => ({
-                                    ...current,
-                                    [addition.id]: Math.min(addition.max_allowed, selected + 1)
-                                  }))
-                                }
-                                type="button"
-                              >
-                                <Plus size={16} />
-                              </button>
-                            </div>
-                            <small>Max {addition.max_allowed}</small>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="empty-state">Sin adiciones compatibles.</p>
-                  )}
-                  <div className="pos-wizard-next-row">
-                    <button className="ghost-button" onClick={() => setWizard({ ...wizard, step: "quantity" })} type="button">Continuar</button>
-                  </div>
-                </WizardStep>
-              ) : null}
-
-              {wizard.step === "quantity" ? (
-                <WizardStep
-                  onBack={() =>
-                    setWizard({
-                      ...wizard,
-                      step: compatibleAdditions.length > 0 ? "additions" : wizard.mode === "half" ? "half" : "type"
-                    })
-                  }
-                  title="Cantidad"
-                >
-                  <div className="pos-quantity-stage">
-                    <div className="pos-modal-quantity">
-                      <button onClick={() => setWizard({ ...wizard, quantity: Math.max(1, wizard.quantity - 1) })} type="button"><Minus /></button>
-                      <strong>{wizard.quantity}</strong>
-                      <button onClick={() => setWizard({ ...wizard, quantity: wizard.quantity + 1 })} type="button"><Plus /></button>
-                    </div>
-                    <label className="pos-remove-notes">
-                      <span>Retirar ingredientes</span>
-                      <input
-                        onChange={(event) => setWizard({ ...wizard, removeNotes: uppercaseMasterName(event.target.value) })}
-                        placeholder="Ej. SIN CEBOLLA"
-                        value={wizard.removeNotes}
-                      />
-                    </label>
-                    <button className="positive-button" onClick={() => setWizard({ ...wizard, step: "summary" })} type="button">Ver resumen</button>
-                  </div>
-                </WizardStep>
-              ) : null}
-
               {wizard.step === "summary" ? (
-                <WizardStep onBack={() => setWizard({ ...wizard, step: "quantity" })} title="Resumen final">
-                  <FinalPizzaSummary additions={selectedAdditionsList} unitPrice={wizardUnitPrice} wizard={wizard} />
+                <WizardStep onBack={() => setWizard({ ...wizard, step: previousStepForSummary(wizard) })} title="Resumen final">
+                  <FinalPizzaSummary
+                    additions={selectedAdditionsList}
+                    customizationAvailable={wizardIngredientChoices.length > 0 || compatibleAdditions.length > 0}
+                    onChangeQuantity={(quantity) => setWizard({ ...wizard, quantity })}
+                    onOpenIngredients={() => setIngredientModalOpen(true)}
+                    removedNotes={wizardRemovedNotes}
+                    unitPrice={wizardUnitPrice}
+                    wizard={wizard}
+                  />
                 </WizardStep>
               ) : null}
             </div>
 
             <div className="form-actions modal-form-actions pos-wizard-actions">
-              <button className="ghost-button" onClick={() => setWizard(null)} type="button">Cancelar</button>
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setIngredientModalOpen(false);
+                  setWizard(null);
+                }}
+                type="button"
+              >
+                Cancelar
+              </button>
               {wizard.step === "summary" ? (
                 <button className="positive-button" onClick={() => addConfiguredPizza()} type="button">Agregar al pedido</button>
               ) : null}
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {customerModalOpen ? (
+        <div className="modal-backdrop nested-modal-backdrop" role="presentation">
+          <section aria-label="Agregar cliente" aria-modal="true" className="modal-panel compact-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>Cliente opcional</strong>
+                <span>Datos rapidos para identificar el pedido.</span>
+              </div>
+              <button className="icon-button" onClick={() => setCustomerModalOpen(false)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="compact-card">
+              <div className="form-grid">
+                <div className="field">
+                  <label>Nombre</label>
+                  <input onChange={(event) => setCustomerName(uppercaseMasterName(event.target.value))} placeholder="Cliente" value={customerName} />
+                </div>
+                <div className="field">
+                  <label>Telefono</label>
+                  <input inputMode="tel" onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Telefono" value={customerPhone} />
+                </div>
+              </div>
+              <div className="form-actions modal-form-actions">
+                <button
+                  className="ghost-button"
+                  onClick={() => {
+                    setCustomerName("");
+                    setCustomerPhone("");
+                    setCustomerModalOpen(false);
+                  }}
+                  type="button"
+                >
+                  Quitar
+                </button>
+                <button className="primary-button" onClick={() => setCustomerModalOpen(false)} type="button">Guardar</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {wizard && ingredientModalOpen ? (
+        <PizzaCustomizationModal
+          activeScopes={additionScopes}
+          additions={compatibleAdditions}
+          choices={wizardIngredientChoices}
+          onClose={() => setIngredientModalOpen(false)}
+          onChangeAddition={(id, scope, quantity) =>
+            setSelectedAdditions((current) => {
+              const key = additionSelectionKey(id, scope);
+              if (quantity <= 0) {
+                const next = { ...current };
+                delete next[key];
+                return next;
+              }
+              return { ...current, [key]: quantity };
+            })
+          }
+          onChangeScope={(id, scope) => setAdditionScopes((current) => ({ ...current, [id]: scope }))}
+          onToggle={(key) =>
+            setWizard((current) => {
+              if (!current) return current;
+              const removed = current.removedIngredientKeys.includes(key)
+                ? current.removedIngredientKeys.filter((item) => item !== key)
+                : [...current.removedIngredientKeys, key];
+              return { ...current, removedIngredientKeys: removed };
+            })
+          }
+          removedKeys={wizard.removedIngredientKeys}
+          selectedAdditions={selectedAdditions}
+          wizard={wizard}
+        />
+      ) : null}
+
+      {cashModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Cobro en efectivo" aria-modal="true" className="modal-panel cash-payment-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>Cobro en efectivo</strong>
+                <span>Confirma el dinero recibido antes de registrar el pedido.</span>
+              </div>
+              <button className="icon-button" onClick={closeCashModal} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+
+            <div className="cash-payment-body">
+              <div className="cash-payment-header">
+                <div className="cash-total-display">
+                  <span>Total a pagar</span>
+                  <strong>{formatCop(total)}</strong>
+                </div>
+                <button
+                  className={["cash-exact-button", cashSelectedOption === "exact" ? "selected" : ""].filter(Boolean).join(" ")}
+                  onClick={() => {
+                    setCashReceived(String(total));
+                    setCashSelectedOption("exact");
+                    confirmCashPayment(total);
+                  }}
+                  disabled={cashSubmitting}
+                  type="button"
+                >
+                  <Banknote size={34} />
+                  <span>Pago exacto</span>
+                  {cashSelectedOption === "exact" ? <CheckCircle2 size={22} /> : null}
+                </button>
+              </div>
+
+              <section className="cash-other-amounts" aria-label="Otros montos">
+                <strong>Otros montos</strong>
+
+                <div className="cash-section-title">
+                  <Zap size={16} />
+                  <span>Montos rapidos</span>
+                </div>
+                <div className="cash-denomination-grid">
+                  {validCashDenominations.map((amount) => (
+                    <button
+                      className={[
+                        "cash-denomination suggested",
+                        cashSelectedOption === `denomination:${amount}` ? "selected" : ""
+                      ].filter(Boolean).join(" ")}
+                      key={amount}
+                      onClick={() => {
+                        setCashReceived(String(amount));
+                        setCashSelectedOption(`denomination:${amount}`);
+                      }}
+                      type="button"
+                    >
+                      <span>{formatCop(amount)}</span>
+                      {cashSelectedOption === `denomination:${amount}` ? <CheckCircle2 size={20} /> : null}
+                    </button>
+                  ))}
+                </div>
+
+                {cashSuggestions.length > 0 ? (
+                  <section className="cash-suggestions" aria-label="Sugerencias rapidas">
+                    <div className="cash-section-title">
+                      <Star size={16} />
+                      <span>Sugerencias rapidas</span>
+                    </div>
+                    <div className="cash-denomination-grid">
+                      {cashSuggestions.map((amount) => (
+                        <button
+                          className={[
+                            "cash-denomination suggested",
+                            cashSelectedOption === `suggestion:${amount}` ? "selected" : ""
+                          ].filter(Boolean).join(" ")}
+                          key={amount}
+                          onClick={() => {
+                            setCashReceived(String(amount));
+                            setCashSelectedOption(`suggestion:${amount}`);
+                          }}
+                          type="button"
+                        >
+                          <span>{formatCop(amount)}</span>
+                          {cashSelectedOption === `suggestion:${amount}` ? <CheckCircle2 size={20} /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                <label className="field cash-manual-amount">
+                  <span>Otro monto</span>
+                  <div className="cash-manual-input">
+                    <WalletCards size={22} />
+                    <input
+                      inputMode="numeric"
+                      onChange={(event) => {
+                        setCashReceived(event.target.value.replace(/\D/g, ""));
+                        setCashSelectedOption(null);
+                      }}
+                      placeholder="Ingresar monto"
+                      value={cashReceived}
+                    />
+                    {cashReceived ? (
+                      <button
+                        aria-label="Limpiar monto"
+                        onClick={() => {
+                          setCashReceived("");
+                          setCashSelectedOption(null);
+                        }}
+                        type="button"
+                      >
+                        <X size={16} />
+                      </button>
+                    ) : null}
+                  </div>
+                </label>
+              </section>
+
+              <div className="cash-change-summary">
+                <span className="cash-summary-received">
+                  <ReceiptText size={22} />
+                  Recibido:<strong>{cashReceivedValue > 0 ? formatCop(cashReceivedValue) : "-"}</strong>
+                </span>
+                <span className="cash-summary-change">
+                  <Repeat2 size={26} />
+                  Cambio:<strong>{cashReceivedValue >= total ? formatCop(cashChange) : "-"}</strong>
+                </span>
+              </div>
+              {cashReceivedValue > 0 && cashReceivedValue < total ? <p className="form-status error">El monto recibido no cubre el total.</p> : null}
+            </div>
+
+            <footer className="form-actions modal-form-actions">
+              <button className="ghost-button" onClick={closeCashModal} type="button">Cancelar</button>
+              <button className="positive-button" disabled={cashReceivedValue < total || cashSubmitting} onClick={() => confirmCashPayment(cashReceivedValue)} type="button">
+                {cashSubmitting ? "Registrando..." : "Registrar pago"}
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}
@@ -674,44 +1067,68 @@ function PizzaSummary({ wizard, unitPrice, additions }: { wizard: PizzaWizard; u
     <aside className="pos-wizard-summary">
       <span>{wizard.selectedSize?.size_name ?? "Selecciona tamano"}</span>
       <strong>{selectedNames}</strong>
-      {additions.length > 0 ? <small>{additions.map((addition) => `+ ${addition.name} x ${addition.quantity}`).join(", ")}</small> : null}
+      {additions.length > 0 ? <small>{additions.map(additionLabel).join(", ")}</small> : null}
       <b>{formatCop(unitPrice)}</b>
     </aside>
   );
 }
 
-function FinalPizzaSummary({ wizard, unitPrice, additions }: { wizard: PizzaWizard; unitPrice: number; additions: CartAddition[] }) {
+function FinalPizzaSummary({
+  wizard,
+  unitPrice,
+  additions,
+  customizationAvailable,
+  removedNotes,
+  onChangeQuantity,
+  onOpenIngredients
+}: {
+  wizard: PizzaWizard;
+  unitPrice: number;
+  additions: CartAddition[];
+  customizationAvailable: boolean;
+  removedNotes: string;
+  onChangeQuantity: (quantity: number) => void;
+  onOpenIngredients: () => void;
+}) {
   const total = unitPrice * wizard.quantity;
   return (
     <section className="pos-final-summary">
       <div className="pos-final-hero">
-        <ProductImage alt={wizard.flavor.flavor_name} src={wizard.flavor.image_src} />
+        <PizzaFinalVisual wizard={wizard} />
         <div>
-          <span>Sabor</span>
-          <strong>{wizard.flavor.flavor_name}</strong>
-          {wizard.mode === "half" && wizard.secondFlavor ? <small>Mitad con {wizard.secondFlavor.flavor_name}</small> : <small>Pizza entera</small>}
+          <span>{wizard.mode === "half" ? "Mitad y mitad" : "Pizza entera"}</span>
+          <strong>{wizard.mode === "half" && wizard.secondFlavor ? `${wizard.flavor.flavor_name} / ${wizard.secondFlavor.flavor_name}` : wizard.flavor.flavor_name}</strong>
+          <small>{wizard.selectedSize?.size_name ?? "Sin tamano"}</small>
         </div>
       </div>
       <div className="pos-final-grid">
-        <span><small>Tamano</small><strong>{wizard.selectedSize?.size_name ?? "Sin tamano"}</strong></span>
-        <span><small>Tipo</small><strong>{wizard.mode === "half" ? "Mitad y mitad" : "Entera"}</strong></span>
-        <span><small>Cantidad</small><strong>{wizard.quantity}</strong></span>
         <span><small>Precio unidad</small><strong>{formatCop(unitPrice)}</strong></span>
+        <span className="pos-final-quantity-card">
+          <small>Cantidad</small>
+          <div className="pos-final-quantity-control">
+            <button onClick={() => onChangeQuantity(Math.max(1, wizard.quantity - 1))} type="button"><Minus size={18} /></button>
+            <strong>{wizard.quantity}</strong>
+            <button onClick={() => onChangeQuantity(wizard.quantity + 1)} type="button"><Plus size={18} /></button>
+          </div>
+        </span>
       </div>
       {additions.length > 0 ? (
         <div className="pos-final-list">
           <small>Adiciones</small>
           {additions.map((addition) => (
-            <span key={addition.id}>+ {addition.name} x {addition.quantity}</span>
+            <span key={addition.key}>{additionLabel(addition)} · {formatCop(addition.quantity * addition.unit_price_cop)}</span>
           ))}
         </div>
       ) : null}
-      {wizard.removeNotes ? (
-        <div className="pos-final-list">
-          <small>Retirar</small>
-          <span>{wizard.removeNotes}</span>
+      <div className="pos-final-customize-row">
+        <div>
+          <small>Ingredientes</small>
+          <strong>{removedNotes || "Sin cambios"}</strong>
         </div>
-      ) : null}
+        <button className="ghost-button" disabled={!customizationAvailable} onClick={onOpenIngredients} type="button">
+          Personalizar pizza
+        </button>
+      </div>
       <div className="pos-final-total">
         <span>Total pizza</span>
         <strong>{formatCop(total)}</strong>
@@ -720,17 +1137,176 @@ function FinalPizzaSummary({ wizard, unitPrice, additions }: { wizard: PizzaWiza
   );
 }
 
-function selectedAdditionItems(selected: Record<string, number>, compatible: PosAdditionOption[]) {
+function PizzaFinalVisual({ wizard }: { wizard: PizzaWizard }) {
+  if (wizard.mode !== "half" || !wizard.secondFlavor) {
+    return <ProductImage alt={wizard.flavor.flavor_name} src={wizard.flavor.image_src} />;
+  }
+  return (
+    <div className="pos-half-visual" aria-label={`${wizard.flavor.flavor_name} y ${wizard.secondFlavor.flavor_name}`}>
+      <span>
+        <ProductImage alt={wizard.flavor.flavor_name} src={wizard.flavor.image_src} />
+      </span>
+      <span>
+        <ProductImage alt={wizard.secondFlavor.flavor_name} src={wizard.secondFlavor.image_src} />
+      </span>
+    </div>
+  );
+}
+
+function PizzaCustomizationModal({
+  activeScopes,
+  additions,
+  choices,
+  selectedAdditions,
+  removedKeys,
+  wizard,
+  onChangeAddition,
+  onChangeScope,
+  onToggle,
+  onClose
+}: {
+  activeScopes: Record<string, AdditionScope>;
+  additions: PosAdditionOption[];
+  choices: PizzaIngredientChoice[];
+  selectedAdditions: Record<string, number>;
+  removedKeys: string[];
+  wizard: PizzaWizard;
+  onChangeAddition: (id: string, scope: AdditionScope, quantity: number) => void;
+  onChangeScope: (id: string, scope: AdditionScope) => void;
+  onToggle: (key: string) => void;
+  onClose: () => void;
+}) {
+  const firstChoices = choices.filter((choice) => choice.side === "first");
+  const secondChoices = choices.filter((choice) => choice.side === "second");
+  const groups =
+    wizard.mode === "half" && wizard.secondFlavor
+      ? [
+          { title: wizard.flavor.flavor_name, choices: firstChoices },
+          { title: wizard.secondFlavor.flavor_name, choices: secondChoices }
+        ]
+      : [{ title: wizard.flavor.flavor_name, choices: firstChoices }];
+
+  return (
+    <div className="modal-backdrop nested-modal-backdrop" role="presentation">
+      <section aria-label="Personalizar pizza" aria-modal="true" className="modal-panel pos-ingredient-modal" role="dialog">
+        <header className="modal-header">
+          <div>
+            <strong>Personalizar pizza</strong>
+            <span>Quita ingredientes o agrega adiciones.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="pos-ingredient-modal-body">
+          <section className="pos-customization-section">
+            <h4>Quitar ingredientes</h4>
+            {choices.length === 0 ? (
+              <p className="empty-state">Sin ingredientes removibles.</p>
+            ) : (
+              <div className={groups.length > 1 ? "pos-ingredient-columns" : "pos-ingredient-columns single"}>
+                {groups.map((group) => (
+                  <section className="pos-ingredient-group" key={group.title}>
+                    <h4>{group.title}</h4>
+                    <div className="pos-ingredient-options">
+                      {group.choices.map((choice) => {
+                        const checked = !removedKeys.includes(choice.key);
+                        return (
+                          <label className={checked ? "pos-ingredient-option selected" : "pos-ingredient-option"} key={choice.key}>
+                            <input checked={checked} onChange={() => onToggle(choice.key)} type="checkbox" />
+                            <span>{choice.source_name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="pos-customization-section">
+            <h4>Agregar adiciones</h4>
+            {additions.length === 0 ? (
+              <p className="empty-state">Sin adiciones compatibles.</p>
+            ) : (
+              <div className="pos-addition-grid">
+                {additions.map((addition) => {
+                  const scope = wizard.mode === "half" ? activeScopes[addition.id] ?? "whole" : "whole";
+                  const selected = selectedAdditions[additionSelectionKey(addition.id, scope)] ?? 0;
+                  const totalSelected = (["whole", "left", "right"] as AdditionScope[]).reduce(
+                    (sum, item) => sum + (selectedAdditions[additionSelectionKey(addition.id, item)] ?? 0),
+                    0
+                  );
+                  return (
+                    <article className={totalSelected > 0 ? "pos-addition-card active" : "pos-addition-card"} key={addition.id}>
+                      <ProductImage alt={addition.name} src={addition.image_src} />
+                      <span>{addition.name}</span>
+                      <strong>{formatCop(addition.price_cop)}</strong>
+                      {wizard.mode === "half" && wizard.secondFlavor ? (
+                        <div className="pos-addition-scope-chips" aria-label={`Alcance de ${addition.name}`}>
+                          {([
+                            ["whole", "Toda"],
+                            ["left", "Izquierda"],
+                            ["right", "Derecha"]
+                          ] as Array<[AdditionScope, string]>).map(([value, label]) => (
+                            <button
+                              className={scope === value ? "active" : ""}
+                              key={value}
+                              onClick={() => onChangeScope(addition.id, value)}
+                              type="button"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="pos-addition-controls">
+                        <button disabled={selected === 0} onClick={() => onChangeAddition(addition.id, scope, Math.max(0, selected - 1))} type="button">
+                          <Minus size={16} />
+                        </button>
+                        <b>{selected}</b>
+                        <button disabled={totalSelected >= addition.max_allowed} onClick={() => onChangeAddition(addition.id, scope, selected + 1)} type="button">
+                          <Plus size={16} />
+                        </button>
+                      </div>
+                      <small>Max {addition.max_allowed}{totalSelected > 0 ? ` · Total ${totalSelected}` : ""}</small>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+        <footer className="form-actions modal-form-actions">
+          <button className="positive-button" onClick={onClose} type="button">Listo</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function selectedAdditionItems(selected: Record<string, number>, compatible: PosAdditionOption[], wizard: PizzaWizard | null) {
   return Object.entries(selected)
-    .map(([id, quantity]) => {
+    .map(([key, quantity]) => {
+      const [id, scopeValue] = key.split(":");
+      const scope = (scopeValue === "left" || scopeValue === "right" || scopeValue === "whole" ? scopeValue : "whole") as AdditionScope;
       const addition = compatible.find((item) => item.id === id);
       if (!addition || quantity <= 0) return null;
+      const scopeLabel =
+        wizard?.mode === "half" && wizard.secondFlavor
+          ? scope === "left"
+            ? `mitad ${wizard.flavor.flavor_name}`
+            : scope === "right"
+              ? `mitad ${wizard.secondFlavor.flavor_name}`
+              : undefined
+          : undefined;
       return {
+        key,
         id: addition.id,
         name: addition.name,
         sku: addition.sku,
         quantity,
-        unit_price_cop: addition.price_cop
+        unit_price_cop: addition.price_cop,
+        scope,
+        scope_label: scopeLabel
       };
     })
     .filter(Boolean) as CartAddition[];
