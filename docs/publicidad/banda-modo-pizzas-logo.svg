@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420mm" height="150mm" viewBox="0 0 420 150" role="img" aria-label="Logo Modo Pizzas">
+  <title>Logo Modo Pizzas</title>
+  <defs>
+    <style>
+      .word { font-family: Arial Black, Impact, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+      .tag { font-family: Arial, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+    </style>
+  </defs>
+  <rect width="420" height="150" fill="#151513"/>
+  <g transform="translate(20 18)">
+    <circle cx="57" cy="57" r="55" fill="#fff4e3"/>
+    <circle cx="57" cy="57" r="48" fill="#f2b94d"/>
+    <path d="M57 13 L62 59 L103 36 A48 48 0 0 0 57 13 Z" fill="#f7d27a"/>
+    <path d="M57 13 L62 59 L103 36" fill="none" stroke="#7a351d" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="39" cy="39" r="7" fill="#c43d2f"/>
+    <circle cx="71" cy="34" r="6" fill="#c43d2f"/>
+    <circle cx="74" cy="75" r="8" fill="#c43d2f"/>
+    <circle cx="43" cy="76" r="5" fill="#216869"/>
+    <circle cx="88" cy="55" r="5" fill="#216869"/>
+    <path d="M26 109 C46 120 71 122 91 111" fill="none" stroke="#151513" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <text class="word" x="143" y="76" font-size="50" fill="#fff4e3">modo</text>
+  <text class="word" x="142" y="119" font-size="45" fill="#f2b94d">pizzas</text>
+  <rect x="308" y="29" width="10" height="93" fill="#c43d2f"/>
+  <text class="tag" x="333" y="64" font-size="17" fill="#ffffff">HOT</text>
+  <text class="tag" x="333" y="89" font-size="17" fill="#ffffff">FRESH</text>
+  <text class="tag" x="333" y="114" font-size="17" fill="#ffffff">NOW</text>
+</svg>

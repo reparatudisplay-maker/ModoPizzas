@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180mm" height="150mm" viewBox="0 0 1180 150">
+  <title>Adhesivo Modo Pizzas 118 x 15 cm</title>
+  <rect width="1180" height="150" fill="#040404"/>
+  <rect y="5" width="1180" height="140" fill="#040404"/>
+  <path d="M92 87 C124 75 166 75 205 84 C242 92 290 87 326 75 L326 122 C274 138 205 128 152 132 C120 134 96 127 70 119 Z" fill="#740a0f"/>
+  <path d="M940 89 C978 76 1039 79 1080 86 C1125 94 1146 89 1170 78 L1170 130 C1121 143 1064 135 1004 138 C974 139 946 133 920 124 Z" fill="#740a0f"/>
+  <image href="assets/pizza-porcion.png" x="676" y="13" width="245" height="125" preserveAspectRatio="xMidYMid meet"/>
+  <text x="67" y="61" font-family="Impact, Arial Black, sans-serif" font-size="37" fill="#f8f6ef">PIZZA</text>
+  <text x="60" y="95" font-family="Impact, Arial Black, sans-serif" font-size="47" fill="#da1416">CALIENTE</text>
+  <text x="132" y="121" font-family="Arial Black, Arial, sans-serif" font-size="24" fill="#f8f6ef">PIDE AQUI &gt;&gt;</text>
+  <text x="517" y="61" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="35" fill="#f8f6ef">RECIEN SALIDAS</text>
+  <text x="530" y="99" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="52" fill="#da1416">DEL HORNO</text>
+  <line x1="364" y1="107" x2="680" y2="104" stroke="#da1416" stroke-width="3"/>
+  <text x="575" y="131" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="13" fill="#f8f6ef">MASA FRESCA  |  INGREDIENTES SELECCIONADOS  |  HECHA CON PASION</text>
+  <rect x="928" y="31" width="228" height="92" rx="3" fill="none" stroke="#da1416" stroke-width="2.5"/>
+  <text x="949" y="65" font-family="Impact, Arial Black, sans-serif" font-size="42" fill="#f8f6ef">ELIGE TU</text>
+  <text x="946" y="99" font-family="Impact, Arial Black, sans-serif" font-size="49" fill="#da1416">FAVORITA</text>
+  <text x="958" y="122" font-family="Arial Black, Arial, sans-serif" font-size="18" fill="#f8f6ef">MAS QUESO, MAS SABOR</text>
+</svg>

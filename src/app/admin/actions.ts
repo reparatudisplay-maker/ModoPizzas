@@ -2450,6 +2450,234 @@ export async function sendPasswordRecovery(_previousState: FormActionState, form
   return { status: "success", message: "Recuperacion enviada correctamente." };
 }
 
+function getJsonValue<T>(formData: FormData, key: string, fallback: T): T {
+  const rawValue = getString(formData, key);
+  if (!rawValue) return fallback;
+  try {
+    return JSON.parse(rawValue) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function marketingStatus(value: string) {
+  return ["draft", "active", "archived"].includes(value) ? value : "draft";
+}
+
+function promotionStatus(value: string) {
+  return ["draft", "active", "paused", "expired"].includes(value) ? value : "draft";
+}
+
+function revalidateMarketing() {
+  revalidatePath("/panel/marketing/pantallas");
+  revalidatePath("/panel/marketing/promociones");
+  revalidatePath("/panel/configuracion");
+}
+
+export async function saveMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const id = getOptionalString(formData, "id");
+  await requireUserPermission(supabase, id ? "marketing_pantallas.edit" : "marketing_pantallas.create");
+
+  const userResult = await supabase.auth.getUser();
+  const userId = userResult.data.user?.id ?? null;
+  const name = upperText(getString(formData, "name"));
+  const width = getInteger(formData, "width_px", 1920);
+  const height = getInteger(formData, "height_px", 1080);
+  const scenes = getJsonValue<
+    Array<{
+      id?: string;
+      name: string;
+      sort_order: number;
+      duration_seconds: number;
+      background: Record<string, unknown>;
+      transition: string;
+      elements: unknown[];
+    }>
+  >(formData, "scenes", []);
+
+  if (!name) return { status: "error", message: "Ingresa el nombre del proyecto." };
+  if (width <= 0 || height <= 0) return { status: "error", message: "La resolucion debe ser mayor a cero." };
+  if (scenes.length === 0) return { status: "error", message: "Agrega al menos una escena." };
+  if (scenes.some((scene) => Number(scene.duration_seconds) <= 0)) return { status: "error", message: "Cada escena necesita duracion mayor a cero." };
+
+  const durationTotal = scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds ?? 0), 0);
+  const payload = {
+    name,
+    resolution_preset: getString(formData, "resolution_preset") === "1280x720" ? "1280x720" : getString(formData, "resolution_preset") === "custom" ? "custom" : "1920x1080",
+    width_px: width,
+    height_px: height,
+    orientation: height > width ? "portrait" : "landscape",
+    duration_total_seconds: durationTotal,
+    status: marketingStatus(getString(formData, "status")),
+    updated_at: new Date().toISOString(),
+    updated_by: userId
+  };
+
+  const query = id
+    ? supabase.from("marketing_screen_projects").update(payload).eq("id", id).select("id").single()
+    : supabase
+        .from("marketing_screen_projects")
+        .insert({ ...payload, created_by: userId })
+        .select("id")
+        .single();
+  const { data: project, error } = await query;
+  if (error || !project) return { status: "error", message: error?.message ?? "No se pudo guardar el proyecto." };
+
+  const projectId = project.id;
+  const { error: deleteError } = await supabase.from("marketing_screen_scenes").delete().eq("project_id", projectId);
+  if (deleteError) return { status: "error", message: deleteError.message };
+
+  const rows = scenes.map((scene, index) => ({
+    project_id: projectId,
+    name: upperText(String(scene.name || `Escena ${index + 1}`)),
+    sort_order: index + 1,
+    duration_seconds: Number(scene.duration_seconds || 8),
+    background: scene.background && typeof scene.background === "object" ? scene.background : { type: "color", value: "#17120f" },
+    transition: ["cut", "fade", "slide"].includes(scene.transition) ? scene.transition : "fade",
+    elements: Array.isArray(scene.elements) ? scene.elements : []
+  }));
+  const { error: scenesError } = await supabase.from("marketing_screen_scenes").insert(rows);
+  if (scenesError) return { status: "error", message: scenesError.message };
+
+  revalidateMarketing();
+  return { status: "success", message: "Proyecto guardado correctamente." };
+}
+
+export async function duplicateMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "marketing_pantallas.create");
+  const id = getString(formData, "id");
+  const name = upperText(getString(formData, "name"));
+  if (!id || !name) return { status: "error", message: "Selecciona un proyecto y un nuevo nombre." };
+
+  const [projectResult, scenesResult] = await Promise.all([
+    supabase.from("marketing_screen_projects").select("resolution_preset, width_px, height_px, orientation, duration_total_seconds, status, export_settings").eq("id", id).single(),
+    supabase.from("marketing_screen_scenes").select("name, sort_order, duration_seconds, background, transition, elements").eq("project_id", id).order("sort_order")
+  ]);
+  if (projectResult.error) return { status: "error", message: projectResult.error.message };
+  if (scenesResult.error) return { status: "error", message: scenesResult.error.message };
+
+  const userResult = await supabase.auth.getUser();
+  const userId = userResult.data.user?.id ?? null;
+  const { data: newProject, error } = await supabase
+    .from("marketing_screen_projects")
+    .insert({ ...projectResult.data, name, status: "draft", created_by: userId, updated_by: userId })
+    .select("id")
+    .single();
+  if (error || !newProject) return { status: "error", message: error?.message ?? "No se pudo duplicar." };
+
+  const rows = (scenesResult.data ?? []).map((scene) => ({ ...scene, project_id: newProject.id }));
+  if (rows.length > 0) {
+    const { error: scenesError } = await supabase.from("marketing_screen_scenes").insert(rows);
+    if (scenesError) return { status: "error", message: scenesError.message };
+  }
+  revalidateMarketing();
+  return { status: "success", message: "Proyecto duplicado correctamente." };
+}
+
+export async function deleteMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "marketing_pantallas.delete");
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Proyecto no valido." };
+  const { error } = await supabase.from("marketing_screen_projects").delete().eq("id", id);
+  if (error) return { status: "error", message: error.message };
+  revalidateMarketing();
+  return { status: "success", message: "Proyecto eliminado correctamente." };
+}
+
+export async function saveMarketingPromotion(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const id = getOptionalString(formData, "id");
+  await requireUserPermission(supabase, id ? "marketing_promociones.edit" : "marketing_promociones.create");
+
+  const userResult = await supabase.auth.getUser();
+  const userId = userResult.data.user?.id ?? null;
+  const name = upperText(getString(formData, "name"));
+  const mainText = upperText(getString(formData, "main_text"));
+  const previousImage = getOptionalString(formData, "previous_image_url");
+  const removeImage = getBoolean(formData, "remove_image");
+  const imageFile = getFormFile(formData, "image");
+  let imageUrl = removeImage ? null : previousImage;
+
+  if (!name) return { status: "error", message: "Ingresa el nombre de la promocion." };
+  if (!mainText) return { status: "error", message: "Ingresa el texto principal." };
+
+  try {
+    if (imageFile) imageUrl = await uploadProductImage(supabase, imageFile, "marketing");
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la imagen." };
+  }
+
+  const payload = {
+    name,
+    image_url: imageUrl,
+    main_text: mainText,
+    secondary_text: upperText(getOptionalString(formData, "secondary_text")),
+    normal_price_cop: getOptionalString(formData, "normal_price_cop") ? getDecimal(formData, "normal_price_cop", 0) : null,
+    promo_price_cop: getOptionalString(formData, "promo_price_cop") ? getDecimal(formData, "promo_price_cop", 0) : null,
+    starts_at: getOptionalString(formData, "starts_at"),
+    ends_at: getOptionalString(formData, "ends_at"),
+    status: promotionStatus(getString(formData, "status")),
+    is_active: getBoolean(formData, "is_active"),
+    updated_at: new Date().toISOString(),
+    updated_by: userId
+  };
+
+  const query = id
+    ? supabase.from("marketing_promotions").update(payload).eq("id", id).select("id").single()
+    : supabase.from("marketing_promotions").insert({ ...payload, created_by: userId }).select("id").single();
+  const { data: promotion, error } = await query;
+  if (error || !promotion) return { status: "error", message: error?.message ?? "No se pudo guardar la promocion." };
+
+  const promotionId = promotion.id;
+  const pizzaPriceIds = getJsonStringArray(formData, "pizza_price_ids");
+  const saleProductIds = getJsonStringArray(formData, "sale_product_ids");
+  const projectIds = getJsonStringArray(formData, "project_ids");
+  const [pizzaDelete, saleDelete, projectDelete] = await Promise.all([
+    supabase.from("marketing_promotion_pizza_prices").delete().eq("promotion_id", promotionId),
+    supabase.from("marketing_promotion_sale_products").delete().eq("promotion_id", promotionId),
+    supabase.from("marketing_promotion_screen_projects").delete().eq("promotion_id", promotionId)
+  ]);
+  const relationError = pizzaDelete.error ?? saleDelete.error ?? projectDelete.error;
+  if (relationError) return { status: "error", message: relationError.message };
+
+  const inserts = [];
+  if (pizzaPriceIds.length > 0) {
+    inserts.push(supabase.from("marketing_promotion_pizza_prices").insert(pizzaPriceIds.map((pizza_price_config_id) => ({ promotion_id: promotionId, pizza_price_config_id }))));
+  }
+  if (saleProductIds.length > 0) {
+    inserts.push(supabase.from("marketing_promotion_sale_products").insert(saleProductIds.map((inventory_item_id) => ({ promotion_id: promotionId, inventory_item_id }))));
+  }
+  if (projectIds.length > 0) {
+    inserts.push(supabase.from("marketing_promotion_screen_projects").insert(projectIds.map((project_id) => ({ promotion_id: promotionId, project_id }))));
+  }
+  const results = await Promise.all(inserts);
+  const insertError = results.find((result) => result.error)?.error;
+  if (insertError) return { status: "error", message: insertError.message };
+
+  if ((removeImage || imageFile) && previousImage && previousImage !== imageUrl) {
+    await removeStoredImageIfUnreferenced(supabase, previousImage);
+  }
+
+  revalidateMarketing();
+  return { status: "success", message: "Promocion guardada correctamente." };
+}
+
+export async function deleteMarketingPromotion(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "marketing_promociones.delete");
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Promocion no valida." };
+  const { data: promotion } = await supabase.from("marketing_promotions").select("image_url").eq("id", id).single();
+  const { error } = await supabase.from("marketing_promotions").delete().eq("id", id);
+  if (error) return { status: "error", message: error.message };
+  await removeStoredImageIfUnreferenced(supabase, promotion?.image_url ?? null);
+  revalidateMarketing();
+  return { status: "success", message: "Promocion eliminada correctamente." };
+}
+
 export async function assignUserRole(formData: FormData) {
   const userId = getString(formData, "user_id");
   const role = getString(formData, "role");

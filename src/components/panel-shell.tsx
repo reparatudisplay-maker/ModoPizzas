@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChefHat, ChevronDown, ClipboardList, Factory, Home, Menu, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog } from "lucide-react";
+import { ChefHat, ChevronDown, ClipboardList, Factory, Home, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -28,6 +28,8 @@ type PanelShellProps = {
     | "menu-precios-adiciones"
     | "menu-precios-pizzas"
     | "menu-precios-productos"
+    | "marketing-pantallas"
+    | "marketing-promociones"
     | "pedidos-nuevo"
     | "pedidos-listado"
     | "cocina"
@@ -106,6 +108,10 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: isManager },
     { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: isManager }
   ];
+  const marketingLinks: NavLink[] = [
+    { key: "marketing-pantallas", href: "/panel/marketing/pantallas", label: "Pantallas", icon: MonitorPlay, show: isManager },
+    { key: "marketing-promociones", href: "/panel/marketing/promociones", label: "Promociones", icon: Megaphone, show: isManager }
+  ];
   const productionLinks: NavLink[] = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: isManager },
     { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: isManager }
@@ -119,6 +125,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const kitchenActive = kitchenLinks.some((link) => link.key === active);
   const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
   const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
+  const marketingActive = marketingLinks.some((link) => link.key === active);
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
   const settingsActive = adminLinks.some((link) => link.key === active);
 
@@ -221,6 +228,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { kind: "group", key: "kitchen", label: "Cocina", title: "Cocina", icon: ChefHat, show: canUseKitchen, active: kitchenActive, links: kitchenLinks },
     ...inventoryLinks.map((link) => ({ kind: "link" as const, key: link.key, link })),
     { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: isManager, active: menuActive, links: [], nested: menuRootItems },
+    { kind: "group", key: "marketing", label: "Marketing", title: "Marketing", icon: MonitorPlay, show: isManager, active: marketingActive, links: marketingLinks },
     { kind: "group", key: "production", label: "Produccion", title: "Produccion", icon: Factory, show: isManager, active: productionActive, links: productionLinks },
     { kind: "group", key: "settings", label: "Configuracion", title: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager, active: settingsActive, links: adminLinks }
   ];

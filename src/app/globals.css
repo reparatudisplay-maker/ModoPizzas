@@ -5,6 +5,8 @@
   --muted: #696760;
   --panel: #ffffff;
   --panel-strong: #f0eee6;
+  --surface: #ffffff;
+  --surface-muted: #f0eee6;
   --border: #dfd9ca;
   --accent: #c43d2f;
   --accent-foreground: #ffffff;
@@ -17,6 +19,321 @@
   --shadow: 0 18px 60px rgba(32, 32, 29, 0.12);
 }
 
+.marketing-editor-shell {
+  display: grid;
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr) minmax(220px, 280px);
+  gap: 14px;
+  min-height: calc(100vh - 40px);
+}
+
+.marketing-projects-panel,
+.marketing-elements-panel,
+.marketing-properties-panel,
+.marketing-export-panel,
+.marketing-editor-main,
+.marketing-promo-card,
+.marketing-toolbar {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.marketing-projects-panel,
+.marketing-elements-panel,
+.marketing-properties-panel,
+.marketing-export-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.marketing-panel-header,
+.marketing-editor-topbar,
+.marketing-toolbar,
+.marketing-price-row,
+.marketing-promo-card,
+.marketing-promo-body,
+.marketing-relation-picker,
+.marketing-image-picker,
+.marketing-form-split,
+.marketing-promotion-form {
+  display: flex;
+  gap: 10px;
+}
+
+.marketing-panel-header,
+.marketing-editor-topbar,
+.marketing-toolbar,
+.marketing-price-row {
+  align-items: center;
+}
+
+.marketing-panel-header {
+  justify-content: space-between;
+}
+
+.marketing-project-list,
+.marketing-template-list,
+.marketing-data-source-list {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.marketing-project-list button,
+.marketing-template-list button,
+.marketing-data-source-list button,
+.marketing-elements-panel > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.marketing-project-list button.active,
+.marketing-project-list button:hover,
+.marketing-template-list button:hover,
+.marketing-data-source-list button:hover,
+.marketing-elements-panel > button:hover,
+.marketing-timeline button.active {
+  border-color: var(--accent);
+}
+
+.marketing-project-list small,
+.marketing-data-source-list small,
+.marketing-promo-body small,
+.marketing-export-panel p {
+  color: var(--muted);
+}
+
+.marketing-editor-main {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.marketing-editor-topbar {
+  flex-wrap: wrap;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.marketing-editor-topbar input:first-child {
+  min-width: min(280px, 100%);
+  flex: 1;
+  font-weight: 800;
+}
+
+.marketing-editor-topbar input[type="number"] {
+  width: 96px;
+}
+
+.marketing-editor-body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 210px;
+  gap: 10px;
+  padding: 10px;
+  min-height: 560px;
+}
+
+.marketing-canvas-wrap {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow: auto;
+}
+
+.marketing-canvas {
+  position: relative;
+  width: min(100%, 900px);
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 26px 90px rgba(0, 0, 0, .28);
+}
+
+.marketing-canvas-element {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  cursor: move;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.marketing-canvas-element.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.marketing-canvas-element span {
+  width: 100%;
+  line-height: 1.05;
+  padding: .1em;
+}
+
+.marketing-properties-panel label,
+.marketing-elements-panel label {
+  display: grid;
+  gap: 5px;
+}
+
+.marketing-property-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.marketing-timeline {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+}
+
+.marketing-timeline button {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  gap: 7px;
+  align-items: center;
+  min-width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--surface-muted);
+  color: var(--text);
+  text-align: left;
+}
+
+.marketing-timeline .add-scene-button {
+  min-width: 120px;
+  display: flex;
+}
+
+.marketing-export-panel p {
+  line-height: 1.45;
+}
+
+.marketing-preview-modal {
+  width: min(96vw, 1180px);
+}
+
+.marketing-preview-stage .marketing-canvas-wrap {
+  min-height: 64vh;
+}
+
+.marketing-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.marketing-promo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.marketing-promo-card {
+  align-items: stretch;
+  padding: 10px;
+}
+
+.marketing-promo-card > img,
+.marketing-promo-card > span,
+.marketing-image-preview {
+  width: 150px;
+  min-height: 112px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-muted);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  overflow: hidden;
+  position: relative;
+}
+
+.marketing-promo-body,
+.marketing-promotion-form,
+.marketing-image-picker,
+.marketing-relation-picker {
+  flex-direction: column;
+}
+
+.marketing-price-row {
+  justify-content: space-between;
+}
+
+.marketing-price-row span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.marketing-price-row b {
+  color: var(--success);
+}
+
+.marketing-modal {
+  width: min(96vw, 980px);
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.marketing-promotion-form {
+  overflow: auto;
+  padding: 14px;
+}
+
+.marketing-form-split {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.marketing-relation-picker {
+  flex: 1 1 220px;
+  min-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+@media (max-width: 1100px) {
+  .marketing-editor-shell,
+  .marketing-editor-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .marketing-editor-topbar > *,
+  .marketing-toolbar > * {
+    width: 100%;
+  }
+
+  .marketing-promo-card {
+    flex-direction: column;
+  }
+
+  .marketing-promo-card > img,
+  .marketing-promo-card > span,
+  .marketing-image-preview {
+    width: 100%;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
@@ -25,6 +342,8 @@
     --muted: #b7aea0;
     --panel: #201f1b;
     --panel-strong: #2b2924;
+    --surface: #201f1b;
+    --surface-muted: #2b2924;
     --border: #3e392f;
     --accent: #e45845;
     --accent-foreground: #1a100e;
@@ -45,6 +364,8 @@
   --muted: #696760;
   --panel: #ffffff;
   --panel-strong: #f0eee6;
+  --surface: #ffffff;
+  --surface-muted: #f0eee6;
   --border: #dfd9ca;
   --accent: #c43d2f;
   --accent-foreground: #ffffff;
@@ -64,6 +385,8 @@
   --muted: #b7aea0;
   --panel: #201f1b;
   --panel-strong: #2b2924;
+  --surface: #201f1b;
+  --surface-muted: #2b2924;
   --border: #3e392f;
   --accent: #e45845;
   --accent-foreground: #1a100e;

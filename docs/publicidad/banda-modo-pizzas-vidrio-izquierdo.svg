@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180mm" height="150mm" viewBox="0 0 1180 150" role="img" aria-label="Banda publicitaria izquierda para Modo Pizzas">
+  <title>Banda izquierda - Modo Pizzas</title>
+  <desc>Pieza de 118 cm por 15 cm para vidrio izquierdo, con marca, promesa y flecha hacia la puerta.</desc>
+  <defs>
+    <style>
+      .word { font-family: Arial Black, Impact, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+      .headline { font-family: Arial Black, Impact, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+      .copy { font-family: Arial, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+    </style>
+    <pattern id="pepper-left" width="72" height="48" patternUnits="userSpaceOnUse">
+      <circle cx="14" cy="16" r="4" fill="#151513" opacity="0.18"/>
+      <circle cx="51" cy="34" r="3" fill="#151513" opacity="0.13"/>
+    </pattern>
+  </defs>
+  <rect width="1180" height="150" fill="#151513"/>
+  <rect x="0" y="7" width="1180" height="136" fill="#c43d2f"/>
+  <path d="M0 7 H1180 V36 C1019 33 926 77 777 58 C639 40 540 14 398 45 C236 80 137 47 0 73 Z" fill="#f2b94d"/>
+  <path d="M0 113 C124 82 220 125 354 97 C494 68 586 116 734 84 C864 56 958 86 1080 66 C1118 60 1147 51 1180 44 V150 H0 Z" fill="#151513"/>
+  <rect width="1180" height="150" fill="url(#pepper-left)"/>
+  <path d="M18 18 H1162 M18 132 H1162" stroke="#fff4e3" stroke-width="3" stroke-linecap="round" opacity="0.95"/>
+  <g transform="translate(34 25)">
+    <circle cx="50" cy="50" r="49" fill="#fff4e3"/>
+    <circle cx="50" cy="50" r="42" fill="#f2b94d"/>
+    <path d="M50 10 L55 51 L91 30 A42 42 0 0 0 50 10 Z" fill="#f7d27a"/>
+    <path d="M50 10 L55 51 L91 30" fill="none" stroke="#7a351d" stroke-width="3.5" stroke-linecap="round"/>
+    <circle cx="34" cy="35" r="6.5" fill="#c43d2f"/>
+    <circle cx="64" cy="31" r="5.5" fill="#c43d2f"/>
+    <circle cx="67" cy="68" r="7" fill="#c43d2f"/>
+    <circle cx="37" cy="70" r="4.8" fill="#216869"/>
+    <circle cx="80" cy="50" r="4.8" fill="#216869"/>
+    <path d="M23 95 C41 106 65 108 84 97" fill="none" stroke="#151513" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <text class="word" x="148" y="69" font-size="53" fill="#fff4e3">modo</text>
+  <text class="word" x="334" y="69" font-size="53" fill="#ffffff">pizzas</text>
+  <text class="headline" x="148" y="116" font-size="41" fill="#f2b94d">PIZZA HECHA AL MOMENTO</text>
+  <g transform="translate(770 33)">
+    <rect x="0" y="0" width="318" height="38" rx="19" fill="#fff4e3"/>
+    <text class="copy" x="24" y="27" font-size="18" fill="#151513">MASA FRESCA</text>
+    <circle cx="152" cy="19" r="4" fill="#c43d2f"/>
+    <text class="copy" x="172" y="27" font-size="18" fill="#151513">QUESO FUNDIDO</text>
+  </g>
+  <g transform="translate(890 84)">
+    <text class="copy" x="0" y="31" font-size="24" fill="#fff4e3">ENTRA POR AQUI</text>
+    <path d="M207 22 H279 M255 0 L283 22 L255 44" fill="none" stroke="#f2b94d" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180mm" height="150mm" viewBox="0 0 1180 150" role="img" aria-label="Banda publicitaria derecha para Modo Pizzas">
+  <title>Banda derecha - Modo Pizzas</title>
+  <desc>Pieza de 118 cm por 15 cm para vidrio derecho, con llamado a la accion y flecha hacia la puerta.</desc>
+  <defs>
+    <style>
+      .headline { font-family: Arial Black, Impact, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+      .copy { font-family: Arial, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+      .word { font-family: Arial Black, Impact, Helvetica, sans-serif; font-weight: 900; letter-spacing: 0; }
+    </style>
+    <pattern id="pepper-right" width="68" height="52" patternUnits="userSpaceOnUse">
+      <circle cx="22" cy="18" r="4" fill="#151513" opacity="0.16"/>
+      <circle cx="58" cy="39" r="3" fill="#151513" opacity="0.12"/>
+    </pattern>
+  </defs>
+  <rect width="1180" height="150" fill="#151513"/>
+  <rect x="0" y="7" width="1180" height="136" fill="#c43d2f"/>
+  <path d="M0 7 H1180 V65 C1034 90 942 38 790 70 C632 103 517 43 362 76 C217 106 123 78 0 101 Z" fill="#f2b94d"/>
+  <path d="M0 119 C130 91 235 123 370 99 C522 72 640 125 794 91 C934 60 1036 89 1180 54 V150 H0 Z" fill="#151513"/>
+  <rect width="1180" height="150" fill="url(#pepper-right)"/>
+  <path d="M18 18 H1162 M18 132 H1162" stroke="#fff4e3" stroke-width="3" stroke-linecap="round" opacity="0.95"/>
+  <g transform="translate(38 54)">
+    <path d="M75 22 H0 M28 0 L0 22 L28 44" fill="none" stroke="#f2b94d" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="copy" x="100" y="31" font-size="25" fill="#fff4e3">ENTRA Y PIDE</text>
+  </g>
+  <text class="headline" x="343" y="73" font-size="60" fill="#ffffff">ANTOJO EN</text>
+  <text class="headline" x="343" y="124" font-size="49" fill="#f2b94d">MODO PIZZA</text>
+  <g transform="translate(802 33)">
+    <rect x="0" y="0" width="248" height="84" rx="42" fill="#fff4e3"/>
+    <text class="copy" x="33" y="35" font-size="25" fill="#151513">PIDE</text>
+    <text class="copy" x="33" y="66" font-size="31" fill="#c43d2f">AQUI</text>
+  </g>
+  <g transform="translate(1063 34)">
+    <circle cx="40" cy="40" r="39" fill="#fff4e3"/>
+    <circle cx="40" cy="40" r="32" fill="#f2b94d"/>
+    <path d="M18 29 C41 16 63 18 78 31 L38 73 Z" fill="#f7d27a" stroke="#7a351d" stroke-width="3"/>
+    <circle cx="42" cy="38" r="5.5" fill="#c43d2f"/>
+    <circle cx="56" cy="50" r="5.5" fill="#c43d2f"/>
+    <circle cx="34" cy="57" r="4.5" fill="#216869"/>
+  </g>
+  <text class="word" x="940" y="136" font-size="16" fill="#fff4e3">modo pizzas</text>
+</svg>
