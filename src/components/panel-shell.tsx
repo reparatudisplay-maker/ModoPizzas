@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChefHat, ChevronDown, ClipboardList, Factory, Home, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog } from "lucide-react";
+import { Banknote, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +32,11 @@ type PanelShellProps = {
     | "marketing-promociones"
     | "pedidos-nuevo"
     | "pedidos-listado"
+    | "gastos"
+    | "gastos-categorias"
+    | "caja-estado"
+    | "caja-movimientos"
+    | "caja-cierre"
     | "cocina"
     | "produccion"
     | "produccion-preparaciones"
@@ -42,6 +47,7 @@ type PanelShellProps = {
 
 const managerRoles = new Set(["gerente", "admin_sistema"]);
 const orderRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
+const cashRoles = new Set(["vendedor", "gerente", "admin_sistema"]);
 const kitchenRoles = new Set(["cocina", "gerente", "admin_sistema"]);
 type ActiveKey = PanelShellProps["active"];
 type NavLink = { key: ActiveKey; href: string; label: string; icon: LucideIcon; show: boolean };
@@ -71,6 +77,7 @@ function readNavOrder(storageKey: string) {
 export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
   const isManager = roleNames.some((role) => managerRoles.has(role));
   const canSell = roleNames.some((role) => orderRoles.has(role));
+  const canUseCash = roleNames.some((role) => cashRoles.has(role));
   const canUseKitchen = roleNames.some((role) => kitchenRoles.has(role));
   const isAdmin = roleNames.includes("admin_sistema");
   const orderStorageKey = `modo-pizzas-nav-order:${userEmail || "usuario"}`;
@@ -99,6 +106,15 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "pedidos-nuevo", href: "/panel/pedidos/nuevo", label: "Crear pedido", icon: ShoppingCart, show: canSell },
     { key: "pedidos-listado", href: "/panel/pedidos", label: "Listado de pedidos", icon: ClipboardList, show: canSell }
   ];
+  const expenseLinks: NavLink[] = [
+    { key: "gastos", href: "/panel/gastos", label: "Gastos", icon: HandCoins, show: isManager },
+    { key: "gastos-categorias", href: "/panel/gastos/categorias", label: "Categorias de gasto", icon: Tags, show: isManager }
+  ];
+  const cashLinks: NavLink[] = [
+    { key: "caja-estado", href: "/panel/caja", label: "Estado / Apertura", icon: Wallet, show: canUseCash },
+    { key: "caja-movimientos", href: "/panel/caja/movimientos", label: "Movimientos", icon: ReceiptText, show: canUseCash },
+    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canUseCash }
+  ];
   const kitchenLinks: NavLink[] = [
     { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canUseKitchen }
   ];
@@ -122,6 +138,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
   const ordersActive = orderLinks.some((link) => link.key === active);
+  const expensesActive = expenseLinks.some((link) => link.key === active);
+  const cashActive = cashLinks.some((link) => link.key === active);
   const kitchenActive = kitchenLinks.some((link) => link.key === active);
   const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
   const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
@@ -224,7 +242,9 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
 
   const rootItems: RootItem[] = [
     { kind: "group", key: "masters", label: "Maestros", title: "Datos maestros", icon: Tags, show: isManager, active: masterActive, links: masterLinks },
-    { kind: "group", key: "orders", label: "Pedidos / Caja", title: "Pedidos y caja", icon: ShoppingCart, show: canSell, active: ordersActive, links: orderLinks },
+    { kind: "group", key: "orders", label: "Pedidos", title: "Pedidos", icon: ShoppingCart, show: canSell, active: ordersActive, links: orderLinks },
+    { kind: "group", key: "cash", label: "Caja", title: "Caja", icon: Wallet, show: canUseCash, active: cashActive, links: cashLinks },
+    { kind: "group", key: "expenses", label: "Gastos", title: "Gastos", icon: HandCoins, show: isManager, active: expensesActive, links: expenseLinks },
     { kind: "group", key: "kitchen", label: "Cocina", title: "Cocina", icon: ChefHat, show: canUseKitchen, active: kitchenActive, links: kitchenLinks },
     ...inventoryLinks.map((link) => ({ kind: "link" as const, key: link.key, link })),
     { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: isManager, active: menuActive, links: [], nested: menuRootItems },

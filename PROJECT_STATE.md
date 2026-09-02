@@ -16,7 +16,9 @@
 - Inventario de productos comprados, producciones y ajustes/conteo fisico.
 - Produccion: Recetas/Preparaciones, Registrar produccion, lotes y KDS.
 - Menu: Recetas de pizzas, tamanos, categorias, sabores, adiciones y precios.
-- Pedidos/Caja: POS tactil, pizzas, productos, pagos en efectivo y pedidos.
+- Pedidos: POS tactil, pizzas, productos, cobro en efectivo y listado de pedidos.
+- Caja: apertura, movimientos, retiros, arqueos, cierre congelado, fondo de resguardo y pagos auditables.
+- Gastos: categorias, registro de gastos, origen de pago, anulacion y trazabilidad con caja/fondo cuando aplica.
 - Cocina: tablero KDS con estados por linea, ETA, sonido y Realtime.
 - Marketing: Pantallas y Promociones con editor visual, plantillas, preview y persistencia.
 
@@ -28,6 +30,10 @@
 - Los costos de produccion quedan congelados al registrar.
 - Productos es dato maestro; SKU de referencias se gestiona fuera del producto maestro.
 - Productos para venta se venden solo si tienen precio activo configurado.
+- Caja usa sesiones y movimientos auditables como fuente de efectivo; ventas en efectivo afectan caja una sola vez.
+- Gasto no equivale automaticamente a movimiento de caja; solo afecta caja si el origen es Caja actual.
+- Retiro a Fondo de resguardo no es gasto; baja caja y sube el fondo.
+- Cierres de caja se congelan con snapshot y no deben recalcularse silenciosamente.
 - Cocina recibe solo lineas que requieren preparacion, no productos para venta.
 - Conteo fisico genera ajustes auditables; no modifica compras ni producciones originales.
 - En modulos maestros se usan modales, filtros compactos, mayusculas y validacion antiduplicado.
@@ -37,6 +43,9 @@
 
 - Implementar exportacion MP4 real para Marketing con worker dedicado.
 - Profundizar pruebas automatizadas de permisos, POS, inventario y Realtime.
+- Completar desglose real de pago mixto para que efectivo y transferencia se registren por separado.
+- Agregar carga de comprobantes de gasto a Storage si se requiere archivo adjunto real.
+- Agregar edicion controlada de gastos abiertos si el flujo operativo lo pide; por ahora existe anulacion con reverso.
 - Completar flujos futuros: promociones aplicadas a venta, mitad y mitad avanzada, domicilios publicos y pagina publica.
 - Revisar periodicamente politicas RLS y cobertura de permisos en nuevas rutas.
 

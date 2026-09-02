@@ -2474,6 +2474,182 @@ function revalidateMarketing() {
   revalidatePath("/panel/configuracion");
 }
 
+function revalidateCashAndExpenses() {
+  revalidatePath("/panel/gastos");
+  revalidatePath("/panel/gastos/categorias");
+  revalidatePath("/panel/caja");
+  revalidatePath("/panel/caja/movimientos");
+  revalidatePath("/panel/caja/cierre");
+  revalidatePath("/panel/pedidos");
+  revalidatePath("/panel/pedidos/nuevo");
+}
+
+export async function saveExpenseCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "gastos.categories");
+
+  const id = getOptionalString(formData, "id");
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const description = upperText(getOptionalString(formData, "description"));
+  const isActive = getBoolean(formData, "is_active");
+
+  if (!name) return { status: "error", message: "Ingresa el nombre de la categoria." };
+
+  const { data: existing, error: existingError } = await supabase.from("expense_categories").select("id, name");
+  if (existingError) return { status: "error", message: existingError.message };
+  const normalizedName = normalizeMasterText(name);
+  const duplicate = (existing ?? []).find((item) => item.id !== id && normalizeMasterText(item.name ?? "") === normalizedName);
+  if (duplicate) return { status: "error", message: "Esta categoria ya esta registrada." };
+
+  if (id) {
+    const { error } = await supabase
+      .from("expense_categories")
+      .update({ name, description, is_active: isActive, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) return { status: "error", message: error.message };
+  } else {
+    const { data: maxOrder } = await supabase.from("expense_categories").select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle();
+    const { error } = await supabase.from("expense_categories").insert({
+      name,
+      description,
+      is_active: isActive,
+      sort_order: Number(maxOrder?.sort_order ?? 0) + 1
+    });
+    if (error) return { status: "error", message: error.message };
+  }
+
+  revalidateCashAndExpenses();
+  return { status: "success", message: id ? "Categoria actualizada correctamente." : "Categoria creada correctamente." };
+}
+
+export async function moveExpenseCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const id = getString(formData, "id");
+  const direction = getString(formData, "direction");
+  if (!id || !["up", "down"].includes(direction)) return { status: "error", message: "Movimiento no valido." };
+  const { error } = await supabase.rpc("move_expense_category", { p_category_id: id, p_direction: direction });
+  if (error) return { status: "error", message: error.message };
+  revalidatePath("/panel/gastos/categorias");
+  return { status: "success", message: "Orden actualizado." };
+}
+
+export async function deleteExpenseCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const id = getString(formData, "id");
+  if (!id) return { status: "error", message: "Categoria no valida." };
+  const { error } = await supabase.rpc("delete_expense_category", { p_category_id: id });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Categoria eliminada correctamente." };
+}
+
+export async function registerExpenseAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const categoryId = getString(formData, "category_id");
+  const description = upperText(getString(formData, "description")) ?? "";
+  const amountCop = getDecimal(formData, "amount_cop", 0);
+  const paymentSource = getString(formData, "payment_source");
+  const spentAt = getString(formData, "spent_at");
+
+  if (!categoryId) return { status: "error", message: "Selecciona una categoria." };
+  if (!description) return { status: "error", message: "Ingresa el concepto del gasto." };
+  if (amountCop <= 0) return { status: "error", message: "Ingresa un valor mayor que cero." };
+  if (!["cash_session", "bank_transfer", "custody_fund", "other"].includes(paymentSource)) {
+    return { status: "error", message: "Selecciona el origen del pago." };
+  }
+
+  const { error } = await supabase.rpc("register_expense", {
+    p_category_id: categoryId,
+    p_description: description,
+    p_amount_cop: amountCop,
+    p_spent_at: spentAt ? new Date(spentAt).toISOString() : new Date().toISOString(),
+    p_payment_source: paymentSource,
+    p_supplier_id: getOptionalString(formData, "supplier_id"),
+    p_beneficiary_name: upperText(getOptionalString(formData, "beneficiary_name")),
+    p_document_number: upperText(getOptionalString(formData, "document_number")),
+    p_notes: upperText(getOptionalString(formData, "notes")),
+    p_receipt_url: getOptionalString(formData, "receipt_url"),
+    p_custody_fund_id: getOptionalString(formData, "custody_fund_id")
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Gasto registrado correctamente." };
+}
+
+export async function voidExpenseAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const id = getString(formData, "id");
+  const reason = upperText(getOptionalString(formData, "reason")) ?? "ANULACION";
+  if (!id) return { status: "error", message: "Gasto no valido." };
+  const { error } = await supabase.rpc("void_expense", { p_expense_id: id, p_reason: reason });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Gasto anulado correctamente." };
+}
+
+export async function openCashSessionAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const openingCashCop = getDecimal(formData, "opening_cash_cop", 0);
+  if (openingCashCop < 0) return { status: "error", message: "La base inicial no puede ser negativa." };
+  const { error } = await supabase.rpc("open_cash_session", {
+    p_opening_cash_cop: openingCashCop,
+    p_cash_register_id: getOptionalString(formData, "cash_register_id")
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Caja abierta correctamente." };
+}
+
+export async function registerCashMovementAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const sessionId = getString(formData, "cash_session_id");
+  const movementKind = getString(formData, "movement_kind");
+  const amountCop = getDecimal(formData, "amount_cop", 0);
+  if (!sessionId) return { status: "error", message: "No hay una caja abierta seleccionada." };
+  if (!["manual_income", "manual_out", "withdrawal"].includes(movementKind)) return { status: "error", message: "Tipo de movimiento no valido." };
+  if (amountCop <= 0) return { status: "error", message: "Ingresa un valor mayor que cero." };
+  const { error } = await supabase.rpc("register_cash_movement", {
+    p_cash_session_id: sessionId,
+    p_movement_kind: movementKind,
+    p_amount_cop: amountCop,
+    p_destination: getString(formData, "destination"),
+    p_reason: upperText(getString(formData, "reason"))
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Movimiento registrado correctamente." };
+}
+
+export async function recordCashCountAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const sessionId = getString(formData, "cash_session_id");
+  const countedCashCop = getDecimal(formData, "counted_cash_cop", 0);
+  if (!sessionId) return { status: "error", message: "No hay una caja abierta seleccionada." };
+  const { error } = await supabase.rpc("record_cash_count", {
+    p_cash_session_id: sessionId,
+    p_counted_cash_cop: countedCashCop,
+    p_notes: upperText(getOptionalString(formData, "notes"))
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Arqueo registrado correctamente." };
+}
+
+export async function closeCashSessionAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const sessionId = getString(formData, "cash_session_id");
+  const countedCashCop = getDecimal(formData, "counted_cash_cop", 0);
+  if (!sessionId) return { status: "error", message: "No hay una caja abierta seleccionada." };
+  const { error } = await supabase.rpc("close_cash_session", {
+    p_cash_session_id: sessionId,
+    p_counted_cash_cop: countedCashCop,
+    p_notes: upperText(getOptionalString(formData, "notes"))
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Caja cerrada correctamente." };
+}
+
 export async function saveMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const id = getOptionalString(formData, "id");
