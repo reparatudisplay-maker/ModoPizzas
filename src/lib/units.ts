@@ -27,20 +27,29 @@ export function formatStockQuantity(value: number, unit: StockUnit) {
   const baseUnit = canonicalStockUnit(unit);
   const baseValue = unit === "kg" || unit === "l" ? value * 1000 : value;
   const formatter = new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits: 2
+    maximumFractionDigits: 3,
+    minimumFractionDigits: 0
   });
 
   if (baseUnit === "g") {
-    if (Math.abs(baseValue) < 1000) return `${formatter.format(Math.round(baseValue))} G`;
+    if (Math.abs(baseValue) < 1000) return `${formatter.format(baseValue)} G`;
     return `${formatter.format(baseValue / 1000)} KG`;
   }
 
   if (baseUnit === "ml") {
-    if (Math.abs(baseValue) < 1000) return `${formatter.format(Math.round(baseValue))} ML`;
+    if (Math.abs(baseValue) < 1000) return `${formatter.format(baseValue)} ML`;
     return `${formatter.format(baseValue / 1000)} L`;
   }
 
-  return `${formatter.format(Math.round(baseValue))} ${unitLabel("unit")}`;
+  return `${formatter.format(baseValue)} ${unitLabel("unit")}`;
+}
+
+export function formatStockQuantityInUnit(value: number, unit: StockUnit) {
+  const formatter = new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 3,
+    minimumFractionDigits: 0
+  });
+  return `${formatter.format(value)} ${unitLabel(unit)}`;
 }
 
 export function toPreferredDisplayQuantity(value: number, unit: StockUnit): { value: number; unit: StockUnit } {

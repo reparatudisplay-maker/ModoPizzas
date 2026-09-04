@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, X } from "lucide-react";
 import { registerPurchase, type FormActionState } from "@/app/admin/actions";
+import { normalizeColombianDecimalInput } from "@/lib/number-format";
 import { toPreferredDisplayQuantity } from "@/lib/units";
 
 type InventoryItem = {
@@ -80,11 +81,7 @@ function formatInteger(value: string) {
 }
 
 function formatQuantity(value: string) {
-  const clean = value.replace(/[^\d.,]/g, "").replace(/\./g, ",");
-  const [integer = "", ...decimals] = clean.split(",");
-  const decimal = decimals.join("").slice(0, 3);
-  const formattedInteger = formatInteger(integer);
-  return decimal ? `${formattedInteger},${decimal}` : formattedInteger;
+  return normalizeColombianDecimalInput(value, 3);
 }
 
 function uppercaseValue(value: string) {
@@ -368,7 +365,9 @@ export function PurchaseForm({
   const editItem = items.find((item) => item.id === editPurchase?.inventory_item_id);
   const editDisplayQuantity =
     editPurchase && editItem?.item_kind === "ingredient" && editItem.presentation_quantity === null
-      ? toPreferredDisplayQuantity(editPurchase.quantity, editPurchase.unit)
+      ? editPurchase.presentation_quantity && editPurchase.presentation_unit
+        ? { value: editPurchase.presentation_quantity, unit: editPurchase.presentation_unit }
+        : toPreferredDisplayQuantity(editPurchase.quantity, editPurchase.unit)
       : null;
   const editPresentationDisplay =
     editPurchase?.presentation_quantity && editPurchase.presentation_unit

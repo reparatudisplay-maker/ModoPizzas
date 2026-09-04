@@ -2915,7 +2915,7 @@ a {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(20, 17, 15, 0.52);
+  background: rgba(20, 17, 15, 0.38);
   padding: 18px;
 }
 
@@ -3150,6 +3150,25 @@ a {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   padding: 14px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.modal-header button,
+.modal-header input,
+.modal-header select,
+.modal-header textarea,
+.modal-header a {
+  cursor: revert;
+}
+
+.modal-panel.is-dragging-modal {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.modal-panel.is-dragging-modal .modal-header {
+  cursor: grabbing;
 }
 
 .modal-header div {

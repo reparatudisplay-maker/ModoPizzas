@@ -6,6 +6,7 @@ import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "@/app/auth/actions";
+import { ModalDragController } from "@/components/modal-drag-controller";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 type PanelShellProps = {
@@ -368,6 +369,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
         )}
         {children}
       </section>
+      <ModalDragController />
       <ThemeToggle />
     </main>
   );

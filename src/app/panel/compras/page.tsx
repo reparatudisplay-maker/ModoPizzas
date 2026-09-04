@@ -5,7 +5,7 @@ import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, unitLabel, type StockUnit } from "@/lib/units";
+import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, formatStockQuantityInUnit, unitLabel, type StockUnit } from "@/lib/units";
 
 type InventoryItem = {
   id: string;
@@ -136,13 +136,17 @@ function getPurchaseQuantity(purchase: Purchase) {
   if (!item) return "-";
   const product = item.inventory_items;
   if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
-    return formatStockQuantity(Number(item.quantity ?? 0), canonicalStockUnit(product.unit ?? item.unit));
+    return item.presentation_quantity && item.presentation_unit
+      ? formatStockQuantityInUnit(Number(item.presentation_quantity), item.presentation_unit)
+      : formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
   }
   return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.purchased_quantity ?? item.quantity))} ${unitLabel("unit")}`;
 }
 
 function getPurchasePresentation(purchase: Purchase, masterItem?: InventoryItem | null) {
   const item = purchase.purchase_items[0];
+  const product = item?.inventory_items;
+  if (product?.item_kind === "ingredient" && product.presentation_quantity === null) return "-";
   if (!item?.presentation_quantity || !item.presentation_unit) return "-";
   const effectiveUnit = item.presentation_unit === "unit" && masterItem?.unit && masterItem.unit !== "unit" ? masterItem.unit : item.presentation_unit;
   if (effectiveUnit !== "unit") {
@@ -166,10 +170,11 @@ function formatPurchaseUnitCost(purchase: Purchase) {
   const unit = baseUnit === "g" ? "G" : baseUnit === "ml" ? "ML" : "UND";
   const unitCost = total / normalizedQuantity;
   const truncated = Math.trunc(unitCost * 1000) / 1000;
+  const hasDecimals = !Number.isInteger(truncated);
   const formatter = new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    minimumFractionDigits: 0,
+    minimumFractionDigits: hasDecimals ? 2 : 0,
     maximumFractionDigits: 3
   });
   const formatted = truncated > 0 ? formatter.format(truncated) : `< ${formatter.format(0.001)}`;

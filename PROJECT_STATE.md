@@ -21,10 +21,13 @@
 - Gastos: categorias, registro de gastos, origen de pago, anulacion y trazabilidad con caja/fondo cuando aplica.
 - Cocina: tablero KDS con estados por linea, ETA, sonido y Realtime.
 - Marketing: Pantallas y Promociones con editor visual, plantillas, preview y persistencia.
+- UI global: modales estandar con header arrastrable en escritorio, backdrop liviano y limites dentro del viewport.
 
 ## Decisiones funcionales vigentes
 
 - Peso se almacena en G, volumen en ML y unidades en UNIT/UND; KG y L son visuales.
+- Los inputs numericos visibles usan formato colombiano: punto para miles y coma para decimales.
+- Las compras conservan cantidad normalizada como fuente de stock/costo y presentacion solo como dato visual/auditoria cuando aplica.
 - Compras es la fuente de stock para productos comprados.
 - Producciones generan lotes propios y consumen stock por FEFO/FIFO.
 - Los costos de produccion quedan congelados al registrar.
@@ -48,8 +51,10 @@
 - Agregar edicion controlada de gastos abiertos si el flujo operativo lo pide; por ahora existe anulacion con reverso.
 - Completar flujos futuros: promociones aplicadas a venta, mitad y mitad avanzada, domicilios publicos y pagina publica.
 - Revisar periodicamente politicas RLS y cobertura de permisos en nuevas rutas.
+- Agregar pruebas automatizadas para parseo numerico colombiano en compras y conversiones G/KG, ML/L, UND.
+- Probar manualmente modales arrastrables en pantallas tactiles reales y distintos navegadores.
 
 ## Siguiente tarea recomendada
 
-- Probar en un PC limpio el flujo publicado: login, permisos, Caja, Cocina, Produccion, Inventario y Marketing.
+- Probar en un PC limpio el flujo publicado: login, permisos, Caja, Cocina, Compras, Produccion, Inventario y Marketing.
 - Despues implementar exportacion MP4 real de Marketing o cerrar pruebas automatizadas de POS e inventario antes de nuevas funciones.

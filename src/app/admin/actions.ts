@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
+import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
@@ -108,23 +109,20 @@ function getOptionalString(formData: FormData, key: string) {
 }
 
 function getInteger(formData: FormData, key: string, fallback = 0) {
-  const value = getString(formData, key).replace(/\./g, "").replace(/,/g, ".");
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
+  const parsed = parseColombianInteger(getString(formData, key));
+  return parsed !== null && Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
 }
 
 function getDecimal(formData: FormData, key: string, fallback = 0) {
-  const value = getString(formData, key).replace(/\./g, "").replace(/,/g, ".");
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+  const parsed = parseColombianDecimal(getString(formData, key));
+  return parsed !== null && Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
 }
 
 function getSignedDecimal(formData: FormData, key: string) {
   const rawValue = getOptionalString(formData, key);
   if (!rawValue) return null;
-  const value = rawValue.replace(/\./g, "").replace(/,/g, ".");
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  const parsed = parseColombianDecimal(rawValue);
+  return parsed !== null && Number.isFinite(parsed) ? parsed : null;
 }
 
 function getMachineDecimal(formData: FormData, key: string, fallback = 0) {
@@ -1475,7 +1473,9 @@ export async function registerPurchase(_previousState: FormActionState, formData
         ? storesPresentationAsLabel
           ? packageContentQuantity
           : normalizedPresentation.quantity
-        : storesPresentationAsLabel
+        : purchaseKind === "ingredient"
+          ? enteredQuantity
+          : storesPresentationAsLabel
           ? presentationQuantity > 0
             ? presentationQuantity
             : null
@@ -1487,7 +1487,9 @@ export async function registerPurchase(_previousState: FormActionState, formData
         ? storesPresentationAsLabel
           ? presentationUnit
           : normalizedPresentation.unit
-        : storesPresentationAsLabel
+        : purchaseKind === "ingredient"
+          ? presentationUnit
+          : storesPresentationAsLabel
           ? presentationQuantity > 0
             ? presentationUnit
             : null
