@@ -2,15 +2,15 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { KeyRound, Pencil, Plus, Settings, ShieldCheck, X } from "lucide-react";
+import { Pencil, Plus, Settings, ShieldCheck, X } from "lucide-react";
 import {
-  inviteSystemUser,
+  registerSystemUser,
   saveSystemRole,
   saveUserPermissionOverrides,
-  sendPasswordRecovery,
   updateSystemUser,
   type FormActionState
 } from "@/app/admin/actions";
+import type { SystemModuleKey } from "@/lib/system-modules";
 
 type RoleKey = "vendedor" | "mesero" | "cocina" | "mensajero" | "gerente" | "admin_sistema";
 
@@ -50,13 +50,25 @@ export type UserPermissionRecord = {
   auth_created_at?: string | null;
   auth_last_sign_in_at?: string | null;
   roles: RoleKey[];
+  module_access: string[];
   overrides: UserPermissionOverride[];
+};
+
+export type SystemModuleRecord = {
+  key: SystemModuleKey;
+  name: string;
+  route: string;
+  icon: string | null;
+  sort_order: number;
+  is_active: boolean;
+  parent_key: string | null;
 };
 
 type UsersPermissionsModuleProps = {
   currentUserId: string;
   users: UserPermissionRecord[];
   roles: RoleRecord[];
+  modules: SystemModuleRecord[];
   permissions: PermissionRecord[];
   authAdminConfigured: boolean;
 };
@@ -145,7 +157,7 @@ function SubmitButton({ children, disabled = false }: { children: string; disabl
   );
 }
 
-export function UsersPermissionsModule({ currentUserId, users, roles, permissions, authAdminConfigured }: UsersPermissionsModuleProps) {
+export function UsersPermissionsModule({ currentUserId, users, roles, modules, permissions, authAdminConfigured }: UsersPermissionsModuleProps) {
   const [tab, setTab] = useState<"users" | "roles">("users");
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -153,12 +165,12 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
   const [statusFilter, setStatusFilter] = useState("all");
   const [columns, setColumns] = useState<UserColumn[]>(readUserColumns);
   const [showColumns, setShowColumns] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserPermissionRecord | null>(null);
   const [permissionUser, setPermissionUser] = useState<UserPermissionRecord | null>(null);
   const [editingRole, setEditingRole] = useState<RoleRecord | null>(null);
 
-  const [inviteState, inviteAction] = useActionState(inviteSystemUser, initialState);
+  const [registerState, registerAction] = useActionState(registerSystemUser, initialState);
   const [userState, userAction] = useActionState(updateSystemUser, initialState);
   const [roleState, roleAction] = useActionState(saveSystemRole, initialState);
   const [overrideState, overrideAction] = useActionState(saveUserPermissionOverrides, initialState);
@@ -168,11 +180,11 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
   }, [columns]);
 
   useEffect(() => {
-    if (inviteState.status === "success") {
-      const timer = window.setTimeout(() => setInviteOpen(false), 0);
+    if (registerState.status === "success") {
+      const timer = window.setTimeout(() => setRegisterOpen(false), 0);
       return () => window.clearTimeout(timer);
     }
-  }, [inviteState.status]);
+  }, [registerState.status]);
 
   useEffect(() => {
     if (userState.status === "success") {
@@ -234,9 +246,9 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
               <button className="ghost-button icon-button" onClick={() => setShowColumns(true)} title="Configurar columnas" type="button">
                 <Settings size={18} />
               </button>
-              <button className="primary-button" onClick={() => setInviteOpen(true)} type="button">
+              <button className="primary-button" onClick={() => setRegisterOpen(true)} type="button">
                 <Plus size={18} />
-                Invitar usuario
+                Registrar usuario
               </button>
             </>
           ) : null}
@@ -307,7 +319,6 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
                         <button className="icon-action" onClick={() => setPermissionUser(user)} title="Permisos efectivos" type="button">
                           <ShieldCheck size={16} />
                         </button>
-                        <PasswordRecoveryButton email={user.email} />
                       </td>
                     ) : null}
                   </tr>
@@ -356,11 +367,11 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
         </div>
       ) : null}
 
-      {inviteOpen ? (
-        <InviteUserModal action={inviteAction} authAdminConfigured={authAdminConfigured} roles={roles} state={inviteState} onClose={() => setInviteOpen(false)} />
+      {registerOpen ? (
+        <RegisterUserModal action={registerAction} authAdminConfigured={authAdminConfigured} modules={modules} roles={roles} state={registerState} onClose={() => setRegisterOpen(false)} />
       ) : null}
       {editingUser ? (
-        <EditUserModal action={userAction} roles={roles} state={userState} user={editingUser} onClose={() => setEditingUser(null)} />
+        <EditUserModal action={userAction} modules={modules} roles={roles} state={userState} user={editingUser} onClose={() => setEditingUser(null)} />
       ) : null}
       {permissionUser ? (
         <UserPermissionsModal
@@ -380,90 +391,128 @@ export function UsersPermissionsModule({ currentUserId, users, roles, permission
   );
 }
 
-function PasswordRecoveryButton({ email }: { email: string | null }) {
-  const [state, action] = useActionState(sendPasswordRecovery, initialState);
+function RoleSelect({ roles, value, onChange }: { roles: RoleRecord[]; value: RoleKey; onChange: (role: RoleKey) => void }) {
   return (
-    <form action={action} className="inline-form">
-      <input name="email" type="hidden" value={email ?? ""} />
-      <button className="icon-action" disabled={!email} title={state.status === "success" ? state.message : "Enviar recuperacion"} type="submit">
-        <KeyRound size={16} />
-      </button>
-    </form>
+    <>
+      <input name="roles" type="hidden" value={JSON.stringify([value])} />
+      <select aria-label="Rol principal" onChange={(event) => onChange(event.target.value as RoleKey)} value={value}>
+        {roles.filter((role) => role.is_active || role.role === "admin_sistema").map((role) => (
+          <option key={role.role} value={role.role}>{role.name}</option>
+        ))}
+      </select>
+    </>
   );
 }
 
-function RoleCheckboxes({ roles, defaultRoles }: { roles: RoleRecord[]; defaultRoles?: RoleKey[] }) {
-  const [selectedRoles, setSelectedRoles] = useState<RoleKey[]>(defaultRoles?.length ? defaultRoles : ["vendedor"]);
-  function toggleRole(role: RoleKey) {
-    setSelectedRoles((current) => {
-      if (current.includes(role)) {
-        const next = current.filter((item) => item !== role);
-        return next.length ? next : current;
-      }
-      return [...current, role];
-    });
-  }
+function ModuleAccessFields({
+  modules,
+  selectedModules,
+  isAdmin,
+  onChange
+}: {
+  modules: SystemModuleRecord[];
+  selectedModules: SystemModuleKey[];
+  isAdmin: boolean;
+  onChange: (modules: SystemModuleKey[]) => void;
+}) {
+  const moduleKeys = modules.map((module) => module.key);
+  const effectiveModules = isAdmin ? moduleKeys : selectedModules;
   return (
-    <div className="permission-chip-grid">
-      <input name="roles" type="hidden" value={JSON.stringify(selectedRoles)} />
-      {roles.map((role) => (
-        <label className="permission-chip" key={role.role}>
-          <input checked={selectedRoles.includes(role.role)} onChange={() => toggleRole(role.role)} type="checkbox" />
-          {role.name}
-        </label>
-      ))}
+    <div className="field full-row user-modal-section">
+      <input name="module_access" type="hidden" value={JSON.stringify(effectiveModules)} />
+      <div className="permission-group-header">
+        <strong>Acceso a modulos</strong>
+        {!isAdmin ? (
+          <div className="toolbar-actions">
+            <button className="ghost-button small-button" onClick={() => onChange(moduleKeys)} type="button">Seleccionar todos</button>
+            <button className="ghost-button small-button" onClick={() => onChange([])} type="button">Quitar todos</button>
+          </div>
+        ) : null}
+      </div>
+      <div className="module-access-grid">
+        {modules.map((module) => (
+          <label className="permission-chip module-access-chip" key={module.key}>
+            <input
+              checked={effectiveModules.includes(module.key)}
+              disabled={isAdmin}
+              onChange={() => onChange(effectiveModules.includes(module.key) ? effectiveModules.filter((key) => key !== module.key) : [...effectiveModules, module.key])}
+              type="checkbox"
+            />
+            {module.name}
+          </label>
+        ))}
+      </div>
+      {isAdmin ? <small className="muted">Administrador del sistema conserva acceso total permanente.</small> : null}
     </div>
   );
 }
 
-function InviteUserModal({
+function RegisterUserModal({
   action,
   authAdminConfigured,
+  modules,
   roles,
   state,
   onClose
 }: {
   action: (payload: FormData) => void;
   authAdminConfigured: boolean;
+  modules: SystemModuleRecord[];
   roles: RoleRecord[];
   state: FormActionState;
   onClose: () => void;
 }) {
+  const [role, setRole] = useState<RoleKey>("vendedor");
+  const [selectedModules, setSelectedModules] = useState<SystemModuleKey[]>([]);
+  const isAdmin = role === "admin_sistema";
   return (
     <div className="modal-backdrop" role="presentation">
-      <section aria-label="Invitar usuario" aria-modal="true" className="modal-panel purchase-modal" role="dialog">
+      <section aria-label="Registrar usuario" aria-modal="true" className="modal-panel purchase-modal" role="dialog">
         <form action={action}>
           <header className="modal-header">
-            <h2>Invitar usuario</h2>
+            <h2>Registrar usuario</h2>
             <button className="icon-button" onClick={onClose} type="button">
               <X size={18} />
             </button>
           </header>
           <div className="modal-content form-grid">
-            {!authAdminConfigured ? <p className="form-error">Configura SUPABASE_SERVICE_ROLE_KEY en el servidor para enviar invitaciones Auth.</p> : null}
+            {!authAdminConfigured ? <p className="form-error">El registro de usuarios no esta disponible temporalmente.</p> : null}
             <label className="field">
-              Email
+              Nombre
+              <input name="full_name" placeholder="NOMBRE" required />
+            </label>
+            <label className="field">
+              Usuario/correo de acceso
               <input name="email" placeholder="usuario@correo.com" required type="email" />
             </label>
             <label className="field">
-              Nombre
-              <input name="full_name" placeholder="NOMBRE" />
+              Contrasena
+              <input autoComplete="new-password" name="password" required type="password" />
+            </label>
+            <label className="field">
+              Confirmar contrasena
+              <input autoComplete="new-password" name="password_confirmation" required type="password" />
             </label>
             <label className="field">
               Telefono
               <input name="phone" placeholder="3001234567" />
             </label>
             <div className="field full-row">
-              Rol
-              <RoleCheckboxes roles={roles} />
+              <strong>Rol principal</strong>
+              <RoleSelect onChange={setRole} roles={roles} value={role} />
             </div>
+            <label className="checkbox-field">
+              <input defaultChecked name="is_active" type="checkbox" />
+              Activo
+            </label>
+            <ModuleAccessFields isAdmin={isAdmin} modules={modules} onChange={setSelectedModules} selectedModules={selectedModules} />
             {state.status === "error" ? <p className="form-error full-row">{state.message}</p> : null}
           </div>
           <footer className="form-actions modal-form-actions">
             <button className="ghost-button" onClick={onClose} type="button">
               Cancelar
             </button>
-            <SubmitButton disabled={!authAdminConfigured}>Enviar invitacion</SubmitButton>
+            <SubmitButton disabled={!authAdminConfigured}>Registrar usuario</SubmitButton>
           </footer>
         </form>
       </section>
@@ -473,18 +522,26 @@ function InviteUserModal({
 
 function EditUserModal({
   action,
+  modules,
   roles,
   state,
   user,
   onClose
 }: {
   action: (payload: FormData) => void;
+  modules: SystemModuleRecord[];
   roles: RoleRecord[];
   state: FormActionState;
   user: UserPermissionRecord;
   onClose: () => void;
 }) {
   const [accountType, setAccountType] = useState<"staff" | "client">(user.account_type);
+  const [role, setRole] = useState<RoleKey>(user.roles[0] ?? "vendedor");
+  const isAdminUser = accountType === "staff" && role === "admin_sistema";
+  const allModuleKeys = modules.map((module) => module.key);
+  const initialModuleAccess = user.roles.includes("admin_sistema") ? allModuleKeys : user.module_access.filter((key): key is SystemModuleKey => allModuleKeys.includes(key as SystemModuleKey));
+  const [selectedModules, setSelectedModules] = useState<SystemModuleKey[]>(initialModuleAccess);
+  const effectiveSelectedModules = isAdminUser ? allModuleKeys : accountType === "client" ? [] : selectedModules;
   return (
     <div className="modal-backdrop" role="presentation">
       <section aria-label="Editar usuario" aria-modal="true" className="modal-panel purchase-modal" role="dialog">
@@ -521,13 +578,29 @@ function EditUserModal({
               Activo
             </label>
             {accountType === "staff" ? (
-              <div className="field full-row">
-                Rol interno
-                <RoleCheckboxes defaultRoles={user.roles.length ? user.roles : ["vendedor"]} roles={roles} />
+              <div className="field full-row user-modal-section">
+                <strong>Rol principal</strong>
+                <RoleSelect onChange={setRole} roles={roles} value={role} />
               </div>
             ) : (
               <p className="muted full-row">Cliente sin acceso al panel administrativo.</p>
             )}
+            {accountType === "staff" ? (
+              <ModuleAccessFields isAdmin={isAdminUser} modules={modules} onChange={setSelectedModules} selectedModules={effectiveSelectedModules} />
+            ) : null}
+            <div className="field full-row user-modal-section">
+              <strong>Cambiar contrasena</strong>
+              <div className="form-grid">
+                <label className="field">
+                  Nueva contrasena
+                  <input autoComplete="new-password" name="password" type="password" />
+                </label>
+                <label className="field">
+                  Confirmar contrasena
+                  <input autoComplete="new-password" name="password_confirmation" type="password" />
+                </label>
+              </div>
+            </div>
             {state.status === "error" ? <p className="form-error full-row">{state.message}</p> : null}
           </div>
           <footer className="form-actions modal-form-actions">

@@ -15,8 +15,9 @@ import {
 } from "@/app/admin/actions";
 import { optimizeImageInput } from "@/lib/client-images";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
+import { PizzaSizeBaseSourcesWorkspace, PizzaSizeComponentQuantitiesWorkspace, type PizzaPriceBaseSource, type PizzaPriceSource, type PizzaSizeComponentQuantity } from "@/components/pizza-prices-workspace";
 
-type SectionKey = "sabores" | "tamanos" | "categorias" | "adiciones";
+type SectionKey = "sabores" | "tamanos" | "categorias" | "adiciones" | "bases" | "gramajes";
 type StatusFilter = "" | "active" | "inactive";
 type LimitFilter = "15" | "30" | "all";
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
@@ -124,13 +125,17 @@ const defaultColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
   categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
-  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[]
+  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[],
+  bases: [] as string[],
+  gramajes: [] as string[]
 };
 const allColumns = {
   sabores: ["sku", "photo", "description", "category", "half", "allergens", "status", "actions"] as FlavorColumn[],
   tamanos: ["sku", "diameter", "slices", "status", "actions"] as SizeColumn[],
   categorias: ["sku", "description", "status", "actions"] as CategoryColumn[],
-  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[]
+  adiciones: ["sku", "component", "sizes", "cost", "price", "margin", "compatibility", "status", "actions"] as AdditionColumn[],
+  bases: [] as string[],
+  gramajes: [] as string[]
 };
 
 type ColumnsBySection = typeof defaultColumns;
@@ -145,7 +150,9 @@ function readColumns(): ColumnsBySection {
       sabores: sanitizeColumns(parsed.sabores, "sabores") as FlavorColumn[],
       tamanos: sanitizeColumns(parsed.tamanos, "tamanos") as SizeColumn[],
       categorias: sanitizeColumns(parsed.categorias, "categorias") as CategoryColumn[],
-      adiciones: sanitizeColumns(parsed.adiciones, "adiciones") as AdditionColumn[]
+      adiciones: sanitizeColumns(parsed.adiciones, "adiciones") as AdditionColumn[],
+      bases: sanitizeColumns(parsed.bases, "bases"),
+      gramajes: sanitizeColumns(parsed.gramajes, "gramajes")
     };
   } catch {
     window.localStorage.removeItem(storageKey);
@@ -164,6 +171,8 @@ function sectionTitle(section: SectionKey) {
   if (section === "sabores") return "Sabores";
   if (section === "tamanos") return "Tamanos";
   if (section === "adiciones") return "Adiciones";
+  if (section === "bases") return "Base comun por tamano";
+  if (section === "gramajes") return "Gramajes por tamano";
   return "Categorias";
 }
 
@@ -299,6 +308,9 @@ export function MenuPizzasWorkspace({
   additions,
   ingredientSources,
   additionIngredientSources,
+  baseSources,
+  baseSourceOptions,
+  componentQuantities,
   sections = ["sabores", "tamanos", "categorias"],
   initialSection
 }: {
@@ -308,6 +320,9 @@ export function MenuPizzasWorkspace({
   additions: PizzaAdditionRecord[];
   ingredientSources: FlavorIngredientSource[];
   additionIngredientSources: AdditionIngredientSource[];
+  baseSources: PizzaPriceBaseSource[];
+  baseSourceOptions: PizzaPriceSource[];
+  componentQuantities: PizzaSizeComponentQuantity[];
   sections?: SectionKey[];
   initialSection?: SectionKey;
 }) {
@@ -421,6 +436,18 @@ export function MenuPizzasWorkspace({
 
       {routeMessage ? <p className={`form-status ${routeMessageStatus}`}>{routeMessage}</p> : null}
 
+      {section === "bases" ? (
+        <section className="form-panel">
+          <div className="section-title-row">
+            <h2>Base comun por tamano</h2>
+          </div>
+          <PizzaSizeBaseSourcesWorkspace baseSources={baseSources} sizes={sizes} sources={baseSourceOptions} />
+        </section>
+      ) : section === "gramajes" ? (
+        <section className="form-panel">
+          <PizzaSizeComponentQuantitiesWorkspace baseSources={baseSources} componentQuantities={componentQuantities} sizes={sizes} sources={baseSourceOptions} />
+        </section>
+      ) : (
       <section className="form-panel">
         <div className="section-title-row inventory-toolbar-row">
           <h2>{sectionTitle(section)}</h2>
@@ -475,6 +502,7 @@ export function MenuPizzasWorkspace({
           <AdditionsTable additions={filteredAdditions} allItems={orderedFirst(additions)} onEdit={(item) => setModal({ section: "adiciones", item })} showColumn={showColumn} />
         ) : null}
       </section>
+      )}
 
       {modal ? (
         <MenuPizzaModal
@@ -488,7 +516,7 @@ export function MenuPizzasWorkspace({
         />
       ) : null}
 
-      {showSettings ? (
+      {showSettings && section !== "bases" ? (
         <div className="modal-backdrop" role="presentation">
           <section aria-label="Configuracion de columnas" aria-modal="true" className="modal-panel inventory-settings-modal" role="dialog">
             <header className="modal-header">
@@ -983,9 +1011,14 @@ function FlavorForm({
   const [imageError, setImageError] = useState("");
   const [fileInputKey, setFileInputKey] = useState(0);
   const [ingredientQuery, setIngredientQuery] = useState("");
-  const [selectedIngredients, setSelectedIngredients] = useState<FlavorIngredientSelection[]>(item?.characteristic_ingredients ?? []);
+  const isPizzaBaseIngredient = (ingredient: FlavorIngredientSelection | FlavorIngredientSource) => {
+    const name = "source_name" in ingredient ? ingredient.source_name : ingredient.name;
+    return normalizeMasterText(name).includes("MASA");
+  };
+  const [selectedIngredients, setSelectedIngredients] = useState<FlavorIngredientSelection[]>(() => (item?.characteristic_ingredients ?? []).filter((ingredient) => !isPizzaBaseIngredient(ingredient)));
   const selectedKeys = new Set(selectedIngredients.map((ingredient) => `${ingredient.source_kind}:${ingredient.source_id}`));
   const filteredSources = ingredientSources
+    .filter((source) => !isPizzaBaseIngredient(source))
     .filter((source) => !selectedKeys.has(`${source.source_kind}:${source.id}`))
     .filter((source) => normalizeMasterText(source.name).includes(normalizeMasterText(ingredientQuery)))
     .slice(0, 8);

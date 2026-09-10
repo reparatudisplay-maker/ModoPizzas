@@ -269,6 +269,11 @@ function dateLabel(value?: string | null) {
   return new Date(`${value.includes("T") ? value : `${value}T12:00:00`}`).toLocaleDateString("es-CO");
 }
 
+function dateTimeLabel(value?: string | null) {
+  if (!value) return "Sin fecha";
+  return new Intl.DateTimeFormat("es-CO", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
 function stockStatus(quantity: number) {
   if (quantity <= 0) return { key: "out", label: "Agotado", className: "danger" };
   if (quantity <= 5) return { key: "low", label: "Bajo", className: "warning" };
@@ -1974,6 +1979,48 @@ function ProductionInventoryDetail({ item, onClose }: { item: ProductionInventor
         </table>
       </div>
       <div className="inventory-detail-grid production-trace-grid">
+        {item.lots.map((lot) => (
+          <article className="compact-card production-outbound-card" key={`${lot.id}-outbound`}>
+            <div>
+              <h3>Salidas / consumos del lote</h3>
+              <span className="stock-pill neutral">{lot.code}</span>
+            </div>
+            <div className="data-table-wrap">
+              <table className="data-table compact-data-table production-outbound-table">
+                <thead>
+                  <tr>
+                    <th>Fecha / hora</th>
+                    <th>Salida</th>
+                    <th>Referencia</th>
+                    <th>Pizza / destino</th>
+                    <th>Cantidad</th>
+                    <th>Saldo posterior</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lot.outbound_consumptions.map((outbound) => (
+                    <tr key={outbound.id}>
+                      <td>{dateTimeLabel(outbound.occurred_at)}</td>
+                      <td><span className={`stock-pill ${outbound.kind === "sale" ? "ok" : "neutral"}`}>{outbound.kind === "sale" ? "Venta POS" : "Producción"}</span></td>
+                      <td><strong>{outbound.kind === "sale" ? outbound.order_code : outbound.production_code}</strong></td>
+                      <td>
+                        {outbound.kind === "sale" ? (
+                          <span className="origin-cell">
+                            <strong>{outbound.pizza_name}</strong>
+                            <small>{outbound.pizza_quantity} {outbound.pizza_quantity === 1 ? "pizza" : "pizzas"}</small>
+                          </span>
+                        ) : "Consumo para producción"}
+                      </td>
+                      <td>{formatStockQuantity(outbound.quantity_base, outbound.base_unit)}</td>
+                      <td><strong>{formatStockQuantity(outbound.balance_after_base, lot.base_unit)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {lot.outbound_consumptions.length === 0 ? <p className="muted">No hay salidas vinculadas a este lote.</p> : null}
+          </article>
+        ))}
         {item.lots.map((lot) => (
           <article className="compact-card" key={`${lot.id}-trace`}>
             <div>

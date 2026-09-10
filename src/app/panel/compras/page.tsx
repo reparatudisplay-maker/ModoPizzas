@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, formatStockQuantityInUnit, unitLabel, type StockUnit } from "@/lib/units";
 
@@ -56,6 +56,7 @@ type Purchase = {
       sku: string | null;
       unit: "g" | "kg" | "ml" | "l" | "unit";
       item_kind: "ingredient" | "sale_product" | "supply" | null;
+      purchase_mode: "total_weight" | "packages" | null;
       image_url: string | null;
       brand_id: string | null;
       presentation_quantity: number | null;
@@ -74,8 +75,6 @@ type PurchasePageProps = {
     tipo?: string;
   }>;
 };
-
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +135,7 @@ function getPurchaseQuantity(purchase: Purchase) {
   if (!item) return "-";
   const product = item.inventory_items;
   if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
+    if (product.purchase_mode === "packages") return formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
     return item.presentation_quantity && item.presentation_unit
       ? formatStockQuantityInUnit(Number(item.presentation_quantity), item.presentation_unit)
       : formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
@@ -146,14 +146,16 @@ function getPurchaseQuantity(purchase: Purchase) {
 function getPurchasePresentation(purchase: Purchase, masterItem?: InventoryItem | null) {
   const item = purchase.purchase_items[0];
   const product = item?.inventory_items;
-  if (product?.item_kind === "ingredient" && product.presentation_quantity === null) return "-";
+  if (product?.item_kind === "ingredient" && product.presentation_quantity === null && product.purchase_mode !== "packages") return "-";
   if (!item?.presentation_quantity || !item.presentation_unit) return "-";
   const effectiveUnit = item.presentation_unit === "unit" && masterItem?.unit && masterItem.unit !== "unit" ? masterItem.unit : item.presentation_unit;
   if (effectiveUnit !== "unit") {
     const baseUnit = canonicalStockUnit(effectiveUnit);
-    return formatStockQuantity(convertStockQuantity(Number(item.presentation_quantity), effectiveUnit, baseUnit), baseUnit);
+    const formatted = formatStockQuantity(convertStockQuantity(Number(item.presentation_quantity), effectiveUnit, baseUnit), baseUnit);
+    return product?.item_kind === "ingredient" && product.purchase_mode === "packages" ? `${formatted} / paquete` : formatted;
   }
-  return formatQuantity(Number(item.presentation_quantity), effectiveUnit);
+  const formatted = formatQuantity(Number(item.presentation_quantity), effectiveUnit);
+  return product?.item_kind === "ingredient" && product.purchase_mode === "packages" ? `${formatted} / paquete` : formatted;
 }
 
 function getPurchaseSku(purchase: Purchase) {
@@ -199,25 +201,12 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const periodStart = getPeriodStart(periodFilter);
   const query = params.q?.trim() ?? "";
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  const canManage = roleNames.some((role) => managerRoles.has(role));
-  if (!canManage) {
-    notFound();
-  }
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "compras");
 
   let purchasesQuery = supabase
     .from("purchases")
     .select(
-      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, line_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, image_url, brand_id, presentation_quantity, presentation_unit))"
+      "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, line_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
     .limit(60);
@@ -355,7 +344,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   return (
     <PanelShell
       active="compras"
-      roleNames={roleNames}
+      moduleKeys={moduleKeys} roleNames={roleNames}
       subtitle="Registra compras de insumos. Esta operacion aumenta stock y recalcula costo promedio."
       title="Compras"
       userEmail={user.email ?? "usuario"}

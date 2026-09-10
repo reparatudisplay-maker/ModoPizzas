@@ -1,7 +1,7 @@
-import { notFound, redirect } from "next/navigation";
 import { InventoryWorkspace, type InventoryCountHistoryRow, type InventoryListItem, type InventoryPurchaseLine } from "@/components/inventory-workspace";
 import { PanelShell } from "@/components/panel-shell";
-import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
+import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionLotOutboundInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { convertStockQuantity } from "@/lib/units";
 
@@ -66,7 +66,34 @@ type PhysicalInventoryCountRow = {
   preparations: { name: string } | null;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
+type PosProductionOutboundRow = {
+  id: string;
+  production_batch_id: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  created_at: string;
+  pos_order_consumptions: {
+    order_item_addition_id: string | null;
+    order_item_id: string;
+    pos_orders: { code: string } | { code: string }[] | null;
+    pos_order_items: { product_name_snapshot: string; quantity: number } | { product_name_snapshot: string; quantity: number }[] | null;
+  } | null;
+};
+
+type ProductionOutboundRow = {
+  id: string;
+  production_batch_id: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  created_at: string;
+  production_consumptions: {
+    productions: { code: string } | { code: string }[] | null;
+  } | null;
+};
+
+function firstRelation<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -172,22 +199,9 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
 
 export default async function InventoryPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "inventario");
 
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  const canManage = roleNames.some((role) => managerRoles.has(role));
-  if (!canManage) {
-    notFound();
-  }
-
-  const [purchaseLinesResult, purchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult] = await Promise.all([
+  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult] = await Promise.all([
     supabase
       .from("purchase_items")
       .select(
@@ -196,6 +210,11 @@ export default async function InventoryPage() {
       .order("expiration_date", { ascending: true, nullsFirst: false })
       .limit(1000),
     supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
+    supabase
+      .from("pos_order_consumption_allocations")
+      .select("purchase_item_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+      .not("purchase_item_id", "is", null)
+      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
     supabase
       .from("physical_inventory_counts")
       .select("id, source_kind, inventory_item_id, source_preparation_id, theoretical_quantity_base, physical_quantity_base, difference_quantity_base, base_unit, average_cost_cop, adjustment_kind, reason, created_at, created_by, inventory_items(name), preparations(name)")
@@ -210,13 +229,17 @@ export default async function InventoryPage() {
   const error =
     purchaseLinesResult.error ??
     purchaseAllocationsResult.error ??
+    posPurchaseAllocationsResult.error ??
     physicalCountsResult.error ??
     masterItemsResult.error ??
     brandsResult.error ??
     suppliersResult.error ??
     categoriesResult.error;
   const purchaseLines = (purchaseLinesResult.data ?? []) as unknown as PurchaseLineRow[];
-  const purchaseAllocations = (purchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[];
+  const purchaseAllocations = [
+    ...((purchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[]),
+    ...((posPurchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[])
+  ];
   const physicalCounts = (physicalCountsResult.data ?? []) as unknown as PhysicalInventoryCountRow[];
   const masterItems = (masterItemsResult.data ?? []) as Array<{ id: string; name: string; image_url: string | null; item_kind: ItemKind | null }>;
   const brands = brandsResult.data ?? [];
@@ -246,14 +269,28 @@ export default async function InventoryPage() {
   );
   const imageSrcById = new Map(signedImageEntries);
 
-  const [productionBatchesResult, productionAllocationsResult, productionConsumptionsResult, productionTraceAllocationsResult, productionItemsResult, productionPreparationsResult] = await Promise.all([
+  const [productionBatchesResult, productionAllocationsResult, posProductionAllocationsResult, productionConsumptionsResult, productionTraceAllocationsResult, posProductionOutboundResult, productionOutboundResult, productionItemsResult, productionPreparationsResult] = await Promise.all([
     supabase
       .from("production_batches")
       .select("id, production_id, preparation_id, initial_quantity_base, base_unit, unit_cost_cop, expiration_date, elaborated_at, production_number, productions(id, code, storage_method, total_cost_cop, unit_cost_cop, created_by), preparations(id, name, image_url, unit_kind, base_unit, is_active)")
       .order("expiration_date", { ascending: true }),
     supabase.from("production_consumption_allocations").select("production_batch_id, quantity_base, base_unit"),
+    supabase
+      .from("pos_order_consumption_allocations")
+      .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+      .not("production_batch_id", "is", null)
+      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
     supabase.from("production_consumptions").select("id, production_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, cost_cop"),
     supabase.from("production_consumption_allocations").select("consumption_id, purchase_item_id, production_batch_id, quantity_base, base_unit, cost_cop"),
+    supabase
+      .from("pos_order_consumption_allocations")
+      .select("id, production_batch_id, quantity_base, base_unit, created_at, pos_order_consumptions!inner(order_item_id, order_item_addition_id, pos_orders!inner(code, status), pos_order_items!inner(product_name_snapshot, quantity))")
+      .not("production_batch_id", "is", null)
+      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
+    supabase
+      .from("production_consumption_allocations")
+      .select("id, production_batch_id, quantity_base, base_unit, created_at, production_consumptions!inner(productions!inner(code))")
+      .not("production_batch_id", "is", null),
     supabase.from("inventory_items").select("id, name"),
     supabase.from("preparations").select("id, name, image_url")
   ]);
@@ -261,8 +298,11 @@ export default async function InventoryPage() {
   const productionError =
     productionBatchesResult.error ??
     productionAllocationsResult.error ??
+    posProductionAllocationsResult.error ??
     productionConsumptionsResult.error ??
     productionTraceAllocationsResult.error ??
+    posProductionOutboundResult.error ??
+    productionOutboundResult.error ??
     productionItemsResult.error ??
     productionPreparationsResult.error;
 
@@ -276,9 +316,40 @@ export default async function InventoryPage() {
   );
   const productionInventory = buildProductionInventory({
     batches: (productionBatchesResult.data ?? []) as unknown as ProductionBatchInput[],
-    allocations: (productionAllocationsResult.data ?? []) as ProductionAllocationInput[],
+    allocations: [
+      ...((productionAllocationsResult.data ?? []) as ProductionAllocationInput[]),
+      ...((posProductionAllocationsResult.data ?? []) as ProductionAllocationInput[])
+    ],
     consumptions: (productionConsumptionsResult.data ?? []) as ProductionConsumptionInput[],
     traceAllocations: (productionTraceAllocationsResult.data ?? []) as ProductionTraceAllocationInput[],
+    outboundConsumptions: [
+      ...((posProductionOutboundResult.data ?? []) as unknown as PosProductionOutboundRow[]).map((allocation) => {
+        const consumption = allocation.pos_order_consumptions;
+        const order = firstRelation(consumption?.pos_orders);
+        const item = firstRelation(consumption?.pos_order_items);
+        return {
+          id: allocation.id,
+          production_batch_id: allocation.production_batch_id,
+          quantity_base: Number(allocation.quantity_base ?? 0),
+          base_unit: allocation.base_unit,
+          occurred_at: allocation.created_at,
+          kind: "sale" as const,
+          order_code: order?.code ?? "Pedido",
+          order_item_id: consumption?.order_item_id ?? null,
+          pizza_name: item?.product_name_snapshot ?? "Pizza no disponible",
+          pizza_quantity: Number(item?.quantity ?? 0)
+        };
+      }),
+      ...((productionOutboundResult.data ?? []) as unknown as ProductionOutboundRow[]).map((allocation) => ({
+        id: allocation.id,
+        production_batch_id: allocation.production_batch_id,
+        quantity_base: Number(allocation.quantity_base ?? 0),
+        base_unit: allocation.base_unit,
+        occurred_at: allocation.created_at,
+        kind: "production" as const,
+        production_code: firstRelation(allocation.production_consumptions?.productions)?.code ?? "Produccion"
+      }))
+    ] satisfies ProductionLotOutboundInput[],
     inventoryNames: new Map((productionItemsResult.data ?? []).map((item) => [item.id, item.name])),
     preparationNames: new Map((productionPreparationsResult.data ?? []).map((preparation) => [preparation.id, preparation.name])),
     imageSrcByPreparationId: new Map(signedPreparationImageEntries)
@@ -433,7 +504,7 @@ export default async function InventoryPage() {
   }));
 
   return (
-    <PanelShell active="inventario" hideHeader roleNames={roleNames} title="Inventario" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="inventario" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Inventario" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       {productionError ? <p className="alert">{productionError.message}</p> : null}
       <InventoryWorkspace countHistory={countHistory} items={[...groupedItems.values()]} preparationItems={adjustedProductionItems} purchaseLines={lineItems} />

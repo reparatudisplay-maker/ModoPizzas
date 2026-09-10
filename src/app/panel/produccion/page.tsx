@@ -1,4 +1,3 @@
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import {
   PreparationsModule,
@@ -8,6 +7,7 @@ import {
   type PreparationSource
 } from "@/components/preparations-module";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 type UnitKind = "weight" | "volume" | "unit";
@@ -46,7 +46,6 @@ type InventoryItemRow = {
   presentation_quantity: number | null;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -62,15 +61,7 @@ function unitKindForStockUnit(unit: StockUnit): UnitKind {
 
 export default async function ProductionPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "produccion");
 
   const [preparationsResult, recipeResult, inventoryItemsResult, profilesResult] = await Promise.all([
     supabase
@@ -164,7 +155,7 @@ export default async function ProductionPage() {
     }));
 
   return (
-    <PanelShell active="produccion-preparaciones" hideHeader roleNames={roleNames} title="Produccion" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="produccion-preparaciones" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Produccion" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <PreparationsModule preparations={preparations} profiles={profiles} sources={[...inventorySources, ...preparationSources]} />
     </PanelShell>

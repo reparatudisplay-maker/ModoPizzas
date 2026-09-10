@@ -1,7 +1,7 @@
-import { notFound, redirect } from "next/navigation";
 import { MasterDataModule, type MasterRecord } from "@/components/master-data-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 type BrandsPageProps = {
   searchParams: Promise<{ q?: string; status?: string; limit?: string }>;
@@ -13,22 +13,13 @@ type Brand = MasterRecord & {
   created_at: string;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   const { q = "", status = "", limit = "15" } = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "maestros");
 
   let query = supabase.from("brands").select("id, name, category, notes, is_active, created_at").order("created_at", { ascending: false });
 
@@ -46,7 +37,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   const error = recordsResult.error ?? allRecordsResult.error;
 
   return (
-    <PanelShell active="marcas" hideHeader roleNames={roleNames} subtitle="Marcas" title="Marcas" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="marcas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} subtitle="Marcas" title="Marcas" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <MasterDataModule
         addLabel="Agregar marca"

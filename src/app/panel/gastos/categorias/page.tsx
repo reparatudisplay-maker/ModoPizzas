@@ -1,11 +1,10 @@
-import { notFound, redirect } from "next/navigation";
 import { ExpenseCategoriesModule, type ExpenseCategoryRow } from "@/components/expense-categories-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 export const dynamic = "force-dynamic";
 
-const expenseRoles = new Set(["gerente", "admin_sistema"]);
 
 type PageProps = {
   searchParams: Promise<{ q?: string; status?: string }>;
@@ -14,15 +13,7 @@ type PageProps = {
 export default async function ExpenseCategoriesPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((role) => role.role) ?? [];
-  if (!roleNames.some((role) => expenseRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "gastos");
 
   let query = supabase.from("expense_categories").select("id, name, description, sort_order, is_active").order("sort_order", { ascending: true }).order("name");
   if (params.status === "active") query = query.eq("is_active", true);
@@ -34,7 +25,7 @@ export default async function ExpenseCategoriesPage({ searchParams }: PageProps)
   const categories = ((data ?? []) as ExpenseCategoryRow[]).filter((category) => (q ? category.name.toLowerCase().includes(q.toLowerCase()) : true));
 
   return (
-    <PanelShell active="gastos-categorias" hideHeader roleNames={roleNames} title="Categorias de gasto" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="gastos-categorias" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Categorias de gasto" userEmail={user.email ?? "usuario"}>
       <ExpenseCategoriesModule allCategories={(data ?? []) as ExpenseCategoryRow[]} categories={categories} q={q} status={params.status ?? ""} />
     </PanelShell>
   );

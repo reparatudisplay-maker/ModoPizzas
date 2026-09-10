@@ -1,28 +1,19 @@
-import { notFound, redirect } from "next/navigation";
 import { ConservationProfilesModule, type ConservationProfile } from "@/components/conservation-profiles-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 type ConservationProfilesPageProps = {
   searchParams: Promise<{ q?: string; status?: string }>;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
 export default async function ConservationProfilesPage({ searchParams }: ConservationProfilesPageProps) {
   const { q = "", status = "" } = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "maestros");
 
   let query = supabase
     .from("conservation_profiles")
@@ -47,7 +38,7 @@ export default async function ConservationProfilesPage({ searchParams }: Conserv
     <PanelShell
       active="perfiles-conservacion"
       hideHeader
-      roleNames={roleNames}
+      moduleKeys={moduleKeys} roleNames={roleNames}
       subtitle="Perfiles de conservacion"
       title="Perfiles de conservacion"
       userEmail={user.email ?? "usuario"}

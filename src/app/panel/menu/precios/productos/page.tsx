@@ -1,10 +1,9 @@
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import { SaleProductPricesWorkspace, type SaleProductPriceReference } from "@/components/sale-product-prices-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { convertStockQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
 
 export const dynamic = "force-dynamic";
@@ -51,15 +50,7 @@ async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupab
 
 export default async function MenuPreciosProductosPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "menu");
 
   const [referencesResult, purchaseItemsResult, productionAllocationsResult, posAllocationsResult, physicalCountsResult] = await Promise.all([
     supabase
@@ -141,7 +132,7 @@ export default async function MenuPreciosProductosPage() {
   );
 
   return (
-    <PanelShell active="menu-precios-productos" hideHeader roleNames={roleNames} title="Precios de productos" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="menu-precios-productos" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Precios de productos" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <SaleProductPricesWorkspace references={references} />
     </PanelShell>

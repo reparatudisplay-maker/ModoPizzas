@@ -4,8 +4,9 @@ import Image from "next/image";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import { Banknote, CheckCircle2, ChevronLeft, Minus, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
-import { createPosOrder, type PosOrderActionState } from "@/app/admin/actions";
+import { createPosOrder, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -101,6 +102,7 @@ type CartLine = {
   unit_price_cop: number;
   additions: CartAddition[];
   notes?: string;
+  removed_components?: Array<{ source_kind: "inventory_item" | "preparation"; source_id: string }>;
 };
 
 type PizzaWizard = {
@@ -145,7 +147,8 @@ function cashQuickSuggestions(total: number) {
 function productKey(line: Omit<CartLine, "key" | "quantity">) {
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
   const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.scope}:${addition.quantity}`).sort().join("|");
-  return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${additionsKey}`;
+  const removedKey = (line.removed_components ?? []).map((component) => `${component.source_kind}:${component.source_id}`).sort().join("|");
+  return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${removedKey}:${additionsKey}`;
 }
 
 function orderKindLabel(kind: OrderKind) {
@@ -261,8 +264,11 @@ export function PosOrderWorkspace({
   const [cashSubmitting, setCashSubmitting] = useState(false);
   const [cashSelectedOption, setCashSelectedOption] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [stockNotice, setStockNotice] = useState("");
+  const [stockShortageModalOpen, setStockShortageModalOpen] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const cashSubmitLockRef = useRef(false);
+  const router = useRouter();
   const normalizedQuery = normalizeMasterText(query);
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
 
@@ -289,6 +295,18 @@ export function PosOrderWorkspace({
         setCashConfirmed(false);
         setCashSubmitting(false);
         setCashSelectedOption(null);
+        setStockNotice("");
+        cashSubmitLockRef.current = false;
+        router.refresh();
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    if (state.status === "error" && state.stockShortages?.length) {
+      const timeout = window.setTimeout(() => {
+        setCashConfirmed(false);
+        setCashSubmitting(false);
+        setCashModalOpen(false);
+        setStockShortageModalOpen(true);
         cashSubmitLockRef.current = false;
       }, 0);
       return () => window.clearTimeout(timeout);
@@ -303,7 +321,7 @@ export function PosOrderWorkspace({
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [cashConfirmed, paymentMethod, state.status]);
+  }, [cashConfirmed, paymentMethod, router, state.status, state.stockShortages]);
 
   const categories = useMemo(() => {
     const unique = new Map<string, string>();
@@ -335,6 +353,22 @@ export function PosOrderWorkspace({
       }),
     [normalizedQuery, saleProducts]
   );
+
+  const saleProductById = useMemo(() => new Map(saleProducts.map((product) => [product.id, product])), [saleProducts]);
+
+  function saleProductCartQuantity(productId: string, lines = cart) {
+    return lines
+      .filter((line) => line.kind === "sale_product" && line.id === productId)
+      .reduce((sum, line) => sum + line.quantity, 0);
+  }
+
+  function saleProductStock(productId: string) {
+    return Math.max(0, Math.floor(saleProductById.get(productId)?.stock_base ?? 0));
+  }
+
+  function stockMessage(productId: string) {
+    return `Stock disponible: ${formatStockQuantity(saleProductStock(productId), "unit")}`;
+  }
 
   const subtotal = cart.reduce((sum, line) => {
     const additionsSubtotal = line.additions.reduce((additionSum, addition) => additionSum + addition.quantity * addition.unit_price_cop, 0);
@@ -370,6 +404,23 @@ export function PosOrderWorkspace({
       const existing = current.find((item) => item.key === key);
       if (existing) return current.map((item) => (item.key === key ? { ...item, quantity: item.quantity + quantity } : item));
       return [...current, { ...line, key, quantity }];
+    });
+  }
+
+  function addSaleProduct(product: PosSaleProductOption) {
+    if (saleProductCartQuantity(product.id) >= saleProductStock(product.id)) {
+      setStockNotice(stockMessage(product.id));
+      return;
+    }
+    setStockNotice("");
+    addLine({
+      kind: "sale_product",
+      id: product.id,
+      name: product.name,
+      sku: product.sku,
+      image_src: product.image_src,
+      unit_price_cop: product.sale_price_cop,
+      additions: []
     });
   }
 
@@ -414,7 +465,10 @@ export function PosOrderWorkspace({
         image_src: source.flavor.image_src,
         unit_price_cop: orderPrice.price_cop,
         additions: additionsToUse,
-        notes: removedIngredientNotes(source) || undefined
+        notes: removedIngredientNotes(source) || undefined,
+        removed_components: ingredientChoicesForWizard(source)
+          .filter((ingredient) => source.removedIngredientKeys.includes(ingredient.key))
+          .map((ingredient) => ({ source_kind: ingredient.source_kind, source_id: ingredient.source_id }))
       },
       quantity
     );
@@ -425,6 +479,12 @@ export function PosOrderWorkspace({
   }
 
   function updateQuantity(key: string, delta: number) {
+    const line = cart.find((item) => item.key === key);
+    if (line?.kind === "sale_product" && delta > 0 && line.quantity >= saleProductStock(line.id)) {
+      setStockNotice(stockMessage(line.id));
+      return;
+    }
+    setStockNotice("");
     setCart((current) =>
       current
         .map((line) => (line.key === key ? { ...line, quantity: Math.max(0, line.quantity + delta) } : line))
@@ -448,6 +508,7 @@ export function PosOrderWorkspace({
     quantity: line.quantity,
     unit_price_cop: line.unit_price_cop,
     notes: line.notes ?? "",
+    removed_components: line.removed_components ?? [],
     additions: line.additions.map((addition) => ({
       id: addition.id,
       quantity: addition.quantity,
@@ -551,19 +612,9 @@ export function PosOrderWorkspace({
               : filteredProducts.map((product) => (
                   <button
                     className="pos-product-card pos-sale-product-card"
-                    disabled={product.sale_price_cop <= 0}
+                    disabled={product.sale_price_cop <= 0 || saleProductCartQuantity(product.id) >= saleProductStock(product.id)}
                     key={product.id}
-                    onClick={() =>
-                      addLine({
-                        kind: "sale_product",
-                        id: product.id,
-                        name: product.name,
-                        sku: product.sku,
-                        image_src: product.image_src,
-                        unit_price_cop: product.sale_price_cop,
-                        additions: []
-                      })
-                    }
+                    onClick={() => addSaleProduct(product)}
                     type="button"
                   >
                     <ProductImage alt={product.name} src={product.image_src} />
@@ -578,6 +629,7 @@ export function PosOrderWorkspace({
                 ))}
             {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
           </div>
+          {stockNotice ? <p className="form-status error">{stockNotice}</p> : null}
           {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) > 0 ? (
             <div className="pos-card-size-controls" aria-label={`Tamano de tarjetas de ${tab === "pizzas" ? "pizzas" : "productos"}`}>
               <button disabled={activeCardScale === minCardScale} onClick={() => updateActiveCardScale(-1)} type="button"><Minus size={18} /></button>
@@ -617,7 +669,12 @@ export function PosOrderWorkspace({
                 <div className="pos-qty-controls">
                   <button onClick={() => updateQuantity(line.key, -1)} title="Disminuir" type="button"><Minus size={16} /></button>
                   <strong>{line.quantity}</strong>
-                  <button onClick={() => updateQuantity(line.key, 1)} title="Aumentar" type="button"><Plus size={16} /></button>
+                  <button
+                    disabled={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id)}
+                    onClick={() => updateQuantity(line.key, 1)}
+                    title={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id) ? stockMessage(line.id) : "Aumentar"}
+                    type="button"
+                  ><Plus size={16} /></button>
                   <button className="danger-button" onClick={() => setCart((current) => current.filter((item) => item.key !== line.key))} title="Quitar" type="button"><Trash2 size={16} /></button>
                 </div>
               </article>
@@ -680,6 +737,15 @@ export function PosOrderWorkspace({
           </div>
         </aside>
       </form>
+
+      {stockShortageModalOpen && state.stockShortages?.length ? (
+        <StockShortageModal
+          onClose={() => setStockShortageModalOpen(false)}
+          onOpenProduction={() => window.open("/panel/produccion", "_blank", "noopener,noreferrer")}
+          onOpenPurchases={() => window.open("/panel/compras", "_blank", "noopener,noreferrer")}
+          shortages={state.stockShortages}
+        />
+      ) : null}
 
       {wizard ? (
         <div className="modal-backdrop" role="presentation">
@@ -1359,5 +1425,129 @@ function SubmitOrderButton({ disabled }: { disabled: boolean }) {
     <button className="primary-button pos-submit-button" disabled={disabled || pending} type="submit">
       {pending ? "Confirmando..." : "Confirmar pedido"}
     </button>
+  );
+}
+
+type StockShortageDisplayRow = {
+  line_kind: "pizza" | "sale_product";
+  line_label: string;
+  line_quantity: number;
+  source_name: string;
+  source_category: PosStockShortage["source_category"];
+  required_quantity: number;
+  available_quantity: number;
+  missing_quantity: number;
+  unit: StockUnit;
+};
+
+function shortageDisplayRows(shortages: PosStockShortage[]) {
+  return shortages.flatMap((shortage) => {
+    let remainingAvailable = Number(shortage.available_quantity ?? 0);
+    return shortage.usages
+      .slice()
+      .sort((left, right) => left.line_position - right.line_position)
+      .map((usage) => {
+        const required = Number(usage.requested_quantity ?? 0);
+        const available = Math.min(required, Math.max(0, remainingAvailable));
+        const missing = Math.max(0, required - available);
+        remainingAvailable = Math.max(0, remainingAvailable - required);
+        return {
+          line_kind: usage.line_kind,
+          line_label: usage.line_label,
+          line_quantity: Number(usage.line_quantity ?? 0),
+          source_name: shortage.source_name,
+          source_category: shortage.source_category,
+          required_quantity: required,
+          available_quantity: available,
+          missing_quantity: missing,
+          unit: shortage.unit
+        } satisfies StockShortageDisplayRow;
+      })
+      .filter((row) => row.missing_quantity > 0.0001);
+  });
+}
+
+function StockShortageTable({ title, entries }: { title: string; entries: StockShortageDisplayRow[] }) {
+  if (entries.length === 0) return null;
+  const grouped = new Map<string, StockShortageDisplayRow[]>();
+  for (const entry of entries) {
+    const key = `${entry.line_label}:${entry.line_quantity}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), entry]);
+  }
+  return (
+    <section className="stock-shortage-section">
+      <h3>{title}</h3>
+      {[...grouped.entries()].map(([key, group]) => (
+        <div className="stock-shortage-line" key={key}>
+          <strong>{group[0].line_label}{group[0].line_kind === "pizza" ? ` x${group[0].line_quantity}` : ""}</strong>
+          <div className="data-table-wrap">
+            <table className="data-table compact-data-table stock-shortage-table">
+              <thead>
+                <tr>
+                  <th>Ingrediente</th>
+                  <th>Requiere</th>
+                  <th>Disponible</th>
+                  <th>Faltan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.map((entry) => (
+                  <tr key={`${entry.source_category}:${entry.source_name}`}>
+                    <td>{entry.source_name}</td>
+                    <td>{formatStockQuantity(entry.required_quantity, entry.unit)}</td>
+                    <td>{formatStockQuantity(entry.available_quantity, entry.unit)}</td>
+                    <td><strong className="danger-text">{formatStockQuantity(entry.missing_quantity, entry.unit)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function StockShortageModal({
+  shortages,
+  onClose,
+  onOpenPurchases,
+  onOpenProduction
+}: {
+  shortages: PosStockShortage[];
+  onClose: () => void;
+  onOpenPurchases: () => void;
+  onOpenProduction: () => void;
+}) {
+  const rows = shortageDisplayRows(shortages);
+  const pizzaRows = rows.filter((row) => row.line_kind === "pizza");
+  const productRows = rows.filter((row) => row.line_kind === "sale_product");
+  const needsProduction = rows.some((row) => row.source_category === "preparation");
+  const needsPurchase = rows.some((row) => row.source_category !== "preparation");
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-label="Stock insuficiente para el pedido" aria-modal="true" className="modal-panel stock-shortage-modal" role="dialog">
+        <header className="modal-header">
+          <div>
+            <strong>NO HAY SUFICIENTE STOCK PARA ELABORAR ESTE PEDIDO</strong>
+            <span>El pedido no fue registrado ni descontado del inventario.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="stock-shortage-body">
+          <StockShortageTable entries={pizzaRows} title="Pizzas" />
+          <StockShortageTable entries={productRows} title="Productos" />
+          <p className="field-hint danger">No es posible confirmar el pedido hasta completar el stock requerido.</p>
+          {needsPurchase ? <p className="field-hint">Para ingredientes, bases o productos: registra una compra o ajuste de inventario.</p> : null}
+          {needsProduction ? <p className="field-hint">Para preparaciones: registra una producción o ingreso histórico/ajuste de la preparación.</p> : null}
+        </div>
+        <footer className="form-actions modal-form-actions">
+          <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
+          {needsPurchase ? <button className="primary-button" onClick={onOpenPurchases} type="button">Ir a Compras</button> : null}
+          {needsProduction ? <button className="positive-button" onClick={onOpenProduction} type="button">Ir a Producción</button> : null}
+        </footer>
+      </section>
+    </div>
   );
 }

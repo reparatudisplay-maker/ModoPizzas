@@ -94,6 +94,10 @@ function purchaseKindLabel(kind: PurchaseKind) {
   return "Insumo";
 }
 
+function isUnitStockPurchaseKind(kind: PurchaseKind | null) {
+  return kind === "ingredient" || kind === "supply";
+}
+
 function normalizeReferenceSku(value: string) {
   return value
     .toUpperCase()
@@ -363,8 +367,14 @@ export function PurchaseForm({
 }) {
   const [state, formAction] = useActionState(registerPurchase, initialFormActionState);
   const editItem = items.find((item) => item.id === editPurchase?.inventory_item_id);
+  const editIsPackagePurchase = Boolean(editPurchase?.presentation_quantity && editPurchase.presentation_unit);
+  const editIsTotalWeightIngredient =
+    editPurchase &&
+    editItem?.item_kind === "ingredient" &&
+    editItem.presentation_quantity === null &&
+    editItem.purchase_mode !== "packages";
   const editDisplayQuantity =
-    editPurchase && editItem?.item_kind === "ingredient" && editItem.presentation_quantity === null
+    editIsTotalWeightIngredient
       ? editPurchase.presentation_quantity && editPurchase.presentation_unit
         ? { value: editPurchase.presentation_quantity, unit: editPurchase.presentation_unit }
         : toPreferredDisplayQuantity(editPurchase.quantity, editPurchase.unit)
@@ -382,7 +392,15 @@ export function PurchaseForm({
   const selectableItems = items.filter((item) => item.is_active && item.presentation_quantity === null);
   const selectedItem = selectableItems.find((item) => item.id === selectedItemId) ?? editItem;
   const purchaseKind: PurchaseKind | null = selectedItem?.item_kind ?? null;
-  const selectedPurchaseMode: PurchaseMode = selectedItem?.item_kind === "ingredient" && selectedItem.purchase_mode !== "packages" ? "total_weight" : "packages";
+  const canChooseUnitPurchaseMode = selectedItem?.unit === "unit" && isUnitStockPurchaseKind(purchaseKind);
+  const [unitEntryMode, setUnitEntryMode] = useState<"units" | "packages">(editIsPackagePurchase ? "packages" : "units");
+  const selectedPurchaseMode: PurchaseMode = canChooseUnitPurchaseMode
+    ? unitEntryMode === "packages"
+      ? "packages"
+      : "total_weight"
+    : selectedItem?.item_kind === "ingredient" && selectedItem.purchase_mode !== "packages"
+      ? "total_weight"
+      : "packages";
   const presentationUnitSource = purchaseKind !== "ingredient" && editPresentationDisplay?.unit ? editPresentationDisplay.unit : selectedItem?.unit ?? "unit";
   const unitOptions = compatibleUnits(presentationUnitSource);
   const [presentationUnit, setPresentationUnit] = useState<InventoryItem["unit"]>(
@@ -404,6 +422,7 @@ export function PurchaseForm({
     setQuantity("");
     setPackageContent("");
     setPresentationUnit(compatibleUnits(item?.unit ?? "unit")[0]?.value ?? "unit");
+    setUnitEntryMode("units");
     if (!referenceSkuEdited) setReferenceSku("");
   }
 
@@ -436,14 +455,22 @@ export function PurchaseForm({
         {selectedItem ? (
           <div className="field">
             <label>Forma de compra del producto</label>
-            <input disabled value={selectedPurchaseMode === "packages" ? "Unidad o Paquetes" : "Peso total"} />
+            {canChooseUnitPurchaseMode ? (
+              <select onChange={(event) => setUnitEntryMode(event.target.value === "packages" ? "packages" : "units")} value={unitEntryMode}>
+                <option value="units">Unidades</option>
+                <option value="packages">Paquetes</option>
+              </select>
+            ) : (
+              <input disabled value={selectedPurchaseMode === "packages" ? "Unidad o Paquetes" : "Peso total"} />
+            )}
           </div>
         ) : null}
         {selectedItem && selectedPurchaseMode === "total_weight" ? (
           <>
             <div className="field">
-              <label>Peso/Volumen:</label>
-              <input name="purchase_unit" type="hidden" value={presentationUnit} />
+              <label>{canChooseUnitPurchaseMode ? "Cantidad" : "Peso/Volumen:"}</label>
+              <input name="purchase_unit" type="hidden" value={canChooseUnitPurchaseMode ? "unit" : presentationUnit} />
+              <input name="presentation_unit" type="hidden" value={canChooseUnitPurchaseMode ? "unit" : presentationUnit} />
               <input
                 inputMode="decimal"
                 name="quantity"
@@ -455,22 +482,24 @@ export function PurchaseForm({
                 value={quantity}
               />
             </div>
-            <div className="field">
-              <label>Unidad</label>
-              <select name="presentation_unit" onChange={(event) => setPresentationUnit(normalizeStockUnit(event.target.value))} value={presentationUnit}>
-                {unitOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {canChooseUnitPurchaseMode ? null : (
+              <div className="field">
+                <label>Unidad</label>
+                <select name="presentation_unit" onChange={(event) => setPresentationUnit(normalizeStockUnit(event.target.value))} value={presentationUnit}>
+                  {unitOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </>
         ) : null}
         {selectedItem && selectedPurchaseMode === "packages" ? (
           <>
           <div className="field">
-            <label>Cantidad por paquetes</label>
+            <label>Cantidad de paquetes</label>
             <input name="purchase_unit" type="hidden" value="unit" />
             <input
               inputMode="decimal"
@@ -484,7 +513,7 @@ export function PurchaseForm({
             />
           </div>
           <div className="field">
-          <label>Presentacion</label>
+          <label>{canChooseUnitPurchaseMode ? "Unidades por paquete" : "Presentacion"}</label>
           <div className="split-input">
             <input
               inputMode="decimal"
@@ -500,21 +529,28 @@ export function PurchaseForm({
               type="text"
               value={packageContent}
             />
-            <select
-              name="presentation_unit"
-              onChange={(event) => {
-                const nextUnit = normalizeStockUnit(event.target.value);
-                setPresentationUnit(nextUnit);
-                if (!referenceSkuEdited) setReferenceSku(referenceSkuSuggestion(selectedItem?.name ?? "", packageContent, nextUnit));
-              }}
-              value={presentationUnit}
-            >
-              {unitOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            {canChooseUnitPurchaseMode ? (
+              <>
+                <input name="presentation_unit" type="hidden" value="unit" />
+                <input disabled value="UND" />
+              </>
+            ) : (
+              <select
+                name="presentation_unit"
+                onChange={(event) => {
+                  const nextUnit = normalizeStockUnit(event.target.value);
+                  setPresentationUnit(nextUnit);
+                  if (!referenceSkuEdited) setReferenceSku(referenceSkuSuggestion(selectedItem?.name ?? "", packageContent, nextUnit));
+                }}
+                value={presentationUnit}
+              >
+                {unitOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
         </>

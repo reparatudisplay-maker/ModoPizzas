@@ -1,4 +1,4 @@
-import type { StockUnit } from "@/lib/units";
+import { convertStockQuantity, type StockUnit } from "@/lib/units";
 
 export type ProductionStorageMethod = "ambient" | "refrigerated" | "frozen";
 export type ProductionUnitKind = "weight" | "volume" | "unit";
@@ -58,6 +58,25 @@ export type ProductionTraceAllocationInput = {
   cost_cop: number;
 };
 
+export type ProductionLotOutboundInput = {
+  id: string;
+  production_batch_id: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  occurred_at: string;
+  kind: "sale" | "production";
+  order_code?: string | null;
+  order_item_id?: string | null;
+  pizza_name?: string | null;
+  pizza_quantity?: number | null;
+  production_code?: string | null;
+};
+
+export type ProductionLotOutbound = Omit<ProductionLotOutboundInput, "quantity_base"> & {
+  quantity_base: number;
+  balance_after_base: number;
+};
+
 export type ProductionTraceSource = {
   id: string;
   source_kind: ProductionSourceKind;
@@ -95,6 +114,7 @@ export type ProductionInventoryLot = {
   inventory_value_cop: number;
   created_by: string | null;
   ingredients_consumed: ProductionTraceSource[];
+  outbound_consumptions: ProductionLotOutbound[];
 };
 
 export type ProductionInventoryItem = {
@@ -146,6 +166,7 @@ export function buildProductionInventory({
   allocations,
   consumptions,
   traceAllocations,
+  outboundConsumptions = [],
   inventoryNames,
   preparationNames,
   imageSrcByPreparationId = new Map()
@@ -154,6 +175,7 @@ export function buildProductionInventory({
   allocations: ProductionAllocationInput[];
   consumptions: ProductionConsumptionInput[];
   traceAllocations: ProductionTraceAllocationInput[];
+  outboundConsumptions?: ProductionLotOutboundInput[];
   inventoryNames: Map<string, string>;
   preparationNames: Map<string, string>;
   imageSrcByPreparationId?: Map<string, string | null>;
@@ -164,6 +186,11 @@ export function buildProductionInventory({
       ...(traceAllocationsByConsumption.get(allocation.consumption_id) ?? []),
       allocation
     ]);
+  }
+
+  const outboundByBatch = new Map<string, ProductionLotOutboundInput[]>();
+  for (const outbound of outboundConsumptions) {
+    outboundByBatch.set(outbound.production_batch_id, [...(outboundByBatch.get(outbound.production_batch_id) ?? []), outbound]);
   }
 
   const consumptionsByProduction = new Map<string, ProductionTraceSource[]>();
@@ -205,6 +232,40 @@ export function buildProductionInventory({
       const consumedQuantity = productionAllocationSum(allocations, batch.id);
       const stock = Math.max(0, initialQuantity - consumedQuantity);
       const unitCost = Number(batch.unit_cost_cop ?? 0);
+      let runningBalance = initialQuantity;
+      const normalizedLotOutbounds = (outboundByBatch.get(batch.id) ?? [])
+        .map((outbound) => {
+          let quantityInLotUnit = Number(outbound.quantity_base ?? 0);
+          try {
+            quantityInLotUnit = convertStockQuantity(quantityInLotUnit, outbound.base_unit, batch.base_unit);
+          } catch {
+            // The source rows are validated by their allocation constraints. Keep the stored value visible if a legacy unit cannot convert.
+          }
+          return { ...outbound, quantity_base: quantityInLotUnit, base_unit: batch.base_unit };
+        });
+
+      // A half-and-half pizza can persist two allocations for the same component
+      // and lot. Present them as one sale without changing the frozen allocations.
+      const groupedLotOutbounds = new Map<string, ProductionLotOutboundInput>();
+      for (const outbound of normalizedLotOutbounds) {
+        const groupKey = outbound.kind === "sale" && outbound.order_item_id
+          ? `sale:${outbound.order_item_id}`
+          : `${outbound.kind}:${outbound.id}`;
+        const current = groupedLotOutbounds.get(groupKey);
+        if (!current) {
+          groupedLotOutbounds.set(groupKey, outbound);
+          continue;
+        }
+        current.quantity_base += outbound.quantity_base;
+        if (outbound.occurred_at < current.occurred_at) current.occurred_at = outbound.occurred_at;
+      }
+
+      const lotOutbounds = [...groupedLotOutbounds.values()]
+        .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.id.localeCompare(b.id))
+        .map((outbound) => {
+          runningBalance = Math.max(0, runningBalance - outbound.quantity_base);
+          return { ...outbound, balance_after_base: runningBalance };
+        });
       return {
         id: batch.id,
         production_id: batch.production_id!,
@@ -225,7 +286,8 @@ export function buildProductionInventory({
         unit_cost_cop: unitCost,
         inventory_value_cop: stock * unitCost,
         created_by: batch.productions!.created_by,
-        ingredients_consumed: consumptionsByProduction.get(batch.production_id!) ?? []
+        ingredients_consumed: consumptionsByProduction.get(batch.production_id!) ?? [],
+        outbound_consumptions: lotOutbounds
       } satisfies ProductionInventoryLot;
     })
     .sort((a, b) => {

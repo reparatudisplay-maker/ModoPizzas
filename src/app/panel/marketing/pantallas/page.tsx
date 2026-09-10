@@ -1,6 +1,7 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { MarketingScreensWorkspace, type MarketingDataSource, type MarketingProjectRecord } from "@/components/marketing-screens-workspace";
 import { PanelShell } from "@/components/panel-shell";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -60,17 +61,8 @@ function formatPresentation(quantity: number, unit: string) {
 
 export default async function MarketingPantallasPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const [{ data: roles }, permissionResult] = await Promise.all([
-    supabase.from("user_roles").select("role").eq("user_id", user.id),
-    supabase.rpc("current_user_has_permission", { p_permission_code: "marketing_pantallas.view" })
-  ]);
-  const roleNames = roles?.map((item) => item.role) ?? [];
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "marketing");
+  const permissionResult = await supabase.rpc("current_user_has_permission", { p_permission_code: "marketing_pantallas.view" });
   if (!permissionResult.data) notFound();
 
   const [projectsResult, scenesResult, pizzaPricesResult, saleProductsResult, promotionsResult] = await Promise.all([
@@ -139,7 +131,7 @@ export default async function MarketingPantallasPage() {
   );
 
   return (
-    <PanelShell active="marketing-pantallas" hideHeader roleNames={roleNames} title="Marketing" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="marketing-pantallas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Marketing" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <MarketingScreensWorkspace dataSources={[...pizzaSources, ...productSources, ...promotionSources] as MarketingDataSource[]} projects={projects} />
     </PanelShell>

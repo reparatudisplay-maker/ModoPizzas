@@ -1,12 +1,11 @@
-import { notFound, redirect } from "next/navigation";
 import { KitchenKdsBoard, type KitchenKdsItem, type KitchenItemStatus } from "@/components/kitchen-kds-board";
 import { PanelShell } from "@/components/panel-shell";
 import type { KitchenSettings } from "@/lib/kitchen-estimates";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 export const dynamic = "force-dynamic";
 
-const kitchenRoles = new Set(["cocina", "gerente", "admin_sistema"]);
 
 type KitchenRow = {
   id: string;
@@ -62,15 +61,7 @@ type KitchenSizeSettingRow = {
 
 export default async function CocinaPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => kitchenRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "cocina");
 
   const { data: kitchenRows, error: kitchenError } = await supabase
     .from("kitchen_order_items")
@@ -157,7 +148,7 @@ export default async function CocinaPage() {
   };
 
   return (
-    <PanelShell active="cocina" hideHeader roleNames={roleNames} title="Cocina" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="cocina" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Cocina" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <KitchenKdsBoard items={items} key={items.map((item) => `${item.id}:${item.status}:${item.prepared_at ?? ""}`).join("|")} settings={kitchenSettings} />
     </PanelShell>

@@ -1,11 +1,10 @@
-import { notFound, redirect } from "next/navigation";
 import { KitchenSettingsModule, type KitchenSettingsFormData, type KitchenSizeSettingsFormData } from "@/components/kitchen-settings-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 export const dynamic = "force-dynamic";
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 type KitchenSettingsRow = {
   oven_count: number | null;
@@ -38,15 +37,7 @@ function suggestedCapacity(diameterCm: number | null, widthCm: number, depthCm: 
 
 export default async function KitchenSettingsPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((roleRow) => roleRow.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "configuracion");
 
   const [settingsResult, sizesResult, sizeSettingsResult] = await Promise.all([
     supabase.from("kitchen_settings").select("oven_count, oven_width_cm, oven_depth_cm, sound_enabled_default, warning_threshold_minutes, delay_threshold_minutes").eq("id", true).maybeSingle(),
@@ -81,7 +72,7 @@ export default async function KitchenSettingsPage() {
   const error = settingsResult.error ?? sizesResult.error ?? sizeSettingsResult.error;
 
   return (
-    <PanelShell active="configuracion-cocina" hideHeader roleNames={roleNames} title="Configuracion de cocina" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="configuracion-cocina" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Configuracion de cocina" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <KitchenSettingsModule settings={settings} sizes={sizes} />
     </PanelShell>

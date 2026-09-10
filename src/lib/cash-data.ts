@@ -35,7 +35,7 @@ export async function hydrateCashSession(supabase: SupabaseServerClient, session
 export async function loadCashMovements(supabase: SupabaseServerClient, sessionId: string): Promise<CashMovementRow[]> {
   const { data, error } = await supabase
     .from("cash_movements")
-    .select("id, cash_session_id, movement_kind, direction, source_kind, destination, amount_cop, occurred_at, reason, pos_orders(code, kind), expenses(description)")
+    .select("id, cash_session_id, movement_kind, direction, source_kind, destination, amount_cop, occurred_at, reason, pos_orders(code, kind), expenses!cash_movements_expense_id_fkey(description)")
     .eq("cash_session_id", sessionId)
     .order("occurred_at", { ascending: false });
   if (error) throw new Error(error.message);

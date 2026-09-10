@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ModalDragController } from "@/components/modal-drag-controller";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { fallbackModuleAccessForRoles, type PanelActiveKey, type SystemModuleKey } from "@/lib/system-modules";
 
 type PanelShellProps = {
   children: ReactNode;
@@ -15,41 +16,12 @@ type PanelShellProps = {
   subtitle?: string;
   userEmail: string;
   roleNames: string[];
-  active:
-    | "proveedores"
-    | "inventario"
-    | "productos"
-    | "compras"
-    | "marcas"
-    | "categorias"
-    | "perfiles-conservacion"
-    | "configuracion"
-    | "configuracion-cocina"
-    | "menu-pizzas"
-    | "menu-precios-adiciones"
-    | "menu-precios-pizzas"
-    | "menu-precios-productos"
-    | "marketing-pantallas"
-    | "marketing-promociones"
-    | "pedidos-nuevo"
-    | "pedidos-listado"
-    | "gastos"
-    | "gastos-categorias"
-    | "caja-estado"
-    | "caja-movimientos"
-    | "caja-cierre"
-    | "cocina"
-    | "produccion"
-    | "produccion-preparaciones"
-    | "produccion-registrar";
+  moduleKeys?: SystemModuleKey[];
+  active: PanelActiveKey;
   actions?: ReactNode;
   hideHeader?: boolean;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
-const orderRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
-const cashRoles = new Set(["vendedor", "gerente", "admin_sistema"]);
-const kitchenRoles = new Set(["cocina", "gerente", "admin_sistema"]);
 type ActiveKey = PanelShellProps["active"];
 type NavLink = { key: ActiveKey; href: string; label: string; icon: LucideIcon; show: boolean };
 type RootItem =
@@ -75,12 +47,10 @@ function readNavOrder(storageKey: string) {
   }
 }
 
-export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, active, actions, hideHeader = false }: PanelShellProps) {
-  const isManager = roleNames.some((role) => managerRoles.has(role));
-  const canSell = roleNames.some((role) => orderRoles.has(role));
-  const canUseCash = roleNames.some((role) => cashRoles.has(role));
-  const canUseKitchen = roleNames.some((role) => kitchenRoles.has(role));
+export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, moduleKeys, active, actions, hideHeader = false }: PanelShellProps) {
   const isAdmin = roleNames.includes("admin_sistema");
+  const moduleAccess = new Set(moduleKeys ?? fallbackModuleAccessForRoles(roleNames));
+  const canAccess = (moduleKey: SystemModuleKey) => isAdmin || moduleAccess.has(moduleKey);
   const orderStorageKey = `modo-pizzas-nav-order:${userEmail || "usuario"}`;
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => readNavOrder(orderStorageKey));
   const [dragging, setDragging] = useState<{ group: string; key: string } | null>(null);
@@ -93,49 +63,49 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   }, [navOrder, orderStorageKey]);
 
   const masterLinks: NavLink[] = [
-    { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: isManager },
-    { key: "categorias", href: "/panel/categorias", label: "Categorias", icon: Tags, show: isManager },
-    { key: "marcas", href: "/panel/marcas", label: "Marcas", icon: Tags, show: isManager },
-    { key: "proveedores", href: "/panel/proveedores", label: "Proveedores", icon: Truck, show: isManager },
-    { key: "perfiles-conservacion", href: "/panel/perfiles-conservacion", label: "Perfiles de conservacion", icon: Thermometer, show: isManager }
+    { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: canAccess("maestros") },
+    { key: "categorias", href: "/panel/categorias", label: "Categorias", icon: Tags, show: canAccess("maestros") },
+    { key: "marcas", href: "/panel/marcas", label: "Marcas", icon: Tags, show: canAccess("maestros") },
+    { key: "proveedores", href: "/panel/proveedores", label: "Proveedores", icon: Truck, show: canAccess("maestros") },
+    { key: "perfiles-conservacion", href: "/panel/perfiles-conservacion", label: "Perfiles de conservacion", icon: Thermometer, show: canAccess("maestros") }
   ];
   const inventoryLinks: NavLink[] = [
-    { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: isManager },
-    { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: isManager }
+    { key: "compras", href: "/panel/compras", label: "Compras", icon: ReceiptText, show: canAccess("compras") },
+    { key: "inventario", href: "/panel/inventario", label: "Inventario", icon: Package, show: canAccess("inventario") }
   ];
   const orderLinks: NavLink[] = [
-    { key: "pedidos-nuevo", href: "/panel/pedidos/nuevo", label: "Crear pedido", icon: ShoppingCart, show: canSell },
-    { key: "pedidos-listado", href: "/panel/pedidos", label: "Listado de pedidos", icon: ClipboardList, show: canSell }
+    { key: "pedidos-nuevo", href: "/panel/pedidos/nuevo", label: "Crear pedido", icon: ShoppingCart, show: canAccess("pedidos") },
+    { key: "pedidos-listado", href: "/panel/pedidos", label: "Listado de pedidos", icon: ClipboardList, show: canAccess("pedidos") }
   ];
   const expenseLinks: NavLink[] = [
-    { key: "gastos", href: "/panel/gastos", label: "Gastos", icon: HandCoins, show: isManager },
-    { key: "gastos-categorias", href: "/panel/gastos/categorias", label: "Categorias de gasto", icon: Tags, show: isManager }
+    { key: "gastos", href: "/panel/gastos", label: "Gastos", icon: HandCoins, show: canAccess("gastos") },
+    { key: "gastos-categorias", href: "/panel/gastos/categorias", label: "Categorias de gasto", icon: Tags, show: canAccess("gastos") }
   ];
   const cashLinks: NavLink[] = [
-    { key: "caja-estado", href: "/panel/caja", label: "Estado / Apertura", icon: Wallet, show: canUseCash },
-    { key: "caja-movimientos", href: "/panel/caja/movimientos", label: "Movimientos", icon: ReceiptText, show: canUseCash },
-    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canUseCash }
+    { key: "caja-estado", href: "/panel/caja", label: "Estado / Apertura", icon: Wallet, show: canAccess("caja") },
+    { key: "caja-movimientos", href: "/panel/caja/movimientos", label: "Movimientos", icon: ReceiptText, show: canAccess("caja") },
+    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canAccess("caja") }
   ];
   const kitchenLinks: NavLink[] = [
-    { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canUseKitchen }
+    { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canAccess("cocina") }
   ];
-  const menuMainLinks: NavLink[] = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: isManager }];
+  const menuMainLinks: NavLink[] = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: canAccess("menu") }];
   const menuPriceLinks: NavLink[] = [
-    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: isManager },
-    { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: isManager },
-    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: isManager }
+    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: canAccess("menu") },
+    { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") },
+    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: canAccess("menu") }
   ];
   const marketingLinks: NavLink[] = [
-    { key: "marketing-pantallas", href: "/panel/marketing/pantallas", label: "Pantallas", icon: MonitorPlay, show: isManager },
-    { key: "marketing-promociones", href: "/panel/marketing/promociones", label: "Promociones", icon: Megaphone, show: isManager }
+    { key: "marketing-pantallas", href: "/panel/marketing/pantallas", label: "Pantallas", icon: MonitorPlay, show: canAccess("marketing") },
+    { key: "marketing-promociones", href: "/panel/marketing/promociones", label: "Promociones", icon: Megaphone, show: canAccess("marketing") }
   ];
   const productionLinks: NavLink[] = [
-    { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: isManager },
-    { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: isManager }
+    { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: canAccess("produccion") },
+    { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: canAccess("produccion") }
   ];
   const adminLinks: NavLink[] = [
     { key: "configuracion", href: "/panel/configuracion", label: "Usuarios y permisos", icon: UserCog, show: isAdmin },
-    { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: isManager }
+    { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: canAccess("configuracion") }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
   const ordersActive = orderLinks.some((link) => link.key === active);
@@ -238,20 +208,20 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
 
   const menuRootItems: RootItem[] = [
     { kind: "link", key: "menu-pizzas", link: menuMainLinks[0] },
-    { kind: "group", key: "menu-prices", label: "Precios", title: "Precios", icon: ReceiptText, show: isManager, active: menuPricesActive, links: menuPriceLinks }
+    { kind: "group", key: "menu-prices", label: "Precios", title: "Precios", icon: ReceiptText, show: canAccess("menu"), active: menuPricesActive, links: menuPriceLinks }
   ];
 
   const rootItems: RootItem[] = [
-    { kind: "group", key: "masters", label: "Maestros", title: "Datos maestros", icon: Tags, show: isManager, active: masterActive, links: masterLinks },
-    { kind: "group", key: "orders", label: "Pedidos", title: "Pedidos", icon: ShoppingCart, show: canSell, active: ordersActive, links: orderLinks },
-    { kind: "group", key: "cash", label: "Caja", title: "Caja", icon: Wallet, show: canUseCash, active: cashActive, links: cashLinks },
-    { kind: "group", key: "expenses", label: "Gastos", title: "Gastos", icon: HandCoins, show: isManager, active: expensesActive, links: expenseLinks },
-    { kind: "group", key: "kitchen", label: "Cocina", title: "Cocina", icon: ChefHat, show: canUseKitchen, active: kitchenActive, links: kitchenLinks },
+    { kind: "group", key: "masters", label: "Maestros", title: "Datos maestros", icon: Tags, show: canAccess("maestros"), active: masterActive, links: masterLinks },
+    { kind: "group", key: "orders", label: "Pedidos", title: "Pedidos", icon: ShoppingCart, show: canAccess("pedidos"), active: ordersActive, links: orderLinks },
+    { kind: "group", key: "cash", label: "Caja", title: "Caja", icon: Wallet, show: canAccess("caja"), active: cashActive, links: cashLinks },
+    { kind: "group", key: "expenses", label: "Gastos", title: "Gastos", icon: HandCoins, show: canAccess("gastos"), active: expensesActive, links: expenseLinks },
+    { kind: "group", key: "kitchen", label: "Cocina", title: "Cocina", icon: ChefHat, show: canAccess("cocina"), active: kitchenActive, links: kitchenLinks },
     ...inventoryLinks.map((link) => ({ kind: "link" as const, key: link.key, link })),
-    { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: isManager, active: menuActive, links: [], nested: menuRootItems },
-    { kind: "group", key: "marketing", label: "Marketing", title: "Marketing", icon: MonitorPlay, show: isManager, active: marketingActive, links: marketingLinks },
-    { kind: "group", key: "production", label: "Produccion", title: "Produccion", icon: Factory, show: isManager, active: productionActive, links: productionLinks },
-    { kind: "group", key: "settings", label: "Configuracion", title: "Configuracion", icon: isAdmin ? UserCog : Settings, show: isManager, active: settingsActive, links: adminLinks }
+    { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: canAccess("menu"), active: menuActive, links: [], nested: menuRootItems },
+    { kind: "group", key: "marketing", label: "Marketing", title: "Marketing", icon: MonitorPlay, show: canAccess("marketing"), active: marketingActive, links: marketingLinks },
+    { kind: "group", key: "production", label: "Produccion", title: "Produccion", icon: Factory, show: canAccess("produccion"), active: productionActive, links: productionLinks },
+    { kind: "group", key: "settings", label: "Configuracion", title: "Configuracion", icon: isAdmin ? UserCog : Settings, show: canAccess("configuracion"), active: settingsActive, links: adminLinks }
   ];
 
   const visibleRootItems = orderedItems(rootItems.filter((item) => (item.kind === "link" ? item.link.show : item.show)), navOrder.root);

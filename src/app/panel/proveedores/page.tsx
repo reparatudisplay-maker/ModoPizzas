@@ -1,7 +1,7 @@
-import { notFound, redirect } from "next/navigation";
 import { MasterDataModule, type MasterRecord } from "@/components/master-data-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 type SuppliersPageProps = {
   searchParams: Promise<{ q?: string; status?: string; limit?: string }>;
@@ -12,22 +12,13 @@ type Supplier = MasterRecord & {
   notes: string | null;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
 export default async function SuppliersPage({ searchParams }: SuppliersPageProps) {
   const { q = "", status = "", limit = "15" } = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "maestros");
 
   let query = supabase.from("suppliers").select("id, name, phone, notes, is_active").order("name");
 
@@ -48,7 +39,7 @@ export default async function SuppliersPage({ searchParams }: SuppliersPageProps
   const error = recordsResult.error ?? allRecordsResult.error;
 
   return (
-    <PanelShell active="proveedores" hideHeader roleNames={roleNames} subtitle="Proveedores" title="Proveedores" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="proveedores" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} subtitle="Proveedores" title="Proveedores" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <MasterDataModule
         addLabel="Agregar proveedor"

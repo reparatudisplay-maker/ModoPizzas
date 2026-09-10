@@ -1,11 +1,10 @@
-import { notFound, redirect } from "next/navigation";
 import { ExpensesModule, type CustodyFundOption, type ExpenseCategoryOption, type ExpenseRow, type SupplierOption } from "@/components/expenses-module";
 import { PanelShell } from "@/components/panel-shell";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 export const dynamic = "force-dynamic";
 
-const expenseRoles = new Set(["gerente", "admin_sistema"]);
 
 type ExpenseRecord = {
   id: string;
@@ -24,15 +23,7 @@ type ExpenseRecord = {
 
 export default async function ExpensesPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((role) => role.role) ?? [];
-  if (!roleNames.some((role) => expenseRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "gastos");
 
   const [categoriesResult, suppliersResult, fundsResult, expensesResult, sessionsResult] = await Promise.all([
     supabase.from("expense_categories").select("id, name, is_active").order("sort_order", { ascending: true }).order("name"),
@@ -79,7 +70,7 @@ export default async function ExpensesPage() {
   })) satisfies ExpenseRow[];
 
   return (
-    <PanelShell active="gastos" hideHeader roleNames={roleNames} title="Gastos" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="gastos" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Gastos" userEmail={user.email ?? "usuario"}>
       <ExpensesModule
         categories={(categoriesResult.data ?? []) as ExpenseCategoryOption[]}
         custodyFunds={funds satisfies CustodyFundOption[]}

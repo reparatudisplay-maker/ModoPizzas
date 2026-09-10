@@ -1,9 +1,9 @@
 import Link from "next/link";
 import Image from "next/image";
-import { notFound, redirect } from "next/navigation";
 import { Eye, Pencil, X } from "lucide-react";
 import { PanelShell } from "@/components/panel-shell";
 import { ProductDeleteButton, ProductModal, type InventoryProduct, type ItemKind } from "@/components/product-form";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 type ProductsPageProps = {
@@ -27,8 +27,6 @@ type Brand = {
   name: string;
   is_active: boolean;
 };
-
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -60,20 +58,7 @@ function isDirectImageUrl(value: string) {
 export default async function ProductsPage({ searchParams }: ProductsPageProps) {
   const { q = "", edit = "", item: selectedItemId = "", limit = "15", brand = "", category = "", kind = "" } = await searchParams;
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((role) => role.role) ?? [];
-  const canManage = roleNames.some((role) => managerRoles.has(role));
-  if (!canManage) {
-    notFound();
-  }
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "maestros");
 
   let itemsQuery = supabase
     .from("inventory_items")
@@ -164,7 +149,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     <PanelShell
       active="productos"
       hideHeader
-      roleNames={roleNames}
+      moduleKeys={moduleKeys} roleNames={roleNames}
       subtitle="Dato maestro para compras, inventario, recetas y venta."
       title="Productos"
       userEmail={user.email ?? "usuario"}

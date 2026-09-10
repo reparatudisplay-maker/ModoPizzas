@@ -1,12 +1,11 @@
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import { PosOrderWorkspace, type PosAdditionOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { convertStockQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
-const orderRoles = new Set(["vendedor", "mesero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
 
 type PriceRow = {
@@ -107,15 +106,7 @@ function relationName(relation: { name: string } | { name: string }[] | null) {
 
 export default async function NuevoPedidoPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => orderRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "pedidos");
 
   const [
     flavorsResult,
@@ -322,7 +313,7 @@ export default async function NuevoPedidoPage() {
   );
 
   return (
-    <PanelShell active="pedidos-nuevo" hideHeader roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <PosOrderWorkspace additions={additions} pizzas={pizzas} saleProducts={saleProducts} />
     </PanelShell>

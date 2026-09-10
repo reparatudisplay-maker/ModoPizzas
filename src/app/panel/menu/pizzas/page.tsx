@@ -1,4 +1,3 @@
-import { notFound, redirect } from "next/navigation";
 import {
   MenuPizzasWorkspace,
   type AdditionIngredientSource,
@@ -7,12 +6,13 @@ import {
   type PizzaFlavorRecord,
   type PizzaSizeRecord
 } from "@/components/menu-pizzas-workspace";
+import { type PizzaPriceBaseSource, type PizzaPriceSource, type PizzaSizeComponentQuantity } from "@/components/pizza-prices-workspace";
 import { PanelShell } from "@/components/panel-shell";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { canonicalStockUnit, convertStockQuantity, type StockUnit } from "@/lib/units";
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +93,19 @@ type PhysicalCountRow = {
   average_cost_cop: number;
 };
 
+type BaseSourceRow = {
+  pizza_size_id: string;
+  source_kind: "inventory_item" | "preparation";
+  inventory_item_id: string | null;
+  source_preparation_id: string | null;
+  quantity_base: number;
+  unit: StockUnit;
+  display_quantity: number;
+  display_unit: "g" | "kg" | "ml" | "l" | "unit";
+  inventory_items: { name: string } | null;
+  preparations: { name: string } | null;
+};
+
 function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
   if (fromUnit === toUnit) return quantity;
   return convertStockQuantity(quantity, fromUnit, toUnit);
@@ -104,15 +117,7 @@ export default async function MenuPizzasPage() {
 
 export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" }) {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "menu");
 
   const [
     categoriesResult,
@@ -121,6 +126,8 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
     flavorIngredientsResult,
     inventorySourcesResult,
     preparationSourcesResult,
+    baseSourcesResult,
+    componentQuantitiesResult,
     additionsResult,
     additionSizesResult,
     additionFlavorsResult,
@@ -151,6 +158,10 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
       .is("presentation_quantity", null)
       .order("name"),
     supabase.from("preparations").select("id, name, base_unit").eq("is_active", true).order("name"),
+    supabase
+      .from("pizza_size_base_sources")
+      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
+    supabase.from("pizza_size_component_quantities").select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit"),
     supabase
       .from("pizza_additions")
       .select("id, sku, name, source_kind, inventory_item_id, source_preparation_id, max_allowed, is_active, is_available, sort_order, created_at, inventory_items(name, image_url, unit, average_cost_cop), preparations(name, base_unit)")
@@ -183,6 +194,8 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
     flavorIngredientsResult.error ??
     inventorySourcesResult.error ??
     preparationSourcesResult.error ??
+    baseSourcesResult.error ??
+    componentQuantitiesResult.error ??
     additionsResult.error ??
     additionSizesResult.error ??
     additionFlavorsResult.error ??
@@ -201,6 +214,28 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
   const inventorySources = (inventorySourcesResult.data ?? []).map((item) => ({ id: item.id, name: item.name, source_kind: "inventory_item" as const }));
   const preparationSources = (preparationSourcesResult.data ?? []).map((item) => ({ id: item.id, name: item.name, source_kind: "preparation" as const }));
+  const baseSources = ((baseSourcesResult.data ?? []) as unknown as BaseSourceRow[])
+    .map((base) => {
+      const sourceId = base.source_kind === "preparation" ? base.source_preparation_id : base.inventory_item_id;
+      return {
+        size_id: base.pizza_size_id,
+        source_kind: base.source_kind,
+        source_id: sourceId ?? "",
+        source_name: base.source_kind === "preparation" ? base.preparations?.name ?? "Sin preparacion" : base.inventory_items?.name ?? "Sin ingrediente",
+        quantity_base: Number(base.quantity_base ?? 0),
+        unit: base.unit,
+        display_quantity: Number(base.display_quantity ?? 0),
+        display_unit: base.display_unit
+      };
+    })
+    .filter((base) => base.source_id) as PizzaPriceBaseSource[];
+  const componentQuantities = (componentQuantitiesResult.data ?? []).map((row) => ({
+    pizza_size_id: row.pizza_size_id,
+    source_kind: row.source_kind as "inventory_item" | "preparation",
+    source_id: row.source_kind === "preparation" ? row.source_preparation_id : row.inventory_item_id,
+    quantity_base: Number(row.quantity_base ?? 0),
+    unit: row.unit as StockUnit
+  })).filter((row) => row.source_id) as PizzaSizeComponentQuantity[];
   const sourceNameByKey = new Map([...inventorySources, ...preparationSources].map((source) => [`${source.source_kind}:${source.id}`, source.name]));
   const ingredientsByFlavor = new Map<string, PizzaFlavorRecord["characteristic_ingredients"]>();
   for (const ingredient of (flavorIngredientsResult.data ?? []) as FlavorIngredientRow[]) {
@@ -318,6 +353,31 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
     });
   }
 
+  const baseSourceOptions = [
+    ...(inventorySourcesResult.data ?? []).map((item) => {
+      const cost = itemCostById.get(item.id);
+      return {
+        id: item.id,
+        name: item.name,
+        source_kind: "inventory_item" as const,
+        unit: item.unit,
+        unit_cost_cop: cost?.unit_cost_cop ?? null,
+        stock_base: cost?.stock_base ?? 0
+      };
+    }),
+    ...(preparationSourcesResult.data ?? []).map((preparation) => {
+      const cost = preparationCostById.get(preparation.id);
+      return {
+        id: preparation.id,
+        name: preparation.name,
+        source_kind: "preparation" as const,
+        unit: preparation.base_unit,
+        unit_cost_cop: cost?.unit_cost_cop ?? null,
+        stock_base: cost?.stock_base ?? 0
+      };
+    })
+  ] as PizzaPriceSource[];
+
   const additionIngredientSources = (inventorySourcesResult.data ?? []).map((item) => {
     const cost = itemCostById.get(item.id);
     return {
@@ -382,16 +442,19 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
   })) as PizzaAdditionRecord[];
 
   return (
-    <PanelShell active={mode === "adiciones" ? "menu-precios-adiciones" : "menu-pizzas"} hideHeader roleNames={roleNames} title={mode === "adiciones" ? "Adiciones" : "Pizzas"} userEmail={user.email ?? "usuario"}>
+    <PanelShell active={mode === "adiciones" ? "menu-precios-adiciones" : "menu-pizzas"} hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title={mode === "adiciones" ? "Adiciones" : "Pizzas"} userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
         <MenuPizzasWorkspace
         additionIngredientSources={additionIngredientSources}
         additions={additions}
+        baseSources={baseSources}
+        componentQuantities={componentQuantities}
+        baseSourceOptions={baseSourceOptions}
         categories={categories}
         flavors={flavors}
         ingredientSources={[...inventorySources, ...preparationSources]}
         initialSection={mode === "adiciones" ? "adiciones" : "sabores"}
-        sections={mode === "adiciones" ? ["adiciones"] : ["sabores", "tamanos", "categorias"]}
+        sections={mode === "adiciones" ? ["adiciones"] : ["sabores", "tamanos", "categorias", "bases", "gramajes"]}
         sizes={sizes}
       />
     </PanelShell>

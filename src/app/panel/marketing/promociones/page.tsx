@@ -1,6 +1,7 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { MarketingPromotionsWorkspace, type MarketingPromotionRecord, type MarketingSelectable } from "@/components/marketing-promotions-workspace";
 import { PanelShell } from "@/components/panel-shell";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -41,16 +42,8 @@ function formatPresentation(quantity: number, unit: string) {
 
 export default async function MarketingPromocionesPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const [{ data: roles }, permissionResult] = await Promise.all([
-    supabase.from("user_roles").select("role").eq("user_id", user.id),
-    supabase.rpc("current_user_has_permission", { p_permission_code: "marketing_promociones.view" })
-  ]);
-  const roleNames = roles?.map((item) => item.role) ?? [];
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "marketing");
+  const permissionResult = await supabase.rpc("current_user_has_permission", { p_permission_code: "marketing_promociones.view" });
   if (!permissionResult.data) notFound();
 
   const [
@@ -132,7 +125,7 @@ export default async function MarketingPromocionesPage() {
   const projects = (projectsResult.data ?? []).map((project) => ({ id: project.id, label: project.name })) as MarketingSelectable[];
 
   return (
-    <PanelShell active="marketing-promociones" hideHeader roleNames={roleNames} title="Marketing" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="marketing-promociones" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Marketing" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <MarketingPromotionsWorkspace pizzaPrices={pizzaPrices} projects={projects} promotions={promotions as MarketingPromotionRecord[]} saleProducts={saleProducts} />
     </PanelShell>

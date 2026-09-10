@@ -1,4 +1,3 @@
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import {
   ProductionRegisterModule,
@@ -8,6 +7,7 @@ import {
   type ProductionSourceOption
 } from "@/components/production-register-module";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { buildProductionInventory } from "@/lib/production-inventory";
 import { canonicalStockUnit, convertStockQuantity } from "@/lib/units";
 
@@ -130,7 +130,6 @@ type ProductionConsumptionRow = {
   cost_cop: number;
 };
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -158,15 +157,7 @@ function allocationSum(allocations: AllocationRow[], key: "purchase_item_id" | "
 
 export default async function RegisterProductionPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "produccion");
 
   const [
     preparationsResult,
@@ -357,7 +348,7 @@ export default async function RegisterProductionPage() {
   });
 
   return (
-    <PanelShell active="produccion-registrar" hideHeader roleNames={roleNames} title="Produccion" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="produccion-registrar" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Produccion" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <ProductionRegisterModule history={history} preparations={preparations} sources={[...inventorySources, ...preparationSources]} />
     </PanelShell>

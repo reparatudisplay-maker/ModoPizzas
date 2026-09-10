@@ -1,18 +1,19 @@
-import { notFound, redirect } from "next/navigation";
 import { PanelShell } from "@/components/panel-shell";
 import {
   PizzaPricesWorkspace,
   type PizzaPriceCategory,
+  type PizzaPriceBaseSource,
   type PizzaPriceFlavor,
   type PizzaPriceRecord,
   type PizzaPriceSize,
-  type PizzaPriceSource
+  type PizzaPriceSource,
+  type PizzaSizeComponentQuantity
 } from "@/components/pizza-prices-workspace";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 import { canonicalStockUnit, convertStockQuantity, type StockUnit } from "@/lib/units";
 
-const managerRoles = new Set(["gerente", "admin_sistema"]);
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,19 @@ type PriceComponentRow = {
   preparations: { name: string } | null;
 };
 
+type BaseSourceRow = {
+  pizza_size_id: string;
+  source_kind: "inventory_item" | "preparation";
+  inventory_item_id: string | null;
+  source_preparation_id: string | null;
+  quantity_base: number;
+  unit: StockUnit;
+  display_quantity: number;
+  display_unit: StockUnit;
+  inventory_items: { name: string } | null;
+  preparations: { name: string } | null;
+};
+
 function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
   if (fromUnit === toUnit) return quantity;
   return convertStockQuantity(quantity, fromUnit, toUnit);
@@ -85,15 +99,7 @@ function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
 
 export default async function MenuPreciosPizzasPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((item) => item.role) ?? [];
-  if (!roleNames.some((role) => managerRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "menu");
 
   const [
     categoriesResult,
@@ -104,6 +110,8 @@ export default async function MenuPreciosPizzasPage() {
     preparationSourcesResult,
     priceConfigsResult,
     priceComponentsResult,
+    baseSourcesResult,
+    componentQuantitiesResult,
     purchaseCostsResult,
     purchaseAllocationsResult,
     physicalCountsResult,
@@ -133,6 +141,10 @@ export default async function MenuPreciosPizzasPage() {
     supabase
       .from("pizza_price_components")
       .select("price_config_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
+    supabase
+      .from("pizza_size_base_sources")
+      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
+    supabase.from("pizza_size_component_quantities").select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit"),
     supabase.from("purchase_items").select("id, inventory_item_id, quantity, unit, line_total_cop"),
     supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
     supabase
@@ -159,6 +171,8 @@ export default async function MenuPreciosPizzasPage() {
     preparationSourcesResult.error ??
     priceConfigsResult.error ??
     priceComponentsResult.error ??
+    baseSourcesResult.error ??
+    componentQuantitiesResult.error ??
     purchaseCostsResult.error ??
     purchaseAllocationsResult.error ??
     physicalCountsResult.error ??
@@ -304,11 +318,31 @@ export default async function MenuPreciosPizzasPage() {
     is_active: price.is_active,
     components: componentsByConfig.get(price.id) ?? []
   })) as PizzaPriceRecord[];
+  const baseSources = ((baseSourcesResult.data ?? []) as unknown as BaseSourceRow[]).map((base) => {
+    const sourceId = base.source_kind === "preparation" ? base.source_preparation_id : base.inventory_item_id;
+    return {
+      size_id: base.pizza_size_id,
+      source_kind: base.source_kind,
+      source_id: sourceId ?? "",
+      source_name: base.source_kind === "preparation" ? base.preparations?.name ?? "Sin preparacion" : base.inventory_items?.name ?? "Sin ingrediente",
+      quantity_base: Number(base.quantity_base ?? 0),
+      unit: base.unit,
+      display_quantity: Number(base.display_quantity ?? 0),
+      display_unit: base.display_unit
+    };
+  }).filter((base) => base.source_id) as PizzaPriceBaseSource[];
+  const componentQuantities = (componentQuantitiesResult.data ?? []).map((row) => ({
+    pizza_size_id: row.pizza_size_id,
+    source_kind: row.source_kind as "inventory_item" | "preparation",
+    source_id: row.source_kind === "preparation" ? row.source_preparation_id : row.inventory_item_id,
+    quantity_base: Number(row.quantity_base ?? 0),
+    unit: row.unit as StockUnit
+  })).filter((row) => row.source_id) as PizzaSizeComponentQuantity[];
 
   return (
-    <PanelShell active="menu-precios-pizzas" hideHeader roleNames={roleNames} title="Precios de pizzas" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="menu-precios-pizzas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Precios de pizzas" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PizzaPricesWorkspace categories={categories} flavors={flavors} prices={prices} sizes={sizes} sources={sources} />
+      <PizzaPricesWorkspace baseSources={baseSources} categories={categories} componentQuantities={componentQuantities} flavors={flavors} prices={prices} sizes={sizes} sources={sources} />
     </PanelShell>
   );
 }

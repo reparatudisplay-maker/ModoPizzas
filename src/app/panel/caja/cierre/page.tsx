@@ -1,12 +1,11 @@
-import { notFound, redirect } from "next/navigation";
 import { CashClosingModule, type CashSessionRow, type ShiftSaleRow } from "@/components/cash-module";
 import { PanelShell } from "@/components/panel-shell";
 import { hydrateCashSession, loadCashMovements } from "@/lib/cash-data";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { requirePanelAccess } from "@/lib/panel-auth";
 
 export const dynamic = "force-dynamic";
 
-const cashRoles = new Set(["vendedor", "gerente", "admin_sistema"]);
 
 type SessionRecord = Omit<CashSessionRow, "cash_register_name" | "opened_by_name"> & {
   cash_registers: { name: string } | null;
@@ -15,15 +14,7 @@ type SessionRecord = Omit<CashSessionRow, "cash_register_name" | "opened_by_name
 
 export default async function CashClosingPage() {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-  const roleNames = roles?.map((role) => role.role) ?? [];
-  if (!roleNames.some((role) => cashRoles.has(role))) notFound();
+  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "caja");
 
   const [openSessionResult, closedSessionsResult] = await Promise.all([
     supabase
@@ -49,7 +40,7 @@ export default async function CashClosingPage() {
   const closedSessions = await Promise.all(((closedSessionsResult.data ?? []) as unknown as SessionRecord[]).map((session) => hydrateCashSession(supabase, session)));
 
   return (
-    <PanelShell active="caja-cierre" hideHeader roleNames={roleNames} title="Cierre de caja" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="caja-cierre" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Cierre de caja" userEmail={user.email ?? "usuario"}>
       <CashClosingModule closedSessions={closedSessions.filter((session): session is CashSessionRow => Boolean(session))} movements={movements} openSession={openSession} sales={sales} />
     </PanelShell>
   );

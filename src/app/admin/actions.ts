@@ -61,6 +61,7 @@ export type ProductionActionState = FormActionState & {
 };
 
 export type PosOrderActionState = FormActionState & {
+  stockShortages?: PosStockShortage[];
   order?: {
     id: string;
     code: string;
@@ -70,12 +71,43 @@ export type PosOrderActionState = FormActionState & {
   };
 };
 
+export type PosStockShortage = {
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+  source_name: string;
+  source_category: "inventory_item" | "sale_product" | "preparation";
+  unit: "g" | "ml" | "unit";
+  requested_quantity: number;
+  available_quantity: number;
+  missing_quantity: number;
+  usages: Array<{
+    line_position: number;
+    line_kind: "pizza" | "sale_product";
+    line_label: string;
+    line_quantity: number;
+    requested_quantity: number;
+  }>;
+};
+
 export type PhysicalInventoryActionState = FormActionState & {
   count?: {
     id: string;
     adjustment_kind: "waste" | "adjustment_in";
     difference_quantity_base: number;
     base_unit: string;
+  };
+};
+
+export type HistoricalPreparationStockActionState = FormActionState & {
+  entry?: {
+    production_id: string;
+    production_batch_id: string;
+    code: string;
+    quantity_base: number;
+    base_unit: string;
+    total_cost_cop: number;
+    unit_cost_cop: number;
+    expiration_date: string;
   };
 };
 
@@ -427,6 +459,25 @@ async function saveFlavorIngredients(
   flavorId: string,
   ingredients: FlavorIngredientInput[]
 ) {
+  const { data: baseSources, error: baseSourcesError } = await supabase
+    .from("pizza_size_base_sources")
+    .select("source_kind, inventory_item_id, source_preparation_id")
+    .eq("is_active", true);
+  if (baseSourcesError) throw new Error(baseSourcesError.message);
+  const reservedBaseKeys = new Set(
+    (baseSources ?? []).map((source) => `${source.source_kind}:${source.source_kind === "inventory_item" ? source.inventory_item_id : source.source_preparation_id}`)
+  );
+
+  for (const ingredient of ingredients) {
+    const key = `${ingredient.source_kind}:${ingredient.source_id}`;
+    if (reservedBaseKeys.has(key)) throw new Error("La base comun por tamano no puede agregarse como ingrediente caracteristico.");
+    if (ingredient.source_kind === "preparation") {
+      const { data, error } = await supabase.from("preparations").select("name").eq("id", ingredient.source_id).single();
+      if (error) throw new Error(error.message);
+      if (isDoughBaseName(data.name)) throw new Error("La masa se configura unicamente como base comun por tamano.");
+    }
+  }
+
   const { error: deleteError } = await supabase.from("pizza_flavor_ingredients").delete().eq("flavor_id", flavorId);
   if (deleteError) throw new Error(deleteError.message);
   if (ingredients.length === 0) return;
@@ -448,13 +499,11 @@ type PizzaAdditionSizeInput = {
   price_cop: number;
 };
 
-type PizzaPriceComponentInput = {
-  source_kind: "inventory_item" | "preparation";
-  source_id: string;
-  quantity: number;
-  unit: string;
-  estimated_cost_cop?: number | null;
-};
+type PizzaSizeBaseSourceKind = "inventory_item" | "preparation";
+
+function isDoughBaseName(name: string | null | undefined) {
+  return normalizeMasterText(name ?? "").includes("MASA");
+}
 
 function getPizzaAdditionSizeInputs(formData: FormData) {
   const rawValue = getString(formData, "addition_sizes");
@@ -484,48 +533,106 @@ function getJsonStringArray(formData: FormData, key: string) {
   }
 }
 
-function getPizzaPriceComponents(formData: FormData) {
-  const rawValue = getString(formData, "components");
-  if (!rawValue) return [];
-  try {
-    const parsed = JSON.parse(rawValue) as PizzaPriceComponentInput[];
-    return parsed.filter((item) => {
-      return (
-        item &&
-        (item.source_kind === "inventory_item" || item.source_kind === "preparation") &&
-        typeof item.source_id === "string" &&
-        item.source_id.length > 0 &&
-        Number(item.quantity) > 0 &&
-        ["g", "kg", "ml", "l", "unit"].includes(item.unit)
-      );
-    });
-  } catch {
-    return [];
+export async function savePizzaSizeBaseSource(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const pizzaSizeId = getString(formData, "pizza_size_id");
+  const sourceKind = getString(formData, "source_kind") as PizzaSizeBaseSourceKind;
+  const sourceId = getString(formData, "source_id");
+  const quantity = getDecimal(formData, "quantity", 0);
+  const displayUnit = getStockUnit(formData, "unit");
+  const supabase = await createServerSupabaseClient();
+
+  if (!pizzaSizeId) return { status: "error", message: "Selecciona un tamano." };
+  if (sourceKind !== "inventory_item" && sourceKind !== "preparation") return { status: "error", message: "Selecciona el tipo de base." };
+  if (!sourceId) return { status: "error", message: "Selecciona el componente base." };
+  if (quantity <= 0) return { status: "error", message: "La cantidad de base debe ser mayor a cero." };
+
+  const { data: size, error: sizeError } = await supabase.from("pizza_sizes").select("id, is_active").eq("id", pizzaSizeId).single();
+  if (sizeError || !size?.is_active) return { status: "error", message: sizeError?.message ?? "Selecciona un tamano activo." };
+
+  let baseUnit: string;
+  if (sourceKind === "inventory_item") {
+    const { data, error } = await supabase
+      .from("inventory_items")
+      .select("id, unit, item_kind, is_active, presentation_quantity")
+      .eq("id", sourceId)
+      .single();
+    if (error || !data) return { status: "error", message: error?.message ?? "Ingrediente no encontrado." };
+    if (!data.is_active || data.item_kind !== "ingredient" || data.presentation_quantity !== null) {
+      return { status: "error", message: "La base comprada debe ser un ingrediente activo sin presentacion comercial." };
+    }
+    baseUnit = canonicalStockUnit(data.unit);
+  } else {
+    const { data, error } = await supabase.from("preparations").select("id, base_unit, is_active").eq("id", sourceId).single();
+    if (error || !data) return { status: "error", message: error?.message ?? "Preparacion no encontrada." };
+    if (!data.is_active) return { status: "error", message: "Selecciona una preparacion activa." };
+    baseUnit = canonicalStockUnit(data.base_unit);
   }
+
+  if (canonicalStockUnit(displayUnit) !== baseUnit) {
+    return { status: "error", message: "La unidad no es compatible con el componente base." };
+  }
+
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  const quantityBase = convertStockQuantity(quantity, displayUnit, baseUnit);
+  const { data: existing, error: existingError } = await supabase
+    .from("pizza_size_base_sources")
+    .select("id")
+    .eq("pizza_size_id", pizzaSizeId)
+    .maybeSingle();
+  if (existingError) return { status: "error", message: existingError.message };
+
+  const payload = {
+    pizza_size_id: pizzaSizeId,
+    source_kind: sourceKind,
+    inventory_item_id: sourceKind === "inventory_item" ? sourceId : null,
+    source_preparation_id: sourceKind === "preparation" ? sourceId : null,
+    quantity_base: quantityBase,
+    unit: baseUnit,
+    display_quantity: quantity,
+    display_unit: displayUnit,
+    is_active: true,
+    updated_by: user?.id ?? null,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = existing
+    ? await supabase.from("pizza_size_base_sources").update(payload).eq("id", existing.id)
+    : await supabase.from("pizza_size_base_sources").insert({ ...payload, created_by: user?.id ?? null });
+
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Base por tamano guardada correctamente." };
 }
 
-async function savePizzaPriceComponents(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  configId: string,
-  components: Array<PizzaPriceComponentInput & { quantity_base: number; base_unit: string }>
-) {
-  const { error: deleteError } = await supabase.from("pizza_price_components").delete().eq("price_config_id", configId);
-  if (deleteError) throw new Error(deleteError.message);
-  if (components.length === 0) return;
+export async function savePizzaSizeComponentQuantities(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const rawRows = getString(formData, "rows");
+  let rows: Array<{ pizza_size_id?: string; source_kind?: string; source_id?: string; unit?: string; quantity_base?: string }>;
+  try {
+    rows = JSON.parse(rawRows || "[]") as Array<{ pizza_size_id?: string; source_kind?: string; source_id?: string; unit?: string; quantity_base?: string }>;
+  } catch {
+    return { status: "error", message: "Los gramajes enviados no son validos." };
+  }
 
-  const { error } = await supabase.from("pizza_price_components").insert(
-    components.map((component) => ({
-      price_config_id: configId,
-      source_kind: component.source_kind,
-      inventory_item_id: component.source_kind === "inventory_item" ? component.source_id : null,
-      source_preparation_id: component.source_kind === "preparation" ? component.source_id : null,
-      quantity_base: component.quantity_base,
-      unit: component.base_unit,
-      display_quantity: component.quantity,
-      display_unit: component.unit
-    }))
-  );
-  if (error) throw new Error(error.message);
+  const normalizedRows = rows.map((row) => ({
+    pizza_size_id: row.pizza_size_id ?? "",
+    source_kind: row.source_kind ?? "",
+    source_id: row.source_id ?? "",
+    unit: row.unit ?? "",
+    quantity_base: parseColombianDecimal(String(row.quantity_base ?? ""))
+  }));
+  if (normalizedRows.some((row) => !row.pizza_size_id || !row.source_id || !["inventory_item", "preparation"].includes(row.source_kind) || !["g", "ml", "unit"].includes(row.unit) || row.quantity_base === null || row.quantity_base < 0)) {
+    return { status: "error", message: "Cada gramaje configurado debe tener una cantidad igual o mayor que cero y una unidad base valida." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("save_pizza_size_component_quantities", {
+    p_rows: normalizedRows.map((row) => ({ ...row, quantity_base: row.quantity_base }))
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidateInventory();
+  return { status: "success", message: "Gramajes por tamano guardados correctamente." };
 }
 
 async function savePizzaAdditionRelations(
@@ -993,7 +1100,6 @@ export async function savePizzaPrice(_previousState: FormActionState, formData: 
   const flavorId = getString(formData, "flavor_id");
   const sizeId = getString(formData, "size_id");
   const salePriceCop = getInteger(formData, "sale_price_cop", 0);
-  const components = getPizzaPriceComponents(formData);
   const estimatedCostCop = getMachineDecimal(formData, "estimated_cost_cop", 0);
   const marginPercent = getMachineDecimal(formData, "margin_percent", 0);
   const supabase = await createServerSupabaseClient();
@@ -1001,20 +1107,40 @@ export async function savePizzaPrice(_previousState: FormActionState, formData: 
   if (!flavorId) return { status: "error", message: "Selecciona un sabor." };
   if (!sizeId) return { status: "error", message: "Selecciona un tamano." };
   if (salePriceCop <= 0) return { status: "error", message: "Ingresa el precio de venta." };
-  if (components.length === 0) return { status: "error", message: "Agrega al menos un componente con cantidad." };
-
-  const seen = new Set<string>();
-  for (const component of components) {
-    const key = `${component.source_kind}:${component.source_id}`;
-    if (seen.has(key)) return { status: "error", message: "No repitas ingredientes o preparaciones en la misma receta." };
-    seen.add(key);
-  }
-
   const { data: flavor, error: flavorError } = await supabase.from("pizza_flavors").select("id, is_active").eq("id", flavorId).single();
   if (flavorError || !flavor?.is_active) return { status: "error", message: flavorError?.message ?? "Selecciona un sabor activo." };
   const { data: size, error: sizeError } = await supabase.from("pizza_sizes").select("id, is_active").eq("id", sizeId).single();
   if (sizeError || !size?.is_active) return { status: "error", message: sizeError?.message ?? "Selecciona un tamano activo." };
 
+  const { data: baseSources, error: baseSourceError } = await supabase
+    .from("pizza_size_base_sources")
+    .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, is_active")
+    .eq("is_active", true);
+  if (baseSourceError) return { status: "error", message: baseSourceError.message };
+  const baseSource = (baseSources ?? []).find((source) => source.pizza_size_id === sizeId);
+  if (!baseSource) return { status: "error", message: "Configura la base comun para este tamano antes de guardar el precio." };
+  const baseSourceId = baseSource.source_kind === "inventory_item" ? baseSource.inventory_item_id : baseSource.source_preparation_id;
+  if (!baseSourceId) return { status: "error", message: "La base comun del tamano no es valida." };
+  const [flavorIngredientsResult, quantityRowsResult] = await Promise.all([
+    supabase.from("pizza_flavor_ingredients").select("source_kind, inventory_item_id, source_preparation_id").eq("flavor_id", flavorId),
+    supabase.from("pizza_size_component_quantities").select("source_kind, inventory_item_id, source_preparation_id, quantity_base").eq("pizza_size_id", sizeId)
+  ]);
+  if (flavorIngredientsResult.error) return { status: "error", message: flavorIngredientsResult.error.message };
+  if (quantityRowsResult.error) return { status: "error", message: quantityRowsResult.error.message };
+  const reservedBaseKeys = new Set(
+    (baseSources ?? []).map((source) => `${source.source_kind}:${source.source_kind === "inventory_item" ? source.inventory_item_id : source.source_preparation_id}`)
+  );
+  const quantityByKey = new Map(
+    (quantityRowsResult.data ?? []).map((row) => [
+      `${row.source_kind}:${row.source_kind === "inventory_item" ? row.inventory_item_id : row.source_preparation_id}`,
+      Number(row.quantity_base ?? 0)
+    ])
+  );
+  const missingQuantity = (flavorIngredientsResult.data ?? []).some((ingredient) => {
+    const key = `${ingredient.source_kind}:${ingredient.source_kind === "inventory_item" ? ingredient.inventory_item_id : ingredient.source_preparation_id}`;
+    return !reservedBaseKeys.has(key) && (quantityByKey.get(key) ?? 0) <= 0;
+  });
+  if (missingQuantity) return { status: "error", message: "Configura los gramajes globales de todos los ingredientes del sabor para este tamano." };
   const { data: duplicate, error: duplicateError } = await supabase
     .from("pizza_price_configs")
     .select("id")
@@ -1023,37 +1149,6 @@ export async function savePizzaPrice(_previousState: FormActionState, formData: 
     .maybeSingle();
   if (duplicateError) return { status: "error", message: duplicateError.message };
   if (duplicate && duplicate.id !== id) return { status: "error", message: "Ya existe un precio para este sabor y tamano." };
-
-  const normalizedComponents: Array<PizzaPriceComponentInput & { quantity_base: number; base_unit: string }> = [];
-  try {
-    for (const component of components) {
-      let baseUnit: string | null = null;
-      if (component.source_kind === "inventory_item") {
-        const { data, error } = await supabase
-          .from("inventory_items")
-          .select("id, unit, item_kind, is_active, presentation_quantity")
-          .eq("id", component.source_id)
-          .single();
-        if (error || !data) throw new Error(error?.message ?? "Ingrediente no encontrado.");
-        if (!data.is_active || data.item_kind !== "ingredient" || data.presentation_quantity !== null) throw new Error("Solo puedes usar ingredientes activos.");
-        baseUnit = canonicalStockUnit(data.unit);
-      } else {
-        const { data, error } = await supabase.from("preparations").select("id, base_unit, is_active").eq("id", component.source_id).single();
-        if (error || !data) throw new Error(error?.message ?? "Preparacion no encontrada.");
-        if (!data.is_active) throw new Error("Solo puedes usar preparaciones activas.");
-        baseUnit = canonicalStockUnit(data.base_unit);
-      }
-      if (canonicalStockUnit(component.unit) !== baseUnit) throw new Error("Hay una unidad incompatible con un componente.");
-      normalizedComponents.push({
-        ...component,
-        unit: component.unit,
-        quantity_base: convertStockQuantity(Number(component.quantity), component.unit, baseUnit),
-        base_unit: baseUnit
-      });
-    }
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "Hay una unidad incompatible." };
-  }
 
   const {
     data: { user }
@@ -1082,7 +1177,8 @@ export async function savePizzaPrice(_previousState: FormActionState, formData: 
   if (error) return { status: "error", message: error.message };
 
   try {
-    await savePizzaPriceComponents(supabase, savedConfig.id, normalizedComponents);
+    const { error: syncError } = await supabase.rpc("sync_pizza_price_components_for_config", { p_price_config_id: savedConfig.id });
+    if (syncError) throw new Error(syncError.message);
     const { error: historyError } = await supabase.from("pizza_price_history").insert({
       price_config_id: savedConfig.id,
       estimated_cost_cop: estimatedCostCop > 0 ? estimatedCostCop : null,
@@ -1404,7 +1500,7 @@ export async function registerPurchase(_previousState: FormActionState, formData
     if (selectedItemError) return { status: "error", message: selectedItemError.message };
     purchaseKind = selectedItem?.item_kind === "sale_product" || selectedItem?.item_kind === "supply" ? selectedItem.item_kind : "ingredient";
   }
-  const storesPresentationAsLabel = purchaseKind === "sale_product" || purchaseKind === "supply";
+  const storesPresentationAsLabel = purchaseKind === "sale_product";
 
   const affectedItems = new Set<string>();
   if (purchaseId) {
@@ -1418,12 +1514,23 @@ export async function registerPurchase(_previousState: FormActionState, formData
   try {
     item = await resolvePurchaseInventoryItem(supabase, inventoryItemId, purchaseKind, normalizedPresentation.quantity, normalizedPresentation.unit, referenceSku);
     inventoryItemId = item.id;
-    const targetUnit = purchaseKind === "ingredient" ? canonicalStockUnit(presentationUnit) : "unit";
+    const isUnitStockItem = item.unit === "unit" && purchaseKind !== "sale_product";
+    const targetUnit = purchaseKind === "ingredient" || isUnitStockItem ? canonicalStockUnit(presentationUnit) : "unit";
     const itemPurchaseMode =
-      purchaseKind === "ingredient" && (item.purchase_mode === "packages" || item.purchase_mode === "total_weight") ? item.purchase_mode : submittedPurchaseMode;
+      purchaseKind === "ingredient" && !isUnitStockItem && (item.purchase_mode === "packages" || item.purchase_mode === "total_weight")
+        ? item.purchase_mode
+        : submittedPurchaseMode;
     if (itemPurchaseMode === "packages" && packageContentQuantity <= 0) return { status: "error", message: "Ingresa el contenido por paquete." };
     const ingredientEntryQuantity = purchaseKind === "ingredient" && itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity;
-    quantity = purchaseKind === "sale_product" || purchaseKind === "supply" ? enteredQuantity : convertStockQuantity(ingredientEntryQuantity, presentationUnit, targetUnit);
+    if (purchaseKind === "sale_product") {
+      quantity = enteredQuantity;
+    } else if (isUnitStockItem) {
+      quantity = itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity;
+    } else if (purchaseKind === "supply") {
+      quantity = enteredQuantity;
+    } else {
+      quantity = convertStockQuantity(ingredientEntryQuantity, presentationUnit, targetUnit);
+    }
     item.unit = targetUnit;
     item.purchase_mode = itemPurchaseMode;
   } catch (error) {
@@ -1473,7 +1580,7 @@ export async function registerPurchase(_previousState: FormActionState, formData
         ? storesPresentationAsLabel
           ? packageContentQuantity
           : normalizedPresentation.quantity
-        : purchaseKind === "ingredient"
+        : purchaseKind === "ingredient" && item.unit !== "unit"
           ? enteredQuantity
           : storesPresentationAsLabel
           ? presentationQuantity > 0
@@ -1487,7 +1594,7 @@ export async function registerPurchase(_previousState: FormActionState, formData
         ? storesPresentationAsLabel
           ? presentationUnit
           : normalizedPresentation.unit
-        : purchaseKind === "ingredient"
+        : purchaseKind === "ingredient" && item.unit !== "unit"
           ? presentationUnit
           : storesPresentationAsLabel
           ? presentationQuantity > 0
@@ -2192,7 +2299,32 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     p_cash_change_cop: paymentMethod === "cash" ? cashChangeCop : null
   });
 
-  if (error) return { status: "error", message: error.message };
+  if (error) {
+    const errorWithDetails = error as typeof error & { details?: string | null };
+    let stockShortages: PosStockShortage[] = [];
+    if (error.message === "POS_STOCK_SHORTAGE" && errorWithDetails.details) {
+      try {
+        const parsed = JSON.parse(errorWithDetails.details);
+        if (Array.isArray(parsed)) stockShortages = parsed as PosStockShortage[];
+      } catch {
+        stockShortages = [];
+      }
+    }
+
+    if (stockShortages.length === 0 && /stock insuficiente/i.test(error.message)) {
+      const { data: currentShortages } = await supabase.rpc("get_pos_order_stock_shortages", { p_items: items });
+      if (Array.isArray(currentShortages)) stockShortages = currentShortages as PosStockShortage[];
+    }
+
+    if (stockShortages.length > 0) {
+      return {
+        status: "error",
+        message: "No hay suficiente stock para elaborar este pedido.",
+        stockShortages
+      };
+    }
+    return { status: "error", message: error.message };
+  }
   const order = data as PosOrderActionState["order"];
 
   revalidateInventory();
@@ -2311,53 +2443,80 @@ function getRoleInputs(formData: FormData, fallbackRole?: string) {
   return validRoles.has(role) ? [role] : [];
 }
 
-export async function inviteSystemUser(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+export async function registerSystemUser(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   await requireUserPermission(supabase, "usuarios_permisos.manage");
 
   const email = getString(formData, "email").toLowerCase();
   const fullName = upperText(getString(formData, "full_name"));
   const phone = getOptionalString(formData, "phone");
-  const roles = getRoleInputs(formData, "vendedor");
+  const password = getString(formData, "password");
+  const passwordConfirmation = getString(formData, "password_confirmation");
+  const roles = getRoleInputs(formData);
+  const isActive = getBoolean(formData, "is_active");
 
   if (!email || !email.includes("@")) return { status: "error", message: "Ingresa un correo valido." };
-  if (roles.length === 0) return { status: "error", message: "Selecciona al menos un rol." };
+  if (!fullName) return { status: "error", message: "Ingresa el nombre del usuario." };
+  if (roles.length !== 1) return { status: "error", message: "Selecciona un rol principal." };
+  if (password.length < 8) return { status: "error", message: "La contrasena debe tener al menos 8 caracteres." };
+  if (password !== passwordConfirmation) return { status: "error", message: "Las contrasenas no coinciden." };
 
   const admin = createSupabaseAdminClient();
   if (!admin) {
     return {
       status: "error",
-      message: "Falta SUPABASE_SERVICE_ROLE_KEY en el servidor para invitar usuarios de Auth."
+      message: "El registro de usuarios no esta disponible temporalmente. Contacta al administrador tecnico."
     };
   }
 
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-    data: {
-      full_name: fullName,
-      phone
-    }
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: fullName, phone }
   });
-  if (error || !data.user) return { status: "error", message: error?.message ?? "No se pudo invitar el usuario." };
+  if (error || !data.user) return { status: "error", message: error?.message ?? "No se pudo registrar el usuario." };
+
+  const removeCreatedAuthUser = async () => {
+    await admin.from("profiles").delete().eq("id", data.user!.id);
+    await admin.auth.admin.deleteUser(data.user!.id);
+  };
 
   const { error: profileError } = await admin.from("profiles").upsert({
     id: data.user.id,
     email,
     full_name: fullName,
     phone,
-    is_active: true,
+    is_active: isActive,
+    account_type: "staff",
     updated_at: new Date().toISOString()
   });
-  if (profileError) return { status: "error", message: profileError.message };
+  if (profileError) {
+    await removeCreatedAuthUser();
+    return { status: "error", message: profileError.message };
+  }
 
   const { error: roleError } = await supabase.rpc("admin_set_user_roles", {
     p_user_id: data.user.id,
     p_roles: roles
   });
-  if (roleError) return { status: "error", message: roleError.message };
+  if (roleError) {
+    await removeCreatedAuthUser();
+    return { status: "error", message: roleError.message };
+  }
+
+  const { error: moduleAccessError } = await supabase.rpc("admin_set_user_module_access", {
+    p_user_id: data.user.id,
+    p_module_keys: getJsonStringArray(formData, "module_access")
+  });
+  if (moduleAccessError) {
+    await removeCreatedAuthUser();
+    return { status: "error", message: moduleAccessError.message };
+  }
 
   revalidatePath("/panel");
   revalidatePath("/panel/configuracion");
-  return { status: "success", message: "Usuario invitado correctamente." };
+  return { status: "success", message: "Usuario registrado correctamente." };
 }
 
 export async function updateSystemUser(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -2367,8 +2526,14 @@ export async function updateSystemUser(_previousState: FormActionState, formData
   const userId = getString(formData, "user_id");
   const accountType = getString(formData, "account_type") === "client" ? "client" : "staff";
   const roles = getRoleInputs(formData);
+  const password = getString(formData, "password");
+  const passwordConfirmation = getString(formData, "password_confirmation");
   if (!userId) return { status: "error", message: "Usuario no valido." };
-  if (accountType === "staff" && roles.length === 0) return { status: "error", message: "Selecciona al menos un rol interno." };
+  if (accountType === "staff" && roles.length !== 1) return { status: "error", message: "Selecciona un rol principal." };
+  if (password || passwordConfirmation) {
+    if (password.length < 8) return { status: "error", message: "La contrasena debe tener al menos 8 caracteres." };
+    if (password !== passwordConfirmation) return { status: "error", message: "Las contrasenas no coinciden." };
+  }
 
   const { error: profileError } = await supabase.rpc("admin_update_user_profile", {
     p_user_id: userId,
@@ -2385,6 +2550,19 @@ export async function updateSystemUser(_previousState: FormActionState, formData
       p_roles: roles
     });
     if (roleError) return { status: "error", message: roleError.message };
+
+    const { error: moduleAccessError } = await supabase.rpc("admin_set_user_module_access", {
+      p_user_id: userId,
+      p_module_keys: getJsonStringArray(formData, "module_access")
+    });
+    if (moduleAccessError) return { status: "error", message: moduleAccessError.message };
+  }
+
+  if (password) {
+    const admin = createSupabaseAdminClient();
+    if (!admin) return { status: "error", message: "El cambio de contrasena no esta disponible temporalmente. Contacta al administrador tecnico." };
+    const { error: passwordError } = await admin.auth.admin.updateUserById(userId, { password });
+    if (passwordError) return { status: "error", message: passwordError.message };
   }
 
   revalidatePath("/panel");
