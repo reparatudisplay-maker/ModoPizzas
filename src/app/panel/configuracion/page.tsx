@@ -19,6 +19,7 @@ type ProfileRow = {
   email: string | null;
   full_name: string | null;
   phone: string | null;
+  avatar_url: string | null;
   account_type: "staff" | "client" | null;
   is_active: boolean | null;
   created_at: string | null;
@@ -38,7 +39,7 @@ export default async function SettingsPanelPage() {
   const [profilesResult, appRolesResult, permissionsResult, rolePermissionsResult, overridesResult, moduleAccessResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, email, full_name, phone, account_type, is_active, created_at, last_seen_at, user_roles(role)")
+      .select("id, email, full_name, phone, avatar_url, account_type, is_active, created_at, last_seen_at, user_roles(role)")
       .order("created_at", { ascending: false })
       .limit(200),
     supabase.from("app_roles").select("role, name, description, is_active, is_system").order("name", { ascending: true }),
@@ -84,6 +85,14 @@ export default async function SettingsPanelPage() {
     moduleAccessByUser.set(access.user_id, [...current, access.module_key]);
   });
   const profileRows = (profilesResult.data ?? []) as ProfileRow[];
+  const profileAvatarSources = new Map<string, string | null>();
+  await Promise.all(
+    profileRows.map(async (profile) => {
+      if (!profile.avatar_url) return;
+      const { data } = await supabase.storage.from("profile-images").createSignedUrl(profile.avatar_url, 60 * 60);
+      profileAvatarSources.set(profile.id, data?.signedUrl ?? null);
+    })
+  );
   const usersById = new Map<string, UserPermissionRecord>();
 
   profileRows.forEach((profile) => {
@@ -93,6 +102,8 @@ export default async function SettingsPanelPage() {
       full_name: profile.full_name,
       email: authUser?.email ?? profile.email,
       phone: profile.phone,
+      avatar_url: profile.avatar_url,
+      avatar_src: profileAvatarSources.get(profile.id) ?? null,
       account_type: profile.account_type ?? "client",
       is_active: profile.is_active ?? true,
       created_at: profile.created_at,
@@ -114,6 +125,8 @@ export default async function SettingsPanelPage() {
       full_name: null,
       email: authUser.email,
       phone: null,
+      avatar_url: null,
+      avatar_src: null,
       account_type: "client",
       is_active: true,
       created_at: null,

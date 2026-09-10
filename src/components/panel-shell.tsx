@@ -7,8 +7,10 @@ import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "@/app/auth/actions";
 import { ModalDragController } from "@/components/modal-drag-controller";
+import { MyAccountModal } from "@/components/my-account-modal";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { fallbackModuleAccessForRoles, type PanelActiveKey, type SystemModuleKey } from "@/lib/system-modules";
+import { createClient } from "@/lib/supabase-browser";
 
 type PanelShellProps = {
   children: ReactNode;
@@ -47,6 +49,29 @@ function readNavOrder(storageKey: string) {
   }
 }
 
+function profileInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "MP";
+}
+
+function primaryRoleLabel(roleNames: string[]) {
+  const labels: Record<string, string> = {
+    admin_sistema: "Administrador del sistema",
+    gerente: "Gerente",
+    vendedor: "Caja",
+    caja: "Caja",
+    cocina: "Cocina",
+    mensajero: "Mensajero",
+    mesero: "Mesero"
+  };
+  return labels[roleNames[0] ?? ""] ?? roleNames[0] ?? "Sin rol";
+}
+
 export function PanelShell({ children, title, subtitle = "", userEmail, roleNames, moduleKeys, active, actions, hideHeader = false }: PanelShellProps) {
   const isAdmin = roleNames.includes("admin_sistema");
   const moduleAccess = new Set(moduleKeys ?? fallbackModuleAccessForRoles(roleNames));
@@ -54,6 +79,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const orderStorageKey = `modo-pizzas-nav-order:${userEmail || "usuario"}`;
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => readNavOrder(orderStorageKey));
   const [dragging, setDragging] = useState<{ group: string; key: string } | null>(null);
+  const [profile, setProfile] = useState<{ name: string; avatarUrl: string | null }>({ name: "", avatarUrl: null });
+  const [accountOpen, setAccountOpen] = useState(false);
   const holdTimerRef = useRef<number | null>(null);
   const pendingDragRef = useRef<{ group: string; key: string } | null>(null);
   const suppressClickRef = useRef(false);
@@ -61,6 +88,31 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   useEffect(() => {
     if (typeof window !== "undefined") window.localStorage.setItem(orderStorageKey, JSON.stringify(navOrder));
   }, [navOrder, orderStorageKey]);
+
+  useEffect(() => {
+    let activeRequest = true;
+    const loadProfile = async () => {
+      const supabase = createClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) return;
+      const { data } = await supabase.from("profiles").select("full_name, avatar_url").eq("id", auth.user.id).maybeSingle();
+      if (!activeRequest) return;
+      let avatarUrl: string | null = null;
+      if (data?.avatar_url) {
+        const { data: signed } = await supabase.storage.from("profile-images").createSignedUrl(data.avatar_url, 60 * 60);
+        avatarUrl = signed?.signedUrl ?? null;
+      }
+      if (activeRequest) setProfile({ name: data?.full_name ?? "", avatarUrl });
+    };
+    void loadProfile();
+    window.addEventListener("modopizzas-profile-updated", loadProfile);
+    return () => {
+      activeRequest = false;
+      window.removeEventListener("modopizzas-profile-updated", loadProfile);
+    };
+  }, []);
+
+  const displayName = profile.name || userEmail || "Usuario";
 
   const masterLinks: NavLink[] = [
     { key: "productos", href: "/panel/productos", label: "Productos", icon: Package, show: canAccess("maestros") },
@@ -304,13 +356,13 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
             <Menu size={20} />
             <span>Modulos</span>
           </summary>
-          <div className="worker-brand">
-            <span className="brand-mark">MP</span>
+          <button aria-label="Abrir mi cuenta" className="worker-brand" onClick={() => setAccountOpen(true)} type="button">
+            {profile.avatarUrl ? <img alt="Foto de perfil" className="worker-avatar" src={profile.avatarUrl} /> : <span className="brand-mark">{profileInitials(displayName)}</span>}
             <div>
-              <strong>ModoPizzas</strong>
-              <small>{roleNames.join(", ") || "sin rol"}</small>
+              <strong>{displayName}</strong>
+              <small>{primaryRoleLabel(roleNames)}</small>
             </div>
-          </div>
+          </button>
           <nav className="worker-nav">
             {visibleRootItems.map(renderRootItem)}
           </nav>
@@ -340,6 +392,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
         {children}
       </section>
       <ModalDragController />
+      {accountOpen ? <MyAccountModal avatarUrl={profile.avatarUrl} email={userEmail} fullName={displayName} onClose={() => setAccountOpen(false)} role={primaryRoleLabel(roleNames)} /> : null}
       <ThemeToggle />
     </main>
   );

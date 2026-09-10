@@ -80,9 +80,10 @@ export default async function PedidosPage() {
   const rawOrders = (data ?? []) as unknown as OrderRow[];
   const profileIds = [...new Set(rawOrders.flatMap((order) => [order.created_by, order.cancelled_by]).filter((id): id is string => Boolean(id)))];
   const { data: profiles } = profileIds.length
-    ? await supabase.from("profiles").select("id, full_name, email").in("id", profileIds)
-    : { data: [] as Array<{ id: string; full_name: string | null; email: string | null }> };
-  const profileNameById = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name ?? profile.email ?? "Usuario no disponible"]));
+    ? await supabase.rpc("get_pos_order_audit_profiles", { p_profile_ids: profileIds })
+    : { data: [] as Array<{ id: string; full_name: string }> };
+  const auditProfiles = (profiles ?? []) as Array<{ id: string; full_name: string | null }>;
+  const profileNameById = new Map<string, string>(auditProfiles.map((profile) => [profile.id, profile.full_name || "Sin registro"]));
 
   const orders = rawOrders.map((order) => ({
     id: order.id,
@@ -95,9 +96,9 @@ export default async function PedidosPage() {
     created_at: order.created_at,
     items_count: order.pos_order_items?.length ?? 0,
     notes: order.notes,
-    created_by_name: order.created_by ? profileNameById.get(order.created_by) ?? "Usuario no disponible" : "Usuario no disponible",
+    created_by_name: order.created_by ? profileNameById.get(order.created_by) ?? "Sin registro" : "Sin registro",
     cancelled_at: order.cancelled_at,
-    cancelled_by_name: order.cancelled_by ? profileNameById.get(order.cancelled_by) ?? "Usuario no disponible" : null,
+    cancelled_by_name: order.cancelled_by ? profileNameById.get(order.cancelled_by) ?? "Sin registro" : null,
     cancel_reason: order.cancel_reason,
     payments: asArray(order.pos_order_payments).map((payment) => ({
       method: payment.method,

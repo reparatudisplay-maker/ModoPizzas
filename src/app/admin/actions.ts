@@ -8,6 +8,7 @@ import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-forma
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
+const profileImageBucket = "profile-images";
 const productImageMaxSize = 400 * 1024;
 const productImageTypes = new Map([
   ["image/webp", "webp"]
@@ -281,6 +282,25 @@ async function uploadProductImage(supabase: Awaited<ReturnType<typeof createServ
   });
   if (error) throw new Error(error.message);
   return path;
+}
+
+async function uploadProfileImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File, userId: string) {
+  const extension = productImageTypes.get(file.type);
+  if (!extension) throw new Error("La imagen debe estar optimizada en formato WebP.");
+  if (file.size > productImageMaxSize) throw new Error("No fue posible optimizar la imagen por debajo de 400 KB. Selecciona una imagen más pequeña.");
+
+  const path = `profiles/${userId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabase.storage.from(profileImageBucket).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false
+  });
+  if (error) throw new Error(error.message);
+  return path;
+}
+
+async function removeProfileImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, imageUrl: string | null) {
+  if (imageUrl) await supabase.storage.from(profileImageBucket).remove([imageUrl]);
 }
 
 async function removeStoredImageIfUnreferenced(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, imageUrl: string | null) {
@@ -2454,6 +2474,7 @@ export async function registerSystemUser(_previousState: FormActionState, formDa
   const passwordConfirmation = getString(formData, "password_confirmation");
   const roles = getRoleInputs(formData);
   const isActive = getBoolean(formData, "is_active");
+  const profileImage = getFormFile(formData, "profile_image");
 
   if (!email || !email.includes("@")) return { status: "error", message: "Ingresa un correo valido." };
   if (!fullName) return { status: "error", message: "Ingresa el nombre del usuario." };
@@ -2496,11 +2517,25 @@ export async function registerSystemUser(_previousState: FormActionState, formDa
     return { status: "error", message: profileError.message };
   }
 
+  let uploadedProfileImage: string | null = null;
+  if (profileImage) {
+    try {
+      uploadedProfileImage = await uploadProfileImage(supabase, profileImage, data.user.id);
+      const { error: avatarError } = await admin.from("profiles").update({ avatar_url: uploadedProfileImage, updated_at: new Date().toISOString() }).eq("id", data.user.id);
+      if (avatarError) throw new Error(avatarError.message);
+    } catch (error) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      await removeCreatedAuthUser();
+      return { status: "error", message: error instanceof Error ? error.message : "No se pudo guardar la foto de perfil." };
+    }
+  }
+
   const { error: roleError } = await supabase.rpc("admin_set_user_roles", {
     p_user_id: data.user.id,
     p_roles: roles
   });
   if (roleError) {
+    await removeProfileImage(supabase, uploadedProfileImage);
     await removeCreatedAuthUser();
     return { status: "error", message: roleError.message };
   }
@@ -2510,6 +2545,7 @@ export async function registerSystemUser(_previousState: FormActionState, formDa
     p_module_keys: getJsonStringArray(formData, "module_access")
   });
   if (moduleAccessError) {
+    await removeProfileImage(supabase, uploadedProfileImage);
     await removeCreatedAuthUser();
     return { status: "error", message: moduleAccessError.message };
   }
@@ -2528,11 +2564,27 @@ export async function updateSystemUser(_previousState: FormActionState, formData
   const roles = getRoleInputs(formData);
   const password = getString(formData, "password");
   const passwordConfirmation = getString(formData, "password_confirmation");
+  const profileImage = getFormFile(formData, "profile_image");
+  const shouldRemoveProfileImage = getString(formData, "remove_profile_image") === "1";
   if (!userId) return { status: "error", message: "Usuario no valido." };
   if (accountType === "staff" && roles.length !== 1) return { status: "error", message: "Selecciona un rol principal." };
   if (password || passwordConfirmation) {
     if (password.length < 8) return { status: "error", message: "La contrasena debe tener al menos 8 caracteres." };
     if (password !== passwordConfirmation) return { status: "error", message: "Las contrasenas no coinciden." };
+  }
+
+  const { data: currentProfile, error: currentProfileError } = await supabase.from("profiles").select("avatar_url").eq("id", userId).single();
+  if (currentProfileError) return { status: "error", message: currentProfileError.message };
+  const previousAvatarUrl = currentProfile.avatar_url;
+  let nextAvatarUrl = shouldRemoveProfileImage ? null : previousAvatarUrl;
+  let uploadedProfileImage: string | null = null;
+  if (profileImage) {
+    try {
+      uploadedProfileImage = await uploadProfileImage(supabase, profileImage, userId);
+      nextAvatarUrl = uploadedProfileImage;
+    } catch (error) {
+      return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la foto de perfil." };
+    }
   }
 
   const { error: profileError } = await supabase.rpc("admin_update_user_profile", {
@@ -2542,28 +2594,53 @@ export async function updateSystemUser(_previousState: FormActionState, formData
     p_is_active: getBoolean(formData, "is_active"),
     p_account_type: accountType
   });
-  if (profileError) return { status: "error", message: profileError.message };
+  if (profileError) {
+    await removeProfileImage(supabase, uploadedProfileImage);
+    return { status: "error", message: profileError.message };
+  }
 
   if (accountType === "staff") {
     const { error: roleError } = await supabase.rpc("admin_set_user_roles", {
       p_user_id: userId,
       p_roles: roles
     });
-    if (roleError) return { status: "error", message: roleError.message };
+    if (roleError) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      return { status: "error", message: roleError.message };
+    }
 
     const { error: moduleAccessError } = await supabase.rpc("admin_set_user_module_access", {
       p_user_id: userId,
       p_module_keys: getJsonStringArray(formData, "module_access")
     });
-    if (moduleAccessError) return { status: "error", message: moduleAccessError.message };
+    if (moduleAccessError) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      return { status: "error", message: moduleAccessError.message };
+    }
   }
 
   if (password) {
     const admin = createSupabaseAdminClient();
-    if (!admin) return { status: "error", message: "El cambio de contrasena no esta disponible temporalmente. Contacta al administrador tecnico." };
+    if (!admin) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      return { status: "error", message: "El cambio de contrasena no esta disponible temporalmente. Contacta al administrador tecnico." };
+    }
     const { error: passwordError } = await admin.auth.admin.updateUserById(userId, { password });
-    if (passwordError) return { status: "error", message: passwordError.message };
+    if (passwordError) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      return { status: "error", message: passwordError.message };
+    }
   }
+
+  if (nextAvatarUrl !== previousAvatarUrl) {
+    const { error: avatarError } = await supabase.from("profiles").update({ avatar_url: nextAvatarUrl, updated_at: new Date().toISOString() }).eq("id", userId);
+    if (avatarError) {
+      await removeProfileImage(supabase, uploadedProfileImage);
+      return { status: "error", message: avatarError.message };
+    }
+  }
+
+  if (previousAvatarUrl && previousAvatarUrl !== nextAvatarUrl) await removeProfileImage(supabase, previousAvatarUrl);
 
   revalidatePath("/panel");
   revalidatePath("/panel/configuracion");

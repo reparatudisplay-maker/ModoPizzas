@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Pencil, Plus, Settings, ShieldCheck, X } from "lucide-react";
+import { ImagePlus, Pencil, Plus, Settings, ShieldCheck, X } from "lucide-react";
 import {
   registerSystemUser,
   saveSystemRole,
@@ -11,6 +11,7 @@ import {
   type FormActionState
 } from "@/app/admin/actions";
 import type { SystemModuleKey } from "@/lib/system-modules";
+import { optimizeImageInput } from "@/lib/client-images";
 
 type RoleKey = "vendedor" | "mesero" | "cocina" | "mensajero" | "gerente" | "admin_sistema";
 
@@ -43,6 +44,8 @@ export type UserPermissionRecord = {
   full_name: string | null;
   email: string | null;
   phone: string | null;
+  avatar_url?: string | null;
+  avatar_src?: string | null;
   account_type: "staff" | "client";
   is_active: boolean;
   created_at: string | null;
@@ -157,6 +160,60 @@ function SubmitButton({ children, disabled = false }: { children: string; disabl
   );
 }
 
+function ProfileImageField({ initialImage = "" }: { initialImage?: string | null }) {
+  const [preview, setPreview] = useState(initialImage ?? "");
+  const [removeImage, setRemoveImage] = useState(false);
+  const [error, setError] = useState("");
+  const [inputKey, setInputKey] = useState(0);
+
+  useEffect(() => () => {
+    if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  const clearPreview = () => {
+    if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
+    setPreview("");
+    setRemoveImage(true);
+    setError("");
+    setInputKey((current) => current + 1);
+  };
+
+  return (
+    <div className="field full-row user-modal-section">
+      <strong>Foto de perfil</strong>
+      <input name="remove_profile_image" type="hidden" value={removeImage ? "1" : "0"} />
+      <div className="menu-image-field">
+        {preview && !removeImage ? <img alt="Vista previa del perfil" className="menu-image-preview" src={preview} /> : <span className="inventory-photo-placeholder">Sin foto</span>}
+        <label className="ghost-button icon-text-button">
+          <ImagePlus size={16} /> {preview && !removeImage ? "Cambiar" : "Subir foto"}
+          <input
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            key={inputKey}
+            name="profile_image"
+            onChange={async (event) => {
+              const input = event.currentTarget;
+              const result = await optimizeImageInput(input);
+              if (result.error) {
+                setError(result.error);
+                return;
+              }
+              if (!result.previewUrl) return;
+              if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
+              setPreview(result.previewUrl);
+              setRemoveImage(false);
+              setError("");
+            }}
+            type="file"
+          />
+        </label>
+        {preview && !removeImage ? <button className="ghost-button" onClick={clearPreview} type="button">Eliminar foto</button> : null}
+      </div>
+      {error ? <p className="form-status error">{error}</p> : <small className="muted">JPG, PNG o WebP. Maximo original 4 MB.</small>}
+    </div>
+  );
+}
+
 export function UsersPermissionsModule({ currentUserId, users, roles, modules, permissions, authAdminConfigured }: UsersPermissionsModuleProps) {
   const [tab, setTab] = useState<"users" | "roles">("users");
   const [query, setQuery] = useState("");
@@ -188,6 +245,7 @@ export function UsersPermissionsModule({ currentUserId, users, roles, modules, p
 
   useEffect(() => {
     if (userState.status === "success") {
+      window.dispatchEvent(new Event("modopizzas-profile-updated"));
       const timer = window.setTimeout(() => setEditingUser(null), 0);
       return () => window.clearTimeout(timer);
     }
@@ -497,6 +555,7 @@ function RegisterUserModal({
               Telefono
               <input name="phone" placeholder="3001234567" />
             </label>
+            <ProfileImageField />
             <div className="field full-row">
               <strong>Rol principal</strong>
               <RoleSelect onChange={setRole} roles={roles} value={role} />
@@ -566,6 +625,7 @@ function EditUserModal({
               Telefono
               <input defaultValue={user.phone ?? ""} name="phone" />
             </label>
+            <ProfileImageField initialImage={user.avatar_src} />
             <label className="field">
               Tipo
               <select name="account_type" onChange={(event) => setAccountType(event.target.value === "client" ? "client" : "staff")} value={accountType}>

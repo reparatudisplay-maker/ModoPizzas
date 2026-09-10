@@ -120,6 +120,7 @@ export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
               <th>CODIGO</th>
               <th>TIPO</th>
               <th>CLIENTE</th>
+              <th>USUARIO</th>
               <th>ITEMS</th>
               <th>TOTAL</th>
               <th>PAGO</th>
@@ -134,6 +135,7 @@ export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
                 <td><strong>{order.code}</strong></td>
                 <td>{kindLabel(order.kind)}</td>
                 <td>{order.customer_name ?? "Sin cliente"}</td>
+                <td>{order.created_by_name}</td>
                 <td>{order.items_count}</td>
                 <td>{formatCop(order.total_cop)}</td>
                 <td>{order.payment_method}</td>
@@ -145,7 +147,7 @@ export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
                 </td>
               </tr>
             ))}
-            {filteredOrders.length === 0 ? <tr><td colSpan={9}>Sin pedidos.</td></tr> : null}
+            {filteredOrders.length === 0 ? <tr><td colSpan={10}>Sin pedidos.</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -228,7 +230,7 @@ function PosOrderDetailModal({ order, onClose }: { order: PosOrderListRow; onClo
           <div className="order-detail-meta">
             <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span>
             <span><b>Cliente:</b> {order.customer_name ?? "Sin cliente"}</span>
-            <span><b>Cajero:</b> {order.created_by_name}</span>
+            <span><b>Usuario:</b> {order.created_by_name}</span>
             <span><b>Pago:</b> {paymentLabel(order.payment_method)}</span>
           </div>
 

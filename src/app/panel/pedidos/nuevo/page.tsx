@@ -2,7 +2,7 @@ import { PanelShell } from "@/components/panel-shell";
 import { PosOrderWorkspace, type PosAdditionOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
-import { convertStockQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
+import { formatStockQuantity, type StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
@@ -66,20 +66,6 @@ type AdditionRow = {
   inventory_items: { image_url: string | null } | null;
 };
 
-type PurchaseLine = {
-  id: string;
-  inventory_item_id: string;
-  quantity: number;
-  unit: StockUnit;
-  line_total_cop: number | null;
-};
-
-type AllocationLine = {
-  purchase_item_id: string | null;
-  quantity_base: number;
-  base_unit: StockUnit;
-};
-
 type SaleProductRow = {
   id: string;
   sku: string | null;
@@ -90,6 +76,8 @@ type SaleProductRow = {
   sale_price_cop: number | null;
   sale_is_enabled: boolean | null;
   unit: StockUnit;
+  stock_base: number | null;
+  unit_cost_cop: number | null;
 };
 
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
@@ -114,10 +102,7 @@ export default async function NuevoPedidoPage() {
     pricesResult,
     flavorIngredientsResult,
     additionsResult,
-    saleProductsResult,
-    purchaseItemsResult,
-    productionAllocationsResult,
-    posAllocationsResult
+    saleProductsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -142,19 +127,7 @@ export default async function NuevoPedidoPage() {
       .eq("is_active", true)
       .eq("is_available", true)
       .order("sort_order"),
-    supabase
-      .from("pos_sale_product_references")
-      .select("id, sku, name, image_url, presentation_quantity, presentation_unit, sale_price_cop, sale_is_enabled, unit")
-      .eq("sale_is_enabled", true)
-      .gt("sale_price_cop", 0)
-      .order("name"),
-    supabase.from("purchase_items").select("id, inventory_item_id, quantity, unit, line_total_cop"),
-    supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
-    supabase
-      .from("pos_order_consumption_allocations")
-      .select("purchase_item_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-      .not("purchase_item_id", "is", null)
-      .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+    supabase.rpc("get_pos_sale_product_catalog")
   ]);
 
   const error =
@@ -163,10 +136,7 @@ export default async function NuevoPedidoPage() {
     pricesResult.error ??
     flavorIngredientsResult.error ??
     additionsResult.error ??
-    saleProductsResult.error ??
-    purchaseItemsResult.error ??
-    productionAllocationsResult.error ??
-    posAllocationsResult.error;
+    saleProductsResult.error;
 
   const signedImageCache = new Map<string, Promise<string | null>>();
   function signedCachedImage(path: string | null) {
@@ -176,32 +146,6 @@ export default async function NuevoPedidoPage() {
     const promise = signedImage(supabase, path);
     signedImageCache.set(path, promise);
     return promise;
-  }
-
-  const purchaseAllocationByLine = new Map<string, number>();
-  for (const allocation of [...((productionAllocationsResult.data ?? []) as AllocationLine[]), ...((posAllocationsResult.data ?? []) as unknown as AllocationLine[])]) {
-    if (!allocation.purchase_item_id) continue;
-    purchaseAllocationByLine.set(allocation.purchase_item_id, (purchaseAllocationByLine.get(allocation.purchase_item_id) ?? 0) + Number(allocation.quantity_base ?? 0));
-  }
-
-  const stockByProduct = new Map<string, number>();
-  const costByProduct = new Map<string, { quantity: number; total: number }>();
-  for (const line of (purchaseItemsResult.data ?? []) as PurchaseLine[]) {
-    let quantity = Number(line.quantity ?? 0);
-    try {
-      quantity = convertStockQuantity(quantity, line.unit, "unit");
-    } catch {
-      quantity = Number(line.quantity ?? 0);
-    }
-    const available = Math.max(0, quantity - (purchaseAllocationByLine.get(line.id) ?? 0));
-    stockByProduct.set(line.inventory_item_id, (stockByProduct.get(line.inventory_item_id) ?? 0) + available);
-    const lineTotal = Number(line.line_total_cop ?? 0);
-    if (available > 0 && quantity > 0 && lineTotal > 0) {
-      const current = costByProduct.get(line.inventory_item_id) ?? { quantity: 0, total: 0 };
-      current.quantity += available;
-      current.total += (lineTotal / quantity) * available;
-      costByProduct.set(line.inventory_item_id, current);
-    }
   }
 
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
@@ -294,7 +238,6 @@ export default async function NuevoPedidoPage() {
   const saleProductRows = (saleProductsResult.data ?? []) as SaleProductRow[];
   const saleProducts: PosSaleProductOption[] = await Promise.all(
     saleProductRows.map(async (product) => {
-      const cost = costByProduct.get(product.id);
       return {
         id: product.id,
         sku: product.sku,
@@ -305,8 +248,8 @@ export default async function NuevoPedidoPage() {
             ? formatStockQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
             : null,
         sale_price_cop: Number(product.sale_price_cop ?? 0),
-        stock_base: stockByProduct.get(product.id) ?? 0,
-        unit_cost_cop: cost && cost.quantity > 0 ? cost.total / cost.quantity : null,
+        stock_base: Number(product.stock_base ?? 0),
+        unit_cost_cop: product.unit_cost_cop === null ? null : Number(product.unit_cost_cop),
         unit: "unit"
       };
     })
