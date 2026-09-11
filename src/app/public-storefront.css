@@ -69,6 +69,70 @@
   overflow-x: hidden;
 }
 
+.public-config-summary {
+  display: grid;
+  gap: 5px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #eadbd2;
+  background: #fff6f1;
+  color: #38251f;
+}
+
+.public-config-summary > strong {
+  color: #b22b1d;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.public-config-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+
+.public-config-summary span {
+  color: #5c4a42;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.public-config-summary b {
+  color: #2a1d18;
+}
+
+.public-personalization-section {
+  padding: 14px;
+  border: 1px solid #ead9cf;
+  border-radius: 8px;
+  background: #fffefd;
+}
+
+.public-extras-section {
+  border-color: #efd1bf;
+  background: #fff9f5;
+}
+
+.public-section-title {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.public-section-title > span {
+  color: #a34936;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.public-section-title h3 {
+  margin: 0;
+  color: #2a1d18;
+  font-size: 16px;
+}
+
 .public-size-grid button,
 .public-choice-grid button,
 .public-second-flavors button,
@@ -161,7 +225,8 @@
   border-color: #d95d4b;
   background: #fff0ec;
   color: #99291e;
-  text-decoration: none;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
 }
 
 .public-ingredient-list button.removed svg {
@@ -209,6 +274,26 @@
   color: #b8271a;
 }
 
+.public-add-drink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  margin-top: 13px;
+  padding: 0 11px;
+  border: 1px solid #d9a183;
+  border-radius: 6px;
+  background: #fff8f3;
+  color: #9d301f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.public-add-drink:hover {
+  border-color: #c83a25;
+  background: #fff0e9;
+}
+
 .public-addition-counter button:disabled,
 .public-line-controls button:disabled,
 .public-review-quantity button:disabled,
@@ -222,6 +307,68 @@
 
 .public-cart-drawer {
   color: #2a1d18;
+}
+
+.public-cart-order {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 0;
+}
+
+.public-cart-section-title {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.public-cart-section-title h3 {
+  margin: 0;
+  color: #2a1d18;
+  font-size: 15px;
+}
+
+.public-cart-section-title span {
+  color: #705f57;
+  font-size: 11px;
+}
+
+.public-cart-lines {
+  flex: 1 1 auto;
+  min-height: 104px;
+  max-height: 34vh;
+  padding: 0;
+  scrollbar-gutter: stable;
+}
+
+.public-whatsapp-form {
+  flex: 0 1 auto;
+  max-height: 38vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.public-notes-title {
+  margin-top: 3px;
+  margin-bottom: -4px;
+}
+
+.public-continue-shopping {
+  min-height: 46px;
+  margin: 12px 0;
+  border-style: solid;
+  border-color: #b76b55;
+  background: #fffaf6;
+  color: #7e2f21;
+  box-shadow: inset 0 0 0 1px #fff;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+}
+
+.public-continue-shopping:hover {
+  border-color: #c92d1c;
+  background: #fff0ea;
+  color: #a82317;
 }
 
 .public-cart-lines h3,
@@ -247,6 +394,13 @@
 }
 
 @media (max-width: 700px) {
+  .public-config-summary { padding: 8px 16px; }
+  .public-config-summary > div { gap: 4px 9px; }
+  .public-config-summary span { font-size: 11px; }
+  .public-personalization-section { padding: 11px; }
+  .public-cart-order { padding: 10px 16px 0; }
+  .public-cart-lines { max-height: 27vh; }
+  .public-whatsapp-form { max-height: 33vh; }
   .public-second-flavors { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .public-second-flavors button { min-height: 144px; padding: 7px; }
   .public-second-flavors button > span { font-size: 12px; }
