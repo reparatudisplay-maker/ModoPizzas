@@ -108,6 +108,46 @@
   background: #fffefd;
 }
 
+.public-personalization-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 5px;
+  border: 1px solid #e4d5cc;
+  border-radius: 8px;
+  background: #f7eee8;
+}
+
+.public-personalization-tabs button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #614d44;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.public-personalization-tabs button:hover {
+  background: #fff8f4;
+  color: #9d301f;
+}
+
+.public-personalization-tabs button.selected {
+  border-color: #d55542;
+  background: #fff;
+  color: #a52518;
+  box-shadow: 0 1px 3px #41150d16;
+}
+
+.public-personalization-panel {
+  min-height: 0;
+  max-height: min(390px, 42vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .public-extras-section {
   border-color: #efd1bf;
   background: #fff9f5;
@@ -275,19 +315,23 @@
 }
 
 .public-add-drink {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 38px;
+  width: 100%;
+  min-height: 52px;
   margin-top: 13px;
-  padding: 0 11px;
-  border: 1px solid #d9a183;
-  border-radius: 6px;
-  background: #fff8f3;
+  padding: 7px 12px;
+  border: 1px solid #d85134;
+  border-radius: 7px;
+  background: #fff1e9;
   color: #9d301f;
-  font-size: 13px;
-  font-weight: 800;
+  text-align: left;
 }
+
+.public-add-drink > span:first-child { font-size: 23px; }
+.public-add-drink > span:last-child { display: grid; grid-template-columns: 1fr auto; flex: 1; align-items: center; gap: 2px 8px; font-size: 14px; font-weight: 800; }
+.public-add-drink b { grid-column: 1 / -1; font-size: 10px; letter-spacing: .06em; }
 
 .public-add-drink:hover {
   border-color: #c83a25;
@@ -306,15 +350,26 @@
 }
 
 .public-cart-drawer {
+  height: 100dvh;
+  max-height: none;
+  overflow: hidden;
   color: #2a1d18;
 }
 
-.public-cart-order {
-  display: flex;
+.public-cart-drawer > header,
+.public-cart-drawer > footer { flex: 0 0 auto; }
+
+.public-cart-body {
   flex: 1 1 auto;
-  flex-direction: column;
   min-height: 0;
-  padding: 12px 16px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.public-cart-order {
+  display: block;
+  padding: 14px 16px 0;
 }
 
 .public-cart-section-title {
@@ -335,18 +390,16 @@
 }
 
 .public-cart-lines {
-  flex: 1 1 auto;
-  min-height: 104px;
-  max-height: 34vh;
+  min-height: 0;
+  max-height: none;
   padding: 0;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .public-whatsapp-form {
-  flex: 0 1 auto;
-  max-height: 38vh;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow: visible;
+  border-top: 1px solid #e8dace;
 }
 
 .public-notes-title {
@@ -355,6 +408,10 @@
 }
 
 .public-continue-shopping {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 46px;
   margin: 12px 0;
   border-style: solid;
@@ -363,6 +420,25 @@
   color: #7e2f21;
   box-shadow: inset 0 0 0 1px #fff;
   transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+}
+
+.public-remove-line { color: #a92d20 !important; }
+.public-remove-line:hover { border-color: #c92d1c !important; background: #fff0ec !important; }
+
+.public-checkout-error {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #da6554;
+  border-radius: 5px;
+  background: #fff0ec;
+  color: #9c2b1e;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.public-cart-drawer .public-primary.disabled {
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .public-continue-shopping:hover {
@@ -398,9 +474,9 @@
   .public-config-summary > div { gap: 4px 9px; }
   .public-config-summary span { font-size: 11px; }
   .public-personalization-section { padding: 11px; }
-  .public-cart-order { padding: 10px 16px 0; }
-  .public-cart-lines { max-height: 27vh; }
-  .public-whatsapp-form { max-height: 33vh; }
+  .public-personalization-panel { max-height: min(350px, 38vh); }
+  .public-cart-order { padding: 12px 16px 0; }
+  .public-cart-drawer { width: 100%; height: 100dvh; max-height: none; border-radius: 0; }
   .public-second-flavors { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .public-second-flavors button { min-height: 144px; padding: 7px; }
   .public-second-flavors button > span { font-size: 12px; }
