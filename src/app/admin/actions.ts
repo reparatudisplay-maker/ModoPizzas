@@ -2444,6 +2444,49 @@ export async function saveKitchenSettings(_previousState: FormActionState, formD
   return { status: "success", message: "Configuracion de cocina guardada correctamente." };
 }
 
+export async function savePublicBusinessSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "usuarios_permisos.manage");
+
+  const businessName = getString(formData, "business_name");
+  const whatsappNumber = getString(formData, "whatsapp_number").replace(/\D/g, "");
+  let openingHours: Array<{ day: string; is_open: boolean; opens_at: string; closes_at: string }>;
+  try {
+    openingHours = JSON.parse(getString(formData, "opening_hours"));
+  } catch {
+    return { status: "error", message: "Los horarios no son validos." };
+  }
+  if (!businessName) return { status: "error", message: "Ingresa el nombre comercial." };
+  if (!whatsappNumber || whatsappNumber.length < 10) return { status: "error", message: "Ingresa un WhatsApp valido con indicativo de pais." };
+  if (!Array.isArray(openingHours) || openingHours.length !== 7 || openingHours.some((item) => !item || typeof item.day !== "string" || typeof item.is_open !== "boolean" || (item.is_open && (!/^\d{2}:\d{2}$/.test(item.opens_at) || !/^\d{2}:\d{2}$/.test(item.closes_at))))) {
+    return { status: "error", message: "Revisa los horarios configurados." };
+  }
+
+  const { error } = await supabase
+    .from("site_settings")
+    .update({
+      business_name: businessName,
+      whatsapp_number: whatsappNumber,
+      public_phone: getOptionalString(formData, "public_phone"),
+      public_address: getOptionalString(formData, "public_address"),
+      public_neighborhood: getOptionalString(formData, "public_neighborhood"),
+      public_city: getOptionalString(formData, "public_city"),
+      public_weekday_hours: getOptionalString(formData, "public_weekday_hours"),
+      public_weekend_hours: getOptionalString(formData, "public_weekend_hours"),
+      public_maps_url: getOptionalString(formData, "public_maps_url"),
+      public_info_text: getOptionalString(formData, "public_info_text"),
+      public_instagram_url: getOptionalString(formData, "public_instagram_url"),
+      public_facebook_url: getOptionalString(formData, "public_facebook_url"),
+      public_opening_hours: openingHours
+    })
+    .eq("id", true);
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/panel/configuracion/negocio");
+  return { status: "success", message: "Informacion publica actualizada." };
+}
+
 async function requireUserPermission(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, permissionCode: string) {
   const {
     data: { user }

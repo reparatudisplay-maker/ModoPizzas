@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Banknote, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -155,8 +155,12 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: canAccess("produccion") },
     { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: canAccess("produccion") }
   ];
+  const reportLinks: NavLink[] = [
+    { key: "reportes-ventas", href: "/panel/reportes", label: "Ventas y rentabilidad", icon: ChartNoAxesCombined, show: canAccess("reportes") }
+  ];
   const adminLinks: NavLink[] = [
     { key: "configuracion", href: "/panel/configuracion", label: "Usuarios y permisos", icon: UserCog, show: isAdmin },
+    { key: "configuracion-negocio", href: "/panel/configuracion/negocio", label: "Informacion publica", icon: MapPin, show: isAdmin },
     { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: canAccess("configuracion") }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
@@ -168,6 +172,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
   const marketingActive = marketingLinks.some((link) => link.key === active);
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
+  const reportsActive = reportLinks.some((link) => link.key === active);
   const settingsActive = adminLinks.some((link) => link.key === active);
 
   function startHold(group: string, key: string) {
@@ -273,6 +278,7 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: canAccess("menu"), active: menuActive, links: [], nested: menuRootItems },
     { kind: "group", key: "marketing", label: "Marketing", title: "Marketing", icon: MonitorPlay, show: canAccess("marketing"), active: marketingActive, links: marketingLinks },
     { kind: "group", key: "production", label: "Produccion", title: "Produccion", icon: Factory, show: canAccess("produccion"), active: productionActive, links: productionLinks },
+    { kind: "group", key: "reports", label: "Reportes", title: "Reportes", icon: ChartNoAxesCombined, show: canAccess("reportes"), active: reportsActive, links: reportLinks },
     { kind: "group", key: "settings", label: "Configuracion", title: "Configuracion", icon: isAdmin ? UserCog : Settings, show: canAccess("configuracion"), active: settingsActive, links: adminLinks }
   ];
 

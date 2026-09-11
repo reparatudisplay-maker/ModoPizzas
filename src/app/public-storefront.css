@@ -1,0 +1,259 @@
+.public-hero-slide { animation: public-hero-fade .5s ease-out; background: #1b100d; }
+.public-step-progress { display: flex; gap: 6px; padding: 12px 20px 0; background: #fffaf4; }
+.public-step-progress i { flex: 1; height: 4px; border-radius: 4px; background: #e4d7cf; }
+.public-step-progress i.active { background: var(--public-red); }
+.public-config-body { display: grid; align-content: start; min-height: 280px; }
+.public-config-body .public-choice-grid span { color: #6c5c55; font-size: 12px; }
+.public-personalization { display: grid; gap: 18px; }
+.public-personalization section { margin: 0; }
+.public-addition-fallback { display: grid !important; place-items: center; width: 42px; height: 42px; border-radius: 4px; background: #f0e2d8; color: var(--public-red); }
+.public-pizza-review { display: grid; grid-template-columns: minmax(150px, .8fr) 1.2fr; gap: 22px; align-items: center; }
+.public-pizza-review > div { display: grid; grid-auto-flow: column; overflow: hidden; border-radius: 50%; aspect-ratio: 1; background: #29150f; }
+.public-pizza-review img, .public-pizza-review .public-pizza-art { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.public-pizza-review h3 { margin: 4px 0; font-size: 22px; }
+.public-pizza-review p, .public-pizza-review small { display: block; margin: 6px 0; color: #705f57; }
+.public-review-quantity { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.public-review-quantity button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #dfd2c8; border-radius: 50%; background: white; }
+.public-review-quantity strong { margin-left: auto; color: var(--public-red); font-size: 20px; }
+.public-back { border-color: #dacfc7; color: #493d37; }
+.public-edit-line { border-radius: 5px !important; }
+.public-continue-shopping { width: 100%; min-height: 42px; margin-top: 12px; border: 1px dashed #c9b6aa; border-radius: 6px; background: transparent; color: #6b5147; font-weight: 700; }
+.public-cross-sell { display: grid; gap: 8px; margin: 16px 0; padding: 13px; border: 1px solid #f1c6ae; border-radius: 7px; background: #fff3ea; }
+.public-cross-sell > div span { color: var(--public-red); font-size: 10px; font-weight: 800; }
+.public-cross-sell h3 { margin: 2px 0; font-size: 16px; }
+.public-cross-sell button { display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 8px; padding: 6px; border: 1px solid #ecd4c5; border-radius: 5px; background: white; text-align: left; }
+.public-cross-sell img, .public-cross-sell button > span:first-child { width: 36px; height: 36px; border-radius: 4px; object-fit: contain; background: #f1e6dd; }
+.public-cross-sell button > span:last-of-type { display: grid; gap: 2px; font-size: 12px; font-weight: 800; }
+.public-cross-sell small { color: #866a5e; font-weight: 500; }
+.public-map-card { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 16px; border: 1px solid #ffffff28; border-radius: 8px; background: linear-gradient(135deg, #55291d, #251411); }
+.public-map-card > svg { color: var(--public-orange); }
+.public-map-card strong, .public-map-card span { display: block; }
+.public-map-card span { margin-top: 4px; color: #dbc6ba; font-size: 13px; }
+.public-map-card a { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; color: white; font-size: 13px; font-weight: 800; }
+.public-hours-list { display: grid; gap: 5px; }
+.public-hours-list span { display: grid; grid-template-columns: 84px 1fr; gap: 8px; }
+.public-footer { display: grid; grid-template-columns: 1.1fr 1.3fr .8fr; gap: 30px; padding: 38px 8vw 92px; background: #100c0b; color: #f6e8dd; }
+.public-footer > div { display: grid; align-content: start; gap: 8px; }
+.public-footer strong { font-size: 16px; }
+.public-footer span, .public-footer a { display: inline-flex; align-items: center; gap: 6px; color: #b9a298; font-size: 13px; text-decoration: none; }
+.public-footer a:hover { color: #fff0e7; }
+.public-whatsapp-float { position: fixed; z-index: 41; right: 20px; bottom: 20px; display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 15px; border-radius: 24px; background: #1caa65; color: white; box-shadow: 0 12px 26px #0004; font-weight: 800; text-decoration: none; }
+.public-hours-editor { display: grid; gap: 8px; margin-top: 22px; }
+.public-hours-editor > div:first-child span { color: #9b6650; font-size: 12px; font-weight: 800; }
+.public-hours-editor h3 { margin: 3px 0 4px; }
+.public-hour-row { display: grid; grid-template-columns: 1fr 105px 92px auto 92px; gap: 8px; align-items: center; min-height: 44px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; }
+.public-hour-row label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.public-hour-row input[type="time"] { min-height: 32px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); padding: 0 6px; }
+.public-legal-page { min-height: 100vh; padding: 48px max(20px, 10vw); background: #fff9f2; color: #201613; }
+.public-legal-page article { max-width: 760px; margin: 42px auto 0; }
+.public-legal-page article > span { color: #e63824; font-size: 12px; font-weight: 800; }
+.public-legal-page h1 { margin: 8px 0 14px; font-size: clamp(34px, 5vw, 58px); }
+.public-legal-page h2 { margin: 30px 0 8px; font-size: 21px; }
+.public-legal-page p { color: #5f514b; line-height: 1.65; }
+.public-legal-summary { padding: 16px; border-left: 3px solid #e63824; background: #fff0e9; }
+.public-legal-back { color: #201613; font-weight: 800; text-decoration: none; }
+
+/* Public pizza configurator: light surfaces always keep operational text readable. */
+.public-configurator {
+  min-height: 0;
+  color: #241914;
+}
+
+.public-configurator > header,
+.public-configurator > footer {
+  flex: 0 0 auto;
+}
+
+.public-config-body {
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+.public-size-grid button,
+.public-choice-grid button,
+.public-second-flavors button,
+.public-ingredient-list button,
+.public-additions > div,
+.public-additions button,
+.public-addition-counter button,
+.public-line-controls button,
+.public-cross-sell button,
+.public-cart-lines article {
+  color: #2a1d18;
+}
+
+.public-size-grid button,
+.public-choice-grid button,
+.public-second-flavors button {
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.public-size-grid button:hover,
+.public-choice-grid button:hover,
+.public-second-flavors button:hover,
+.public-ingredient-list button:hover,
+.public-scope-choice button:hover {
+  border-color: #d35a46;
+  background: #fff7f3;
+}
+
+.public-size-grid button.selected,
+.public-choice-grid button.selected,
+.public-second-flavors button.selected {
+  border-color: var(--public-red);
+  background: #fff0eb;
+  box-shadow: inset 0 0 0 1px var(--public-red);
+  color: #21130f;
+}
+
+.public-size-grid button.selected b,
+.public-choice-grid button.selected strong,
+.public-second-flavors button.selected b {
+  color: #c92d1c;
+}
+
+.public-size-grid button > strong,
+.public-choice-grid button > strong,
+.public-second-flavors button > span,
+.public-ingredient-list button {
+  color: #2a1d18;
+}
+
+.public-size-grid button > span,
+.public-choice-grid button > span,
+.public-second-flavors button > b {
+  color: #68564e;
+}
+
+.public-second-flavors {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  overflow: visible;
+}
+
+.public-second-flavors button {
+  min-width: 0;
+  min-height: 158px;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  text-align: left;
+}
+
+.public-second-flavors button > span {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.public-second-flavors button > b {
+  color: #c92d1c;
+  font-size: 13px;
+}
+
+.public-ingredient-list button {
+  border-color: #ccbfb6;
+  font-weight: 750;
+}
+
+.public-ingredient-list button.removed {
+  border-color: #d95d4b;
+  background: #fff0ec;
+  color: #99291e;
+  text-decoration: none;
+}
+
+.public-ingredient-list button.removed svg {
+  color: #c42d20;
+}
+
+.public-additions > div {
+  background: #fffefd;
+}
+
+.public-additions span {
+  color: #2a1d18;
+}
+
+.public-additions small {
+  color: #c92d1c;
+}
+
+.public-scope-choice button {
+  border-color: #cdbeb5;
+  background: #fff;
+  color: #4a3730;
+  font-weight: 750;
+}
+
+.public-scope-choice button.selected {
+  border-color: #c92d1c;
+  background: #fff0eb;
+  color: #a82317;
+}
+
+.public-addition-counter button,
+.public-line-controls button,
+.public-review-quantity button {
+  border-color: #bfaea4;
+  color: #2a1d18;
+  font-weight: 800;
+}
+
+.public-addition-counter button:hover,
+.public-line-controls button:hover,
+.public-review-quantity button:hover {
+  border-color: var(--public-red);
+  background: #fff1ec;
+  color: #b8271a;
+}
+
+.public-addition-counter button:disabled,
+.public-line-controls button:disabled,
+.public-review-quantity button:disabled,
+.public-configurator button:disabled {
+  border-color: #e4d9d2;
+  background: #f5f1ee;
+  color: #998e88;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.public-cart-drawer {
+  color: #2a1d18;
+}
+
+.public-cart-lines h3,
+.public-cart-lines strong,
+.public-cross-sell h3,
+.public-cross-sell button > span:last-of-type {
+  color: #2a1d18;
+}
+
+.public-cart-lines p,
+.public-cart-lines small,
+.public-cross-sell small {
+  color: #67564e;
+}
+
+.public-cross-sell button:hover {
+  border-color: var(--public-red);
+  background: #fff8f4;
+}
+
+@media (max-width: 960px) {
+  .public-second-flavors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .public-second-flavors { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .public-second-flavors button { min-height: 144px; padding: 7px; }
+  .public-second-flavors button > span { font-size: 12px; }
+}
+
+@media (max-width: 380px) {
+  .public-second-flavors { grid-template-columns: 1fr; }
+}
+@keyframes public-hero-fade { from { opacity: .35; transform: scale(1.025); } to { opacity: 1; transform: scale(1); } }
+@media (max-width: 700px) { .public-pizza-review { grid-template-columns: 108px 1fr; gap: 14px; }.public-config-body { min-height: 250px; }.public-footer { grid-template-columns: 1fr; gap: 24px; padding: 32px 20px 104px; }.public-whatsapp-float { right: 12px; bottom: 78px; padding: 0; width: 48px; justify-content: center; }.public-whatsapp-float span { display: none; }.public-map-card { padding: 13px; }.public-hour-row { grid-template-columns: 1fr 88px 76px auto 76px; gap: 5px; font-size: 12px; }.public-hour-row input[type="time"] { min-width: 0; font-size: 11px; }.public-hours-editor { overflow-x: auto; }.public-configurator footer .public-secondary { color: #493d37; }.public-cross-sell { margin-bottom: 14px; } }

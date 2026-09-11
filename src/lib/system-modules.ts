@@ -9,6 +9,7 @@ export type SystemModuleKey =
   | "menu"
   | "marketing"
   | "produccion"
+  | "reportes"
   | "configuracion";
 
 export type PanelActiveKey =
@@ -20,6 +21,7 @@ export type PanelActiveKey =
   | "categorias"
   | "perfiles-conservacion"
   | "configuracion"
+  | "configuracion-negocio"
   | "configuracion-cocina"
   | "menu-pizzas"
   | "menu-precios-adiciones"
@@ -37,7 +39,8 @@ export type PanelActiveKey =
   | "cocina"
   | "produccion"
   | "produccion-preparaciones"
-  | "produccion-registrar";
+  | "produccion-registrar"
+  | "reportes-ventas";
 
 export type SystemModuleDefinition = {
   key: SystemModuleKey;
@@ -59,6 +62,7 @@ export const systemModules: SystemModuleDefinition[] = [
   { key: "menu", name: "Menu", route: "/panel/menu/pizzas", icon: "Pizza", order: 80, active: true },
   { key: "marketing", name: "Marketing", route: "/panel/marketing/pantallas", icon: "MonitorPlay", order: 90, active: true },
   { key: "produccion", name: "Produccion", route: "/panel/produccion/registrar", icon: "Factory", order: 100, active: true },
+  { key: "reportes", name: "Reportes", route: "/panel/reportes", icon: "ChartNoAxesCombined", order: 105, active: true },
   { key: "configuracion", name: "Configuracion", route: "/panel/configuracion", icon: "Settings", order: 110, active: true }
 ];
 
@@ -71,6 +75,7 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   categorias: "maestros",
   "perfiles-conservacion": "maestros",
   configuracion: "configuracion",
+  "configuracion-negocio": "configuracion",
   "configuracion-cocina": "configuracion",
   "menu-pizzas": "menu",
   "menu-precios-adiciones": "menu",
@@ -88,7 +93,8 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   cocina: "cocina",
   produccion: "produccion",
   "produccion-preparaciones": "produccion",
-  "produccion-registrar": "produccion"
+  "produccion-registrar": "produccion",
+  "reportes-ventas": "reportes"
 };
 
 export function allSystemModuleKeys() {
