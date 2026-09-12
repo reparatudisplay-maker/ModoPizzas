@@ -2287,6 +2287,8 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const itemsRaw = getString(formData, "items");
   const customerName = getString(formData, "customer_name");
   const customerPhone = getString(formData, "customer_phone");
+  const discountType = getString(formData, "discount_type") || "none";
+  const discountValue = getDecimal(formData, "discount_value", 0);
   const discountCop = getDecimal(formData, "discount_cop", 0);
   const deliveryCop = getDecimal(formData, "delivery_cop", 0);
   const cashReceivedCop = getDecimal(formData, "cash_received_cop", 0);
@@ -2295,6 +2297,10 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
   if (!["cash", "card", "transfer", "mixed", "pending"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
+  if (!["none", "percentage", "amount"].includes(discountType)) return { status: "error", message: "El tipo de descuento no es válido." };
+  if (discountType === "none" && (discountValue !== 0 || discountCop !== 0)) return { status: "error", message: "El descuento no es válido." };
+  if (discountType === "percentage" && (discountValue <= 0 || discountValue >= 100)) return { status: "error", message: "El descuento porcentual debe ser mayor que cero y menor al 100%." };
+  if (discountType === "amount" && (discountValue <= 0 || discountCop <= 0)) return { status: "error", message: "El descuento debe ser mayor que cero." };
 
   let items: unknown;
   try {
@@ -2306,10 +2312,12 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
   if (paymentMethod === "cash" && cashReceivedCop <= 0) return { status: "error", message: "Confirma el cobro en efectivo." };
 
-  const { data, error } = await supabase.rpc("create_pos_order_with_payment", {
+  const { data, error } = await supabase.rpc("create_pos_order_with_discount_payment", {
     p_kind: kind,
     p_customer_name: upperText(customerName),
     p_customer_phone: customerPhone,
+    p_discount_type: discountType,
+    p_discount_value: discountValue,
     p_discount_cop: discountCop,
     p_delivery_cop: deliveryCop,
     p_payment_method: paymentMethod,
@@ -2369,6 +2377,29 @@ export async function cancelPosOrder(_previousState: FormActionState, formData: 
   if (error) return { status: "error", message: error.message };
   revalidateInventory();
   return { status: "success", message: "Pedido cancelado correctamente." };
+}
+
+export async function updatePosOrderOperationalDate(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const orderId = getString(formData, "order_id");
+  const date = getString(formData, "ordered_date");
+  const time = getString(formData, "ordered_time");
+  if (!orderId || !date || !time) return { status: "error", message: "Ingresa una fecha y hora válidas." };
+
+  const orderedAt = new Date(`${date}T${time}:00-05:00`);
+  if (Number.isNaN(orderedAt.getTime())) return { status: "error", message: "Ingresa una fecha y hora válidas." };
+  if (orderedAt.getTime() > Date.now() + 5 * 60 * 1000) return { status: "error", message: "La fecha operativa no puede estar en el futuro." };
+
+  const { error } = await supabase.rpc("update_pos_order_operational_date", {
+    p_order_id: orderId,
+    p_ordered_at: orderedAt.toISOString()
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/panel/pedidos");
+  revalidatePath("/panel/reportes");
+  revalidatePath("/panel/caja");
+  return { status: "success", message: "Fecha operativa actualizada." };
 }
 
 export async function updateKitchenOrderItemStatus(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

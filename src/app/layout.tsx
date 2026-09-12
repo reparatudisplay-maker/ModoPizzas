@@ -3,10 +3,10 @@ import "./globals.css";
 import "./public-storefront.css";
 
 export const metadata: Metadata = {
-  title: { default: "ModoPizzas | Pizza horneada al momento", template: "%s | ModoPizzas" },
+  title: { default: "Modo Pizzas | Pizza horneada al momento", template: "%s | Modo Pizzas" },
   description: "Pizza horneada al momento. Explora el menú, personaliza tu pizza y pide fácil.",
   openGraph: {
-    title: "ModoPizzas | Enciende el antojo",
+    title: "Modo Pizzas | Pizza horneada al momento",
     description: "Pizza horneada al momento. Pide fácil, disfruta más.",
     type: "website"
   }

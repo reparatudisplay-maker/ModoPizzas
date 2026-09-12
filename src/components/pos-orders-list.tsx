@@ -2,8 +2,9 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Ban, Eye, Search, X } from "lucide-react";
-import { cancelPosOrder, type FormActionState } from "@/app/admin/actions";
+import { useRouter } from "next/navigation";
+import { Ban, CalendarClock, Eye, Search, X } from "lucide-react";
+import { cancelPosOrder, updatePosOrderOperationalDate, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -14,8 +15,13 @@ export type PosOrderListRow = {
   kind: string;
   status: string;
   customer_name: string | null;
+  subtotal_cop: number;
+  discount_cop: number;
+  discount_type: "none" | "percentage" | "amount";
+  discount_value: number;
   total_cop: number;
   payment_method: string;
+  ordered_at: string;
   created_at: string;
   items_count: number;
   notes: string | null;
@@ -78,10 +84,17 @@ function kindLabel(kind: string) {
   return "Domicilio";
 }
 
-export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
+function operationalDateParts(value: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return { date: `${part("year")}-${part("month")}-${part("day")}`, time: `${part("hour")}:${part("minute")}` };
+}
+
+export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOperationalDate: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [detailOrder, setDetailOrder] = useState<PosOrderListRow | null>(null);
+  const [dateOrder, setDateOrder] = useState<PosOrderListRow | null>(null);
   const normalizedQuery = normalizeMasterText(query);
   const filteredOrders = useMemo(
     () =>
@@ -140,9 +153,10 @@ export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
                 <td>{formatCop(order.total_cop)}</td>
                 <td>{order.payment_method}</td>
                 <td><span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span></td>
-                <td>{new Date(order.created_at).toLocaleDateString("es-CO")}</td>
+                <td>{new Date(order.ordered_at).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</td>
                 <td className="actions-column compact-actions-column">
                   <button className="icon-button" onClick={() => setDetailOrder(order)} title={`Ver detalle de ${order.code}`} type="button"><Eye size={16} /></button>
+                  {canEditOperationalDate ? <button className="icon-button" onClick={() => setDateOrder(order)} title={`Editar fecha de ${order.code}`} type="button"><CalendarClock size={16} /></button> : null}
                   {order.status !== "cancelled" && order.status !== "delivered" ? <CancelOrderButton id={order.id} /> : null}
                 </td>
               </tr>
@@ -151,7 +165,8 @@ export function PosOrdersList({ orders }: { orders: PosOrderListRow[] }) {
           </tbody>
         </table>
       </div>
-      {detailOrder ? <PosOrderDetailModal order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
+      {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
+      {dateOrder ? <OperationalDateModal order={dateOrder} onClose={() => setDateOrder(null)} /> : null}
     </section>
   );
 }
@@ -204,7 +219,57 @@ function additionScope(addition: PosOrderListRow["items"][number]["additions"][n
   return ` (${addition.scope_label ?? (addition.scope === "left" ? "mitad izquierda" : "mitad derecha")})`;
 }
 
-function PosOrderDetailModal({ order, onClose }: { order: PosOrderListRow; onClose: () => void }) {
+function OperationalDateModal({ order, onClose }: { order: PosOrderListRow; onClose: () => void }) {
+  const [state, action] = useActionState(updatePosOrderOperationalDate, initialState);
+  const router = useRouter();
+  const current = operationalDateParts(order.ordered_at);
+
+  useEffect(() => {
+    if (state.status !== "success") return;
+    const timeout = window.setTimeout(() => {
+      onClose();
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [onClose, router, state.status]);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <form action={action} aria-label={`Editar fecha del pedido ${order.code}`} aria-modal="true" className="modal-panel compact-modal operational-date-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <input name="order_id" type="hidden" value={order.id} />
+        <header className="modal-header">
+          <div>
+            <strong>Editar fecha del pedido {order.code}</strong>
+            <span>Corrige la fecha operativa sin alterar el registro original.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="compact-card operational-date-body">
+          <div className="form-grid">
+            <div className="field"><label>Fecha</label><input defaultValue={current.date} name="ordered_date" required type="date" /></div>
+            <div className="field"><label>Hora</label><input defaultValue={current.time} name="ordered_time" required type="time" /></div>
+          </div>
+          <div className="operational-date-info">
+            <span>Fecha operativa actual <strong>{formatDateTime(order.ordered_at)}</strong></span>
+            <span>Registro original <strong>{formatDateTime(order.created_at)}</strong></span>
+          </div>
+          {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+        </div>
+        <footer className="modal-footer">
+          <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
+          <UpdateOperationalDateButton />
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function UpdateOperationalDateButton() {
+  const { pending } = useFormStatus();
+  return <button className="primary-button" disabled={pending} type="submit">{pending ? "Actualizando..." : "Actualizar fecha"}</button>;
+}
+
+function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClose }: { canEditOperationalDate: boolean; onEditDate: () => void; order: PosOrderListRow; onClose: () => void }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
@@ -222,7 +287,7 @@ function PosOrderDetailModal({ order, onClose }: { order: PosOrderListRow; onClo
         <header className="modal-header">
           <div>
             <strong>Pedido {order.code}</strong>
-            <span>{formatDateTime(order.created_at)} · {kindLabel(order.kind)}</span>
+            <span>{formatDateTime(order.ordered_at)} · {kindLabel(order.kind)}</span>
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
@@ -232,6 +297,8 @@ function PosOrderDetailModal({ order, onClose }: { order: PosOrderListRow; onClo
             <span><b>Cliente:</b> {order.customer_name ?? "Sin cliente"}</span>
             <span><b>Usuario:</b> {order.created_by_name}</span>
             <span><b>Pago:</b> {paymentLabel(order.payment_method)}</span>
+            <span><b>Registro original:</b> {formatDateTime(order.created_at)}</span>
+            {canEditOperationalDate ? <button className="ghost-button compact-order-date-action" onClick={onEditDate} type="button"><CalendarClock size={15} /> Editar fecha</button> : null}
           </div>
 
           <section className="order-detail-section" aria-label="Items del pedido">
@@ -263,7 +330,9 @@ function PosOrderDetailModal({ order, onClose }: { order: PosOrderListRow; onClo
           </section>
 
           <section className="order-detail-summary" aria-label="Resumen del pedido">
-            <div><span>Total pedido</span><strong>{formatCop(order.total_cop)}</strong></div>
+            {order.discount_cop > 0 ? <div><span>Subtotal</span><strong>{formatCop(order.subtotal_cop)}</strong></div> : null}
+            {order.discount_cop > 0 ? <div><span>{order.discount_type === "percentage" ? `Descuento (${order.discount_value}%)` : "Descuento"}</span><strong>-{formatCop(order.discount_cop)}</strong></div> : null}
+            <div><span>{order.discount_cop > 0 ? "Total" : "Total pedido"}</span><strong>{formatCop(order.total_cop)}</strong></div>
             <div><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
             {cashPayment ? <div><span>Efectivo recibido</span><strong>{cashPayment.cash_received_cop === null ? "—" : formatCop(cashPayment.cash_received_cop)}</strong></div> : null}
             {cashPayment ? <div><span>Cambio</span><strong>{cashPayment.cash_change_cop === null ? "—" : formatCop(cashPayment.cash_change_cop)}</strong></div> : null}

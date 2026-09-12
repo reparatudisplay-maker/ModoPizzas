@@ -4706,6 +4706,156 @@ a {
   font-size: 1.15rem;
 }
 
+.pos-discount-action,
+.pos-discount-actions {
+  flex: 0 0 auto;
+}
+
+.pos-discount-action {
+  align-items: center;
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  gap: 7px;
+  justify-content: center;
+  min-height: 38px;
+  width: 100%;
+}
+
+.pos-discount-action:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.pos-subtotal-line {
+  color: var(--text-muted);
+  font-size: .88rem;
+}
+
+.pos-discount-line {
+  color: var(--accent-strong);
+  font-size: .9rem;
+}
+
+.pos-discount-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pos-discount-actions .ghost-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
+.pos-discount-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(88vh, 520px);
+  overflow: hidden;
+  width: min(430px, calc(100vw - 28px));
+}
+
+.pos-discount-modal-body {
+  display: grid;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.pos-discount-type-tabs {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pos-discount-type-tabs button {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  min-height: 42px;
+}
+
+.pos-discount-type-tabs button.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.pos-discount-input {
+  display: grid;
+  gap: 6px;
+}
+
+.pos-discount-input span {
+  color: var(--text-muted);
+  font-size: .88rem;
+  font-weight: 700;
+}
+
+.pos-discount-preview {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.pos-discount-preview span {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.pos-discount-preview .total {
+  border-top: 1px solid var(--border);
+  font-size: 1.05rem;
+  padding-top: 9px;
+}
+
+.compact-order-date-action {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  justify-content: center;
+}
+
+.operational-date-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(88vh, 440px);
+  overflow: hidden;
+}
+
+.operational-date-body {
+  overflow-y: auto;
+}
+
+.operational-date-info {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.operational-date-info span {
+  align-items: center;
+  display: flex;
+  font-size: .88rem;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .pos-submit-button {
   flex: 0 0 auto;
   min-height: 50px;

@@ -5,7 +5,7 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Banknote, CheckCircle2, ChevronLeft, Minus, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -13,6 +13,13 @@ import { formatStockQuantity, type StockUnit } from "@/lib/units";
 
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending";
+type DiscountType = "percentage" | "amount";
+
+type AppliedDiscount = {
+  type: DiscountType;
+  value: number;
+  amount_cop: number;
+};
 type CatalogTab = "pizzas" | "products";
 type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
@@ -258,6 +265,10 @@ export function PosOrderWorkspace({
   const [selectedAdditions, setSelectedAdditions] = useState<Record<string, number>>({});
   const [additionScopes, setAdditionScopes] = useState<Record<string, AdditionScope>>({});
   const [ingredientModalOpen, setIngredientModalOpen] = useState(false);
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [discountType, setDiscountType] = useState<DiscountType>("percentage");
+  const [discountInput, setDiscountInput] = useState("");
+  const [discount, setDiscount] = useState<AppliedDiscount | null>(null);
   const [cashModalOpen, setCashModalOpen] = useState(false);
   const [cashReceived, setCashReceived] = useState("");
   const [cashConfirmed, setCashConfirmed] = useState(false);
@@ -290,6 +301,9 @@ export function PosOrderWorkspace({
         setNotes("");
         setOrderKind("local");
         setPaymentMethod("cash");
+        setDiscount(null);
+        setDiscountInput("");
+        setDiscountModalOpen(false);
         setCashModalOpen(false);
         setCashReceived("");
         setCashConfirmed(false);
@@ -375,7 +389,20 @@ export function PosOrderWorkspace({
     return sum + line.quantity * (line.unit_price_cop + additionsSubtotal);
   }, 0);
   const deliveryValue = orderKind === "delivery" ? Number(delivery || 0) : 0;
-  const total = Math.max(0, subtotal + deliveryValue);
+  const discountCop = discount?.amount_cop ?? 0;
+  const total = Math.max(0, subtotal - discountCop + deliveryValue);
+  const parsedDiscountInput = Number(discountInput.replace(",", "."));
+  const previewDiscountCop = discountType === "percentage"
+    ? Math.round(subtotal * parsedDiscountInput / 100)
+    : Math.round(parsedDiscountInput);
+  const discountError = !Number.isFinite(parsedDiscountInput) || parsedDiscountInput <= 0
+    ? "Ingresa un valor mayor que cero."
+    : discountType === "percentage" && parsedDiscountInput >= 100
+      ? "El descuento porcentual debe ser menor al 100%."
+      : discountType === "amount" && previewDiscountCop >= subtotal
+        ? "El descuento debe ser menor que el subtotal."
+        : "";
+  const discountLabel = discount?.type === "percentage" ? `Descuento (${discount.value}%)` : "Descuento";
   const cashReceivedValue = Number(cashReceived || 0);
   const cashChange = Math.max(0, cashReceivedValue - total);
   const cashSuggestions = useMemo(() => cashQuickSuggestions(total), [total]);
@@ -550,6 +577,18 @@ export function PosOrderWorkspace({
     cashSubmitLockRef.current = false;
   }
 
+  function openDiscountModal() {
+    setDiscountType(discount?.type ?? "percentage");
+    setDiscountInput(discount ? String(discount.value) : "");
+    setDiscountModalOpen(true);
+  }
+
+  function applyDiscount() {
+    if (discountError || subtotal <= 0) return;
+    setDiscount({ type: discountType, value: parsedDiscountInput, amount_cop: previewDiscountCop });
+    setDiscountModalOpen(false);
+  }
+
   return (
     <>
       <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
@@ -558,7 +597,9 @@ export function PosOrderWorkspace({
         <input name="payment_method" type="hidden" value={paymentMethod} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
-        <input name="discount_cop" type="hidden" value={0} />
+        <input name="discount_type" type="hidden" value={discount?.type ?? "none"} />
+        <input name="discount_value" type="hidden" value={discount?.value ?? 0} />
+        <input name="discount_cop" type="hidden" value={discountCop} />
         <input name="delivery_cop" type="hidden" value={deliveryValue} />
         <input name="cash_received_cop" type="hidden" value={paymentMethod === "cash" ? cashReceivedValue : 0} />
         <input name="cash_change_cop" type="hidden" value={paymentMethod === "cash" ? cashChange : 0} />
@@ -720,9 +761,20 @@ export function PosOrderWorkspace({
             ))}
           </div>
 
+          <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
+            <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}
+          </button>
           <div className="pos-total-box">
+            {discount ? <span className="pos-subtotal-line">Subtotal <strong>{formatCop(subtotal)}</strong></span> : null}
+            {discount ? <span className="pos-discount-line">{discountLabel} <strong>-{formatCop(discountCop)}</strong></span> : null}
             <span>Total <strong>{formatCop(total)}</strong></span>
           </div>
+          {discount ? (
+            <div className="pos-discount-actions">
+              <button className="ghost-button" onClick={openDiscountModal} type="button"><Pencil size={14} /> Editar</button>
+              <button className="ghost-button" onClick={() => setDiscount(null)} type="button"><X size={14} /> Quitar descuento</button>
+            </div>
+          ) : null}
           {state.status !== "idle" ? (
             <p className={`form-status ${state.status}`}>
               {state.status === "success" && state.order ? `Pedido ${state.order.code} confirmado por ${formatCop(state.order.total_cop)}.` : state.message}
@@ -935,6 +987,46 @@ export function PosOrderWorkspace({
                 <button className="primary-button" onClick={() => setCustomerModalOpen(false)} type="button">Guardar</button>
               </div>
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {discountModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Aplicar descuento" aria-modal="true" className="modal-panel pos-discount-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>Aplicar descuento</strong>
+                <span>Se descuenta del valor comercial del pedido.</span>
+              </div>
+              <button className="icon-button" onClick={() => setDiscountModalOpen(false)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="pos-discount-modal-body">
+              <div className="pos-discount-type-tabs" role="tablist" aria-label="Tipo de descuento">
+                <button className={discountType === "percentage" ? "active" : ""} onClick={() => { setDiscountType("percentage"); setDiscountInput(""); }} role="tab" type="button">Porcentaje %</button>
+                <button className={discountType === "amount" ? "active" : ""} onClick={() => { setDiscountType("amount"); setDiscountInput(""); }} role="tab" type="button">Monto $</button>
+              </div>
+              <label className="pos-discount-input">
+                <span>Valor</span>
+                <input
+                  autoFocus
+                  inputMode="decimal"
+                  onChange={(event) => setDiscountInput(discountType === "amount" ? event.target.value.replace(/\D/g, "") : event.target.value.replace(/[^\d,.]/g, ""))}
+                  placeholder={discountType === "percentage" ? "Ej. 10" : "Ej. 5000"}
+                  value={discountInput}
+                />
+              </label>
+              <div className="pos-discount-preview" aria-live="polite">
+                <span>Subtotal <strong>{formatCop(subtotal)}</strong></span>
+                <span>Descuento{discountType === "percentage" && Number.isFinite(parsedDiscountInput) ? ` ${parsedDiscountInput}%` : ""} <strong>-{formatCop(Math.max(0, Number.isFinite(previewDiscountCop) ? previewDiscountCop : 0))}</strong></span>
+                <span className="total">TOTAL <strong>{formatCop(Math.max(0, subtotal - Math.max(0, Number.isFinite(previewDiscountCop) ? previewDiscountCop : 0) + deliveryValue))}</strong></span>
+              </div>
+              {discountError ? <p className="form-status error">{discountError}</p> : null}
+            </div>
+            <footer className="modal-footer">
+              <button className="secondary-button" onClick={() => setDiscountModalOpen(false)} type="button">Cancelar</button>
+              <button className="primary-button" disabled={Boolean(discountError) || subtotal <= 0} onClick={applyDiscount} type="button">Aplicar descuento</button>
+            </footer>
           </section>
         </div>
       ) : null}

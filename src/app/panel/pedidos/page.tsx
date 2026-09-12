@@ -12,6 +12,10 @@ type OrderRow = {
   kind: string;
   status: string;
   customer_name: string | null;
+  subtotal_cop: number;
+  discount_cop: number;
+  discount_type: "none" | "percentage" | "amount";
+  discount_value: number;
   total_cop: number;
   payment_method: string;
   notes: string | null;
@@ -19,6 +23,7 @@ type OrderRow = {
   cancelled_at: string | null;
   cancelled_by: string | null;
   cancel_reason: string | null;
+  ordered_at: string;
   created_at: string;
   pos_order_payments: Array<{
     method: string;
@@ -65,7 +70,7 @@ export default async function PedidosPage() {
   const { data, error } = await supabase
     .from("pos_orders")
     .select(`
-      id, code, kind, status, customer_name, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, created_at,
+      id, code, kind, status, customer_name, subtotal_cop, discount_cop, discount_type, discount_value, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, ordered_at, created_at,
       pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
       pos_order_items(
         id, item_kind, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, line_subtotal_cop, notes,
@@ -74,7 +79,7 @@ export default async function PedidosPage() {
         kitchen_order_items(status, received_at, started_at, prepared_at)
       )
     `)
-    .order("created_at", { ascending: false })
+    .order("ordered_at", { ascending: false })
     .limit(80);
 
   const rawOrders = (data ?? []) as unknown as OrderRow[];
@@ -91,8 +96,13 @@ export default async function PedidosPage() {
     kind: order.kind,
     status: order.status,
     customer_name: order.customer_name,
+    subtotal_cop: Number(order.subtotal_cop ?? 0),
+    discount_cop: Number(order.discount_cop ?? 0),
+    discount_type: order.discount_type ?? "none",
+    discount_value: Number(order.discount_value ?? 0),
     total_cop: Number(order.total_cop ?? 0),
     payment_method: order.payment_method,
+    ordered_at: order.ordered_at,
     created_at: order.created_at,
     items_count: order.pos_order_items?.length ?? 0,
     notes: order.notes,
@@ -138,7 +148,7 @@ export default async function PedidosPage() {
   return (
     <PanelShell active="pedidos-listado" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Pedidos" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrdersList orders={orders} />
+      <PosOrdersList canEditOperationalDate={roleNames.includes("gerente") || roleNames.includes("admin_sistema")} orders={orders} />
     </PanelShell>
   );
 }

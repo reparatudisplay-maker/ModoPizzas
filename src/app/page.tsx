@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 export const dynamic = "force-dynamic";
 
 const fallbackBusiness = {
-  business_name: "ModoPizzas",
+  business_name: "Modo Pizzas",
   phone: "",
   whatsapp_number: "",
   address: null,
