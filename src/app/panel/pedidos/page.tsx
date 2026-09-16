@@ -47,7 +47,7 @@ type OrderRow = {
     default_preparation: { name: string } | null;
     used_inventory: { name: string } | null;
     used_preparation: { name: string } | null;
-    inventory_items: { presentation_quantity: number | null; presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null } | null;
+    inventory_item: { presentation_quantity: number | null; presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null } | null;
     pos_order_item_additions: Array<{
       id: string;
       quantity: number;
@@ -81,7 +81,7 @@ export default async function PedidosPage() {
       pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
       pos_order_items(
         id, item_kind, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, line_subtotal_cop, notes, base_default_source_kind, base_used_source_kind, base_replaced_by,
-        inventory_items(presentation_quantity, presentation_unit),
+        inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit),
         default_inventory:inventory_items!pos_order_items_base_default_inventory_item_id_fkey(name),
         default_preparation:preparations!pos_order_items_base_default_preparation_id_fkey(name),
         used_inventory:inventory_items!pos_order_items_base_used_inventory_item_id_fkey(name),
@@ -139,8 +139,8 @@ export default async function PedidosPage() {
       base_default_name: item.base_default_source_kind === "preparation" ? item.default_preparation?.name ?? null : item.default_inventory?.name ?? null,
       base_used_name: item.base_used_source_kind === "preparation" ? item.used_preparation?.name ?? null : item.used_inventory?.name ?? null,
       base_replaced_by_name: item.base_replaced_by ? profileNameById.get(item.base_replaced_by) ?? "Sin registro" : null,
-      presentation_quantity: item.inventory_items?.presentation_quantity === null || item.inventory_items?.presentation_quantity === undefined ? null : Number(item.inventory_items.presentation_quantity),
-      presentation_unit: item.inventory_items?.presentation_unit ?? null,
+      presentation_quantity: item.inventory_item?.presentation_quantity === null || item.inventory_item?.presentation_quantity === undefined ? null : Number(item.inventory_item.presentation_quantity),
+      presentation_unit: item.inventory_item?.presentation_unit ?? null,
       additions: asArray(item.pos_order_item_additions).map((addition) => ({
         id: addition.id,
         quantity: Number(addition.quantity ?? 0),
