@@ -75,8 +75,12 @@ type PriceComponentRow = {
   unit: StockUnit;
   display_quantity: number;
   display_unit: StockUnit;
+  alternative_preparation_id: string | null;
+  alternative_preparation_quantity_base: number | null;
+  alternative_preparation_unit: StockUnit | null;
   inventory_items: { name: string } | null;
   preparations: { name: string } | null;
+  alternative_preparation: { name: string } | null;
 };
 
 type BaseSourceRow = {
@@ -88,8 +92,12 @@ type BaseSourceRow = {
   unit: StockUnit;
   display_quantity: number;
   display_unit: StockUnit;
+  alternative_preparation_id: string | null;
+  alternative_preparation_quantity_base: number | null;
+  alternative_preparation_unit: StockUnit | null;
   inventory_items: { name: string } | null;
   preparations: { name: string } | null;
+  alternative_preparation: { name: string } | null;
 };
 
 function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
@@ -143,7 +151,7 @@ export default async function MenuPreciosPizzasPage() {
       .select("price_config_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
     supabase
       .from("pizza_size_base_sources")
-      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
+      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, alternative_preparation_id, alternative_preparation_quantity_base, alternative_preparation_unit, inventory_items(name), preparations(name), alternative_preparation:preparations!pizza_size_base_sources_alternative_preparation_id_fkey(name)"),
     supabase.from("pizza_size_component_quantities").select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit"),
     supabase.from("purchase_items").select("id, inventory_item_id, quantity, unit, line_total_cop"),
     supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
@@ -328,7 +336,11 @@ export default async function MenuPreciosPizzasPage() {
       quantity_base: Number(base.quantity_base ?? 0),
       unit: base.unit,
       display_quantity: Number(base.display_quantity ?? 0),
-      display_unit: base.display_unit
+      display_unit: base.display_unit,
+      alternative_preparation_id: base.alternative_preparation_id,
+      alternative_preparation_name: base.alternative_preparation?.name ?? null,
+      alternative_preparation_quantity_base: base.alternative_preparation_quantity_base === null ? null : Number(base.alternative_preparation_quantity_base),
+      alternative_preparation_unit: base.alternative_preparation_unit
     };
   }).filter((base) => base.source_id) as PizzaPriceBaseSource[];
   const componentQuantities = (componentQuantitiesResult.data ?? []).map((row) => ({

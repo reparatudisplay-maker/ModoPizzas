@@ -4620,6 +4620,103 @@ a {
   min-width: 0;
 }
 
+.pos-cart-base {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.pos-cart-base small {
+  color: var(--muted);
+}
+
+.pos-cart-base .icon-button {
+  align-items: center;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.pos-base-selector-modal {
+  max-height: min(680px, calc(100dvh - 28px));
+}
+
+.pos-base-selector-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.pos-base-context {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+}
+
+.pos-base-context span,
+.pos-base-context small,
+.pos-base-option small {
+  color: var(--muted);
+}
+
+.pos-base-option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pos-base-option {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--foreground);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 11px;
+  text-align: left;
+}
+
+.pos-base-option:hover:not(:disabled),
+.pos-base-option.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.pos-base-option.unavailable {
+  opacity: .7;
+}
+
+.pos-base-option > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pos-base-option > span:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.pos-base-option em {
+  color: var(--accent);
+  font-size: .78rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.compact-base-choice {
+  justify-self: start;
+}
+
 .pos-cart-line strong,
 .pos-cart-line small,
 .pos-cart-line span {
@@ -5913,6 +6010,16 @@ a {
   .pos-ingredient-columns {
     align-items: stretch;
     grid-template-columns: 1fr;
+  }
+
+  .pos-base-option {
+    align-items: start;
+    grid-template-columns: 1fr;
+  }
+
+  .pos-base-option > span:last-child {
+    justify-items: start;
+    text-align: left;
   }
 
   .pos-pizza-modal {

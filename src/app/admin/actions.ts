@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
 import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
+import type { StockUnit } from "@/lib/units";
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
@@ -559,6 +560,9 @@ export async function savePizzaSizeBaseSource(_previousState: FormActionState, f
   const sourceId = getString(formData, "source_id");
   const quantity = getDecimal(formData, "quantity", 0);
   const displayUnit = getStockUnit(formData, "unit");
+  const alternativePreparationId = getString(formData, "alternative_preparation_id");
+  const alternativeQuantity = getDecimal(formData, "alternative_preparation_quantity", 0);
+  const alternativeDisplayUnit = getStockUnit(formData, "alternative_preparation_unit");
   const supabase = await createServerSupabaseClient();
 
   if (!pizzaSizeId) return { status: "error", message: "Selecciona un tamano." };
@@ -592,6 +596,17 @@ export async function savePizzaSizeBaseSource(_previousState: FormActionState, f
     return { status: "error", message: "La unidad no es compatible con el componente base." };
   }
 
+  let alternativePreparationQuantityBase: number | null = null;
+  let alternativePreparationUnit: string | null = null;
+  if (alternativePreparationId) {
+    if (alternativeQuantity <= 0) return { status: "error", message: "Ingresa la cantidad de masa producida alternativa." };
+    const { data, error } = await supabase.from("preparations").select("id, base_unit, is_active").eq("id", alternativePreparationId).single();
+    if (error || !data?.is_active) return { status: "error", message: error?.message ?? "La masa producida alternativa no esta disponible." };
+    alternativePreparationUnit = canonicalStockUnit(data.base_unit);
+    if (canonicalStockUnit(alternativeDisplayUnit) !== alternativePreparationUnit) return { status: "error", message: "La unidad de la masa producida alternativa no es compatible." };
+    alternativePreparationQuantityBase = convertStockQuantity(alternativeQuantity, alternativeDisplayUnit, alternativePreparationUnit as StockUnit);
+  }
+
   const {
     data: { user }
   } = await supabase.auth.getUser();
@@ -612,6 +627,9 @@ export async function savePizzaSizeBaseSource(_previousState: FormActionState, f
     unit: baseUnit,
     display_quantity: quantity,
     display_unit: displayUnit,
+    alternative_preparation_id: alternativePreparationId || null,
+    alternative_preparation_quantity_base: alternativePreparationQuantityBase,
+    alternative_preparation_unit: alternativePreparationUnit,
     is_active: true,
     updated_by: user?.id ?? null,
     updated_at: new Date().toISOString()

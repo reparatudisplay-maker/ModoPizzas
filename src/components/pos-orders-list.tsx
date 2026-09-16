@@ -44,6 +44,9 @@ export type PosOrderListRow = {
     unit_price_cop: number;
     line_subtotal_cop: number;
     notes: string | null;
+    base_default_name: string | null;
+    base_used_name: string | null;
+    base_replaced_by_name: string | null;
     presentation_quantity: number | null;
     presentation_unit: StockUnit | null;
     additions: Array<{
@@ -314,6 +317,8 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
                       <strong>{item.quantity} × {item.product_name_snapshot}{presentation ? ` ${presentation}` : ""}</strong>
                       {item.item_kind === "pizza" ? <small>{item.product_name_snapshot.includes(" / ") ? "Mitad y mitad" : "Pizza"}</small> : null}
                       {item.item_kind === "pizza" ? <small>Sin: {item.notes ?? "—"}</small> : null}
+                      {item.item_kind === "pizza" && item.base_used_name ? <small>Base prevista: {item.base_default_name ?? "—"}</small> : null}
+                      {item.item_kind === "pizza" && item.base_used_name ? <small>Base utilizada: {item.base_used_name}{item.base_replaced_by_name ? ` · Sustitución: ${item.base_replaced_by_name}` : ""}</small> : null}
                       {item.additions.length > 0 ? (
                         <small>Adiciones: {item.additions.map((addition) => `+ ${addition.name_snapshot} x${addition.quantity}${additionScope(addition)}`).join(", ")}</small>
                       ) : item.item_kind === "pizza" ? <small>Adiciones: —</small> : null}

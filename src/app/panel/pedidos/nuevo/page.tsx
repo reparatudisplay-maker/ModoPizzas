@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type PosAdditionOption, type PosPizzaBaseOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -80,6 +80,17 @@ type SaleProductRow = {
   unit_cost_cop: number | null;
 };
 
+type PizzaBaseOptionRow = {
+  pizza_size_id: string;
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+  source_name: string;
+  quantity_base: number;
+  unit: StockUnit;
+  is_default: boolean;
+  available_quantity: number;
+};
+
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
   if (!path) return null;
   if (path.startsWith("http")) return path;
@@ -102,7 +113,8 @@ export default async function NuevoPedidoPage() {
     pricesResult,
     flavorIngredientsResult,
     additionsResult,
-    saleProductsResult
+    saleProductsResult,
+    baseOptionsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -127,7 +139,8 @@ export default async function NuevoPedidoPage() {
       .eq("is_active", true)
       .eq("is_available", true)
       .order("sort_order"),
-    supabase.rpc("get_pos_sale_product_catalog")
+    supabase.rpc("get_pos_sale_product_catalog"),
+    supabase.rpc("get_pos_pizza_base_options")
   ]);
 
   const error =
@@ -136,7 +149,8 @@ export default async function NuevoPedidoPage() {
     pricesResult.error ??
     flavorIngredientsResult.error ??
     additionsResult.error ??
-    saleProductsResult.error;
+    saleProductsResult.error ??
+    baseOptionsResult.error;
 
   const signedImageCache = new Map<string, Promise<string | null>>();
   function signedCachedImage(path: string | null) {
@@ -254,11 +268,21 @@ export default async function NuevoPedidoPage() {
       };
     })
   );
+  const baseOptions: PosPizzaBaseOption[] = ((baseOptionsResult.data ?? []) as unknown as PizzaBaseOptionRow[]).map((option) => ({
+    pizza_size_id: option.pizza_size_id,
+    source_kind: option.source_kind,
+    source_id: option.source_id,
+    source_name: option.source_name,
+    quantity_base: Number(option.quantity_base),
+    unit: option.unit,
+    is_default: option.is_default,
+    available_quantity: Number(option.available_quantity)
+  }));
 
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} pizzas={pizzas} saleProducts={saleProducts} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} pizzas={pizzas} saleProducts={saleProducts} />
     </PanelShell>
   );
 }

@@ -72,6 +72,10 @@ export type PizzaPriceBaseSource = {
   unit: StockUnit;
   display_quantity: number;
   display_unit: StockUnit;
+  alternative_preparation_id: string | null;
+  alternative_preparation_name: string | null;
+  alternative_preparation_quantity_base: number | null;
+  alternative_preparation_unit: StockUnit | null;
 };
 
 export type PizzaSizeComponentQuantity = {
@@ -603,10 +607,17 @@ function PizzaSizeBaseSourceRow({
   const [sourceId, setSourceId] = useState(baseSource?.source_id ?? "");
   const [quantity, setQuantity] = useState(baseSource?.display_quantity ? String(baseSource.display_quantity) : "1");
   const [unit, setUnit] = useState<StockUnit>(baseSource?.display_unit ?? "unit");
+  const [alternativePreparationId, setAlternativePreparationId] = useState(baseSource?.alternative_preparation_id ?? "");
+  const [alternativeQuantity, setAlternativeQuantity] = useState(baseSource?.alternative_preparation_quantity_base ? String(baseSource.alternative_preparation_quantity_base) : "");
+  const [alternativeUnit, setAlternativeUnit] = useState<StockUnit>(baseSource?.alternative_preparation_unit ?? "g");
   const sourceOptions = sources.filter((source) => source.source_kind === sourceKind);
+  const alternativePreparationOptions = sources.filter((source) => source.source_kind === "preparation");
   const selectedSource = sourcesByKey.get(`${sourceKind}:${sourceId}`);
+  const selectedAlternativePreparation = sourcesByKey.get(`preparation:${alternativePreparationId}`);
   const unitOptions = unitOptionsFor(selectedSource?.unit ?? unit);
   const effectiveUnit = unitOptions.includes(unit) ? unit : unitOptions[0];
+  const alternativeUnitOptions = unitOptionsFor(selectedAlternativePreparation?.unit ?? alternativeUnit);
+  const effectiveAlternativeUnit = alternativeUnitOptions.includes(alternativeUnit) ? alternativeUnit : alternativeUnitOptions[0];
   const cost = selectedSource ? componentCost(Number(String(quantity).replace(",", ".")), effectiveUnit, selectedSource) : null;
 
   return (
@@ -650,6 +661,24 @@ function PizzaSizeBaseSourceRow({
             {formatUnit(option)}
           </option>
         ))}
+      </select>
+      <select
+        aria-label={`Masa producida alternativa para ${size.name}`}
+        name="alternative_preparation_id"
+        onChange={(event) => {
+          const nextId = event.target.value;
+          setAlternativePreparationId(nextId);
+          const next = sourcesByKey.get(`preparation:${nextId}`);
+          setAlternativeUnit(unitOptionsFor(next?.unit ?? "g")[0]);
+        }}
+        value={alternativePreparationId}
+      >
+        <option value="">Sin masa producida alternativa</option>
+        {alternativePreparationOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+      </select>
+      <input disabled={!alternativePreparationId} inputMode="decimal" name="alternative_preparation_quantity" onChange={(event) => setAlternativeQuantity(event.target.value)} placeholder="Cant. masa" value={alternativeQuantity} />
+      <select disabled={!alternativePreparationId} name="alternative_preparation_unit" onChange={(event) => setAlternativeUnit(event.target.value as StockUnit)} value={effectiveAlternativeUnit}>
+        {alternativeUnitOptions.map((option) => <option key={option} value={option}>{formatUnit(option)}</option>)}
       </select>
       <span className="readonly-chip">{cost === null ? "Sin costo disponible" : `Costo ${formatCop(cost)}`}</span>
       <BaseSubmitButton />

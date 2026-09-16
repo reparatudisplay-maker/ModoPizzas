@@ -102,8 +102,12 @@ type BaseSourceRow = {
   unit: StockUnit;
   display_quantity: number;
   display_unit: "g" | "kg" | "ml" | "l" | "unit";
+  alternative_preparation_id: string | null;
+  alternative_preparation_quantity_base: number | null;
+  alternative_preparation_unit: StockUnit | null;
   inventory_items: { name: string } | null;
   preparations: { name: string } | null;
+  alternative_preparation: { name: string } | null;
 };
 
 function toUnit(quantity: number, fromUnit: StockUnit, toUnit: StockUnit) {
@@ -160,7 +164,7 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
     supabase.from("preparations").select("id, name, base_unit").eq("is_active", true).order("name"),
     supabase
       .from("pizza_size_base_sources")
-      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, inventory_items(name), preparations(name)"),
+      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, alternative_preparation_id, alternative_preparation_quantity_base, alternative_preparation_unit, inventory_items(name), preparations(name), alternative_preparation:preparations!pizza_size_base_sources_alternative_preparation_id_fkey(name)"),
     supabase.from("pizza_size_component_quantities").select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit"),
     supabase
       .from("pizza_additions")
@@ -225,7 +229,11 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
         quantity_base: Number(base.quantity_base ?? 0),
         unit: base.unit,
         display_quantity: Number(base.display_quantity ?? 0),
-        display_unit: base.display_unit
+        display_unit: base.display_unit,
+        alternative_preparation_id: base.alternative_preparation_id,
+        alternative_preparation_name: base.alternative_preparation?.name ?? null,
+        alternative_preparation_quantity_base: base.alternative_preparation_quantity_base === null ? null : Number(base.alternative_preparation_quantity_base),
+        alternative_preparation_unit: base.alternative_preparation_unit
       };
     })
     .filter((base) => base.source_id) as PizzaPriceBaseSource[];

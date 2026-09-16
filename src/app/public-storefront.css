@@ -515,6 +515,110 @@
   opacity: 1;
 }
 
+.public-configurator > header > button[aria-label="Cerrar"] {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border: 1px solid #bca79b;
+  border-radius: 50%;
+  background: #fff7f2;
+  color: #5b231b;
+  box-shadow: 0 2px 5px #3c160d1c;
+}
+
+.public-configurator > header > button[aria-label="Cerrar"]:hover,
+.public-configurator > header > button[aria-label="Cerrar"]:focus-visible {
+  border-color: #c92d1c;
+  background: #fff0e9;
+  color: #a52016;
+  outline: none;
+}
+
+.public-additions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  gap: 10px;
+}
+
+.public-additions > div {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-areas:
+    "image details"
+    "scope scope"
+    "counter counter";
+  align-items: center;
+  gap: 7px 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #e6d3c8;
+  border-radius: 7px;
+}
+
+.public-additions > div > img,
+.public-additions > div > .public-addition-fallback {
+  grid-area: image;
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+}
+
+.public-additions > div > span:not(.public-addition-fallback) {
+  grid-area: details;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.public-additions > div > span small { font-size: 11px; }
+.public-additions .public-scope-choice { grid-area: scope; }
+.public-additions .public-addition-counter { grid-area: counter; justify-self: end; }
+
+.public-drink-step { display: grid; gap: 12px; }
+.public-drink-step .public-section-title p { margin: 2px 0 0; color: #705f57; font-size: 12px; }
+
+.public-drink-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 10px;
+  overflow-y: auto;
+  max-height: min(390px, 42vh);
+  padding-right: 4px;
+}
+
+.public-drink-grid article {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid #e6d3c8;
+  border-radius: 7px;
+  background: #fffefd;
+}
+
+.public-drink-grid img,
+.public-drink-grid > article > span {
+  width: 42px;
+  height: 42px;
+  border-radius: 5px;
+  background: #f3e5db;
+  object-fit: contain;
+}
+
+.public-drink-grid > article > span { display: grid; place-items: center; color: #9d301f; font-weight: 900; }
+.public-drink-grid strong,
+.public-drink-grid small { display: block; min-width: 0; overflow-wrap: anywhere; }
+.public-drink-grid strong { color: #2a1d18; font-size: 12px; }
+.public-drink-grid small { margin-top: 3px; color: #8b4031; font-size: 11px; }
+.public-drink-grid .public-addition-counter { grid-column: 1 / -1; justify-self: end; }
+.public-review-drinks { color: #9d301f !important; font-weight: 750; }
+
 .public-cart-drawer {
   height: 100dvh;
   max-height: none;
@@ -641,6 +745,13 @@
   .public-config-summary span { font-size: 11px; }
   .public-personalization-section { padding: 11px; }
   .public-personalization-panel { max-height: min(350px, 38vh); }
+  .public-additions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .public-additions > div { grid-template-columns: 30px minmax(0, 1fr); gap: 6px; padding: 8px; }
+  .public-additions > div > img,
+  .public-additions > div > .public-addition-fallback { width: 30px; height: 30px; }
+  .public-additions > div > span:not(.public-addition-fallback) { font-size: 11px; }
+  .public-additions .public-scope-choice button { min-height: 30px; padding: 0 5px; font-size: 10px; }
+  .public-drink-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: min(350px, 38vh); }
   .public-cart-order { padding: 12px 16px 0; }
   .public-cart-drawer { width: 100%; height: 100dvh; max-height: none; border-radius: 0; }
   .public-second-flavors { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -1225,8 +1336,10 @@
 
 .public-logo img {
   display: block;
-  width: clamp(158px, 12vw, 190px);
+  width: clamp(140px, 11vw, 176px);
+  max-height: 62px;
   height: auto;
+  object-fit: contain;
   filter: drop-shadow(0 5px 12px #0007);
   transition: filter .2s ease, transform .2s ease;
 }
@@ -1331,7 +1444,7 @@
 
   .public-header::after { right: 16px; left: 16px; }
   .public-header nav { display: none; }
-  .public-logo img { width: 150px; }
+  .public-logo img { width: 132px; max-height: 52px; }
   .public-header > div { margin-left: auto; gap: 9px; }
   .public-login { display: inline-flex; font-size: 12px; }
   .public-cart-button { width: 39px; height: 39px; }

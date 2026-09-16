@@ -5,7 +5,7 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -86,6 +86,19 @@ export type PosSaleProductOption = {
   unit: StockUnit;
 };
 
+export type PosPizzaBaseOption = {
+  pizza_size_id: string;
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+  source_name: string;
+  quantity_base: number;
+  unit: StockUnit;
+  is_default: boolean;
+  available_quantity: number;
+};
+
+type PizzaBaseOverride = Pick<PosPizzaBaseOption, "source_kind" | "source_id">;
+
 type CartAddition = {
   key: string;
   id: string;
@@ -110,6 +123,7 @@ type CartLine = {
   additions: CartAddition[];
   notes?: string;
   removed_components?: Array<{ source_kind: "inventory_item" | "preparation"; source_id: string }>;
+  base_override?: PizzaBaseOverride | null;
 };
 
 type PizzaWizard = {
@@ -155,7 +169,8 @@ function productKey(line: Omit<CartLine, "key" | "quantity">) {
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
   const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.scope}:${addition.quantity}`).sort().join("|");
   const removedKey = (line.removed_components ?? []).map((component) => `${component.source_kind}:${component.source_id}`).sort().join("|");
-  return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${removedKey}:${additionsKey}`;
+  const baseKey = line.base_override ? `${line.base_override.source_kind}:${line.base_override.source_id}` : "default";
+  return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${removedKey}:${additionsKey}:${baseKey}`;
 }
 
 function orderKindLabel(kind: OrderKind) {
@@ -242,11 +257,13 @@ function additionLabel(addition: CartAddition) {
 export function PosOrderWorkspace({
   pizzas,
   additions,
-  saleProducts
+  saleProducts,
+  baseOptions
 }: {
   pizzas: PosPizzaOption[];
   additions: PosAdditionOption[];
   saleProducts: PosSaleProductOption[];
+  baseOptions: PosPizzaBaseOption[];
 }) {
   const [state, action] = useActionState(createPosOrder, initialState);
   const [tab, setTab] = useState<CatalogTab>("pizzas");
@@ -277,6 +294,7 @@ export function PosOrderWorkspace({
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [stockNotice, setStockNotice] = useState("");
   const [stockShortageModalOpen, setStockShortageModalOpen] = useState(false);
+  const [baseLineKey, setBaseLineKey] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const cashSubmitLockRef = useRef(false);
   const router = useRouter();
@@ -369,6 +387,10 @@ export function PosOrderWorkspace({
   );
 
   const saleProductById = useMemo(() => new Map(saleProducts.map((product) => [product.id, product])), [saleProducts]);
+  const pizzaPriceById = useMemo(
+    () => new Map(pizzas.flatMap((pizza) => pizza.prices.filter((price): price is PosPizzaSizePrice & { id: string } => Boolean(price.id)).map((price) => [price.id, price]))),
+    [pizzas]
+  );
 
   function saleProductCartQuantity(productId: string, lines = cart) {
     return lines
@@ -519,6 +541,41 @@ export function PosOrderWorkspace({
     );
   }
 
+  function baseOptionsForLine(line: CartLine) {
+    if (line.kind !== "pizza") return [];
+    const sizeId = pizzaPriceById.get(line.id)?.size_id;
+    return sizeId ? baseOptions.filter((option) => option.pizza_size_id === sizeId) : [];
+  }
+
+  function defaultBaseForLine(line: CartLine) {
+    return baseOptionsForLine(line).find((option) => option.is_default) ?? null;
+  }
+
+  function selectedBaseForLine(line: CartLine) {
+    const options = baseOptionsForLine(line);
+    if (!line.base_override) return options.find((option) => option.is_default) ?? null;
+    return options.find((option) => option.source_kind === line.base_override?.source_kind && option.source_id === line.base_override?.source_id) ?? null;
+  }
+
+  function applyBaseOverride(lineKey: string, option: PosPizzaBaseOption) {
+    setCart((current) => {
+      const line = current.find((item) => item.key === lineKey);
+      if (!line || line.kind !== "pizza") return current;
+      const nextLine: CartLine = {
+        ...line,
+        base_override: option.is_default ? null : { source_kind: option.source_kind, source_id: option.source_id }
+      };
+      const nextKey = productKey(nextLine);
+      const withoutCurrent = current.filter((item) => item.key !== lineKey);
+      const matching = withoutCurrent.find((item) => item.key === nextKey);
+      if (matching) {
+        return withoutCurrent.map((item) => item.key === nextKey ? { ...item, quantity: item.quantity + line.quantity } : item);
+      }
+      return [...withoutCurrent, { ...nextLine, key: nextKey }];
+    });
+    setBaseLineKey(null);
+  }
+
   function updateActiveCardScale(delta: number) {
     const update = (value: number) => Math.min(maxCardScale, Math.max(minCardScale, value + delta));
     if (tab === "pizzas") {
@@ -529,6 +586,7 @@ export function PosOrderWorkspace({
   }
 
   const payload = cart.map((line) => ({
+    line_key: line.key,
     kind: line.kind,
     id: line.id,
     secondary_id: line.secondary_id ?? null,
@@ -536,6 +594,7 @@ export function PosOrderWorkspace({
     unit_price_cop: line.unit_price_cop,
     notes: line.notes ?? "",
     removed_components: line.removed_components ?? [],
+    base_override: line.base_override ?? null,
     additions: line.additions.map((addition) => ({
       id: addition.id,
       quantity: addition.quantity,
@@ -543,6 +602,10 @@ export function PosOrderWorkspace({
       scope_label: addition.scope_label ?? null
     }))
   }));
+  const baseLine = baseLineKey ? cart.find((line) => line.key === baseLineKey && line.kind === "pizza") ?? null : null;
+  const baseLineSize = baseLine ? pizzaPriceById.get(baseLine.id) ?? null : null;
+  const baseLineDefault = baseLine ? defaultBaseForLine(baseLine) : null;
+  const baseLineOptions = baseLine ? baseOptionsForLine(baseLine) : [];
   const hasInvalidSaleProductPrice = cart.some((line) => line.kind === "sale_product" && (!Number.isFinite(line.unit_price_cop) || line.unit_price_cop <= 0));
 
   function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
@@ -701,6 +764,17 @@ export function PosOrderWorkspace({
                 <div>
                   <strong>{line.name}</strong>
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
+                  {line.kind === "pizza" ? (() => {
+                    const defaultBase = defaultBaseForLine(line);
+                    const selectedBase = selectedBaseForLine(line);
+                    const substituted = Boolean(selectedBase && defaultBase && (selectedBase.source_kind !== defaultBase.source_kind || selectedBase.source_id !== defaultBase.source_id));
+                    return (
+                      <span className="pos-cart-base">
+                        <small>{substituted ? `Base usada: ${selectedBase?.source_name}` : `Base: ${defaultBase?.source_name ?? "Sin configurar"}`}</small>
+                        <button aria-label={`Cambiar base utilizada para ${line.name}`} className="icon-button" onClick={() => setBaseLineKey(line.key)} title="Cambiar base utilizada" type="button"><Edit3 size={14} /></button>
+                      </span>
+                    );
+                  })() : null}
                   {line.notes ? <small>{line.notes}</small> : null}
                   {line.additions.map((addition) => (
                     <small key={addition.key}>{additionLabel(addition)} +{formatCop(addition.quantity * addition.unit_price_cop)}</small>
@@ -793,9 +867,27 @@ export function PosOrderWorkspace({
       {stockShortageModalOpen && state.stockShortages?.length ? (
         <StockShortageModal
           onClose={() => setStockShortageModalOpen(false)}
+          onChooseAlternativeBase={(linePosition) => {
+            const line = cart[linePosition - 1];
+            if (line?.kind === "pizza") {
+              setStockShortageModalOpen(false);
+              setBaseLineKey(line.key);
+            }
+          }}
           onOpenProduction={() => window.open("/panel/produccion", "_blank", "noopener,noreferrer")}
           onOpenPurchases={() => window.open("/panel/compras", "_blank", "noopener,noreferrer")}
           shortages={state.stockShortages}
+        />
+      ) : null}
+
+      {baseLine && baseLineSize && baseLineDefault ? (
+        <PizzaBaseSelectorModal
+          defaultBase={baseLineDefault}
+          onClose={() => setBaseLineKey(null)}
+          onSelect={(option) => applyBaseOverride(baseLine.key, option)}
+          options={baseLineOptions}
+          selectedBase={selectedBaseForLine(baseLine)}
+          sizeName={baseLineSize.size_name}
         />
       ) : null}
 
@@ -1511,6 +1603,63 @@ function ProductImage({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+function PizzaBaseSelectorModal({
+  defaultBase,
+  options,
+  selectedBase,
+  sizeName,
+  onSelect,
+  onClose
+}: {
+  defaultBase: PosPizzaBaseOption;
+  options: PosPizzaBaseOption[];
+  selectedBase: PosPizzaBaseOption | null;
+  sizeName: string;
+  onSelect: (option: PosPizzaBaseOption) => void;
+  onClose: () => void;
+}) {
+  const visibleOptions = options.filter((option) => option.is_default || option.available_quantity + 0.0001 >= option.quantity_base);
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-label="Base utilizada" aria-modal="true" className="modal-panel compact-modal pos-base-selector-modal" role="dialog">
+        <header className="modal-header">
+          <div><strong>Base utilizada</strong><span>Selecciona la fuente que realmente usará cocina.</span></div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="pos-base-selector-body">
+          <div className="pos-base-context">
+            <span>Tamaño vendido</span><strong>{sizeName}</strong>
+            <span>Base predeterminada</span><strong>{defaultBase.source_name}</strong>
+            <small>Stock: {formatStockQuantity(defaultBase.available_quantity, defaultBase.unit)}</small>
+          </div>
+          <div className="pos-base-option-list" role="radiogroup" aria-label="Fuentes de base disponibles">
+            {visibleOptions.map((option) => {
+              const selected = selectedBase?.source_kind === option.source_kind && selectedBase.source_id === option.source_id;
+              const available = option.available_quantity + 0.0001 >= option.quantity_base;
+              return (
+                <button
+                  aria-checked={selected}
+                  className={`pos-base-option${selected ? " selected" : ""}${available ? "" : " unavailable"}`}
+                  disabled={!available}
+                  key={`${option.source_kind}:${option.source_id}`}
+                  onClick={() => onSelect(option)}
+                  role="radio"
+                  type="button"
+                >
+                  <span><strong>{option.source_name}</strong><small>{option.source_kind === "preparation" ? "Masa producida" : "Base comprada"}</small></span>
+                  <span><small>Disponible: {formatStockQuantity(option.available_quantity, option.unit)}</small><b>Consumirá: {formatStockQuantity(option.quantity_base, option.unit)}</b>{option.is_default ? <em>Predeterminada</em> : null}{!available ? <em>Agotada</em> : null}</span>
+                </button>
+              );
+            })}
+            {visibleOptions.length === 0 ? <p className="empty-state">No hay fuentes de base compatibles disponibles.</p> : null}
+          </div>
+        </div>
+        <footer className="form-actions modal-form-actions"><button className="ghost-button" onClick={onClose} type="button">Cancelar</button></footer>
+      </section>
+    </div>
+  );
+}
+
 function SubmitOrderButton({ disabled }: { disabled: boolean }) {
   const { pending } = useFormStatus();
   return (
@@ -1521,6 +1670,7 @@ function SubmitOrderButton({ disabled }: { disabled: boolean }) {
 }
 
 type StockShortageDisplayRow = {
+  line_position: number;
   line_kind: "pizza" | "sale_product";
   line_label: string;
   line_quantity: number;
@@ -1544,6 +1694,7 @@ function shortageDisplayRows(shortages: PosStockShortage[]) {
         const missing = Math.max(0, required - available);
         remainingAvailable = Math.max(0, remainingAvailable - required);
         return {
+          line_position: usage.line_position,
           line_kind: usage.line_kind,
           line_label: usage.line_label,
           line_quantity: Number(usage.line_quantity ?? 0),
@@ -1559,7 +1710,7 @@ function shortageDisplayRows(shortages: PosStockShortage[]) {
   });
 }
 
-function StockShortageTable({ title, entries }: { title: string; entries: StockShortageDisplayRow[] }) {
+function StockShortageTable({ title, entries, onChooseAlternativeBase }: { title: string; entries: StockShortageDisplayRow[]; onChooseAlternativeBase?: (linePosition: number) => void }) {
   if (entries.length === 0) return null;
   const grouped = new Map<string, StockShortageDisplayRow[]>();
   for (const entry of entries) {
@@ -1572,6 +1723,7 @@ function StockShortageTable({ title, entries }: { title: string; entries: StockS
       {[...grouped.entries()].map(([key, group]) => (
         <div className="stock-shortage-line" key={key}>
           <strong>{group[0].line_label}{group[0].line_kind === "pizza" ? ` x${group[0].line_quantity}` : ""}</strong>
+          {group[0].line_kind === "pizza" && onChooseAlternativeBase ? <button className="ghost-button compact-base-choice" onClick={() => onChooseAlternativeBase(group[0].line_position)} type="button">Elegir otra base</button> : null}
           <div className="data-table-wrap">
             <table className="data-table compact-data-table stock-shortage-table">
               <thead>
@@ -1604,12 +1756,14 @@ function StockShortageModal({
   shortages,
   onClose,
   onOpenPurchases,
-  onOpenProduction
+  onOpenProduction,
+  onChooseAlternativeBase
 }: {
   shortages: PosStockShortage[];
   onClose: () => void;
   onOpenPurchases: () => void;
   onOpenProduction: () => void;
+  onChooseAlternativeBase: (linePosition: number) => void;
 }) {
   const rows = shortageDisplayRows(shortages);
   const pizzaRows = rows.filter((row) => row.line_kind === "pizza");
@@ -1628,7 +1782,7 @@ function StockShortageModal({
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
         <div className="stock-shortage-body">
-          <StockShortageTable entries={pizzaRows} title="Pizzas" />
+          <StockShortageTable entries={pizzaRows} onChooseAlternativeBase={onChooseAlternativeBase} title="Pizzas" />
           <StockShortageTable entries={productRows} title="Productos" />
           <p className="field-hint danger">No es posible confirmar el pedido hasta completar el stock requerido.</p>
           {needsPurchase ? <p className="field-hint">Para ingredientes, bases o productos: registra una compra o ajuste de inventario.</p> : null}

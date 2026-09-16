@@ -40,6 +40,13 @@ type OrderRow = {
     unit_price_cop: number;
     line_subtotal_cop: number;
     notes: string | null;
+    base_default_source_kind: "inventory_item" | "preparation" | null;
+    base_used_source_kind: "inventory_item" | "preparation" | null;
+    base_replaced_by: string | null;
+    default_inventory: { name: string } | null;
+    default_preparation: { name: string } | null;
+    used_inventory: { name: string } | null;
+    used_preparation: { name: string } | null;
     inventory_items: { presentation_quantity: number | null; presentation_unit: "g" | "kg" | "ml" | "l" | "unit" | null } | null;
     pos_order_item_additions: Array<{
       id: string;
@@ -73,8 +80,12 @@ export default async function PedidosPage() {
       id, code, kind, status, customer_name, subtotal_cop, discount_cop, discount_type, discount_value, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, ordered_at, created_at,
       pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
       pos_order_items(
-        id, item_kind, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, line_subtotal_cop, notes,
+        id, item_kind, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, line_subtotal_cop, notes, base_default_source_kind, base_used_source_kind, base_replaced_by,
         inventory_items(presentation_quantity, presentation_unit),
+        default_inventory:inventory_items!pos_order_items_base_default_inventory_item_id_fkey(name),
+        default_preparation:preparations!pos_order_items_base_default_preparation_id_fkey(name),
+        used_inventory:inventory_items!pos_order_items_base_used_inventory_item_id_fkey(name),
+        used_preparation:preparations!pos_order_items_base_used_preparation_id_fkey(name),
         pos_order_item_additions(id, quantity, name_snapshot, unit_price_cop, line_subtotal_cop, scope, scope_label),
         kitchen_order_items(status, received_at, started_at, prepared_at)
       )
@@ -83,7 +94,7 @@ export default async function PedidosPage() {
     .limit(80);
 
   const rawOrders = (data ?? []) as unknown as OrderRow[];
-  const profileIds = [...new Set(rawOrders.flatMap((order) => [order.created_by, order.cancelled_by]).filter((id): id is string => Boolean(id)))];
+  const profileIds = [...new Set(rawOrders.flatMap((order) => [order.created_by, order.cancelled_by, ...(order.pos_order_items ?? []).map((item) => item.base_replaced_by)]).filter((id): id is string => Boolean(id)))];
   const { data: profiles } = profileIds.length
     ? await supabase.rpc("get_pos_order_audit_profiles", { p_profile_ids: profileIds })
     : { data: [] as Array<{ id: string; full_name: string }> };
@@ -125,6 +136,9 @@ export default async function PedidosPage() {
       unit_price_cop: Number(item.unit_price_cop ?? 0),
       line_subtotal_cop: Number(item.line_subtotal_cop ?? 0),
       notes: item.notes,
+      base_default_name: item.base_default_source_kind === "preparation" ? item.default_preparation?.name ?? null : item.default_inventory?.name ?? null,
+      base_used_name: item.base_used_source_kind === "preparation" ? item.used_preparation?.name ?? null : item.used_inventory?.name ?? null,
+      base_replaced_by_name: item.base_replaced_by ? profileNameById.get(item.base_replaced_by) ?? "Sin registro" : null,
       presentation_quantity: item.inventory_items?.presentation_quantity === null || item.inventory_items?.presentation_quantity === undefined ? null : Number(item.inventory_items.presentation_quantity),
       presentation_unit: item.inventory_items?.presentation_unit ?? null,
       additions: asArray(item.pos_order_item_additions).map((addition) => ({
