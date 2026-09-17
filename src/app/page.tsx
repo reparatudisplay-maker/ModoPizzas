@@ -17,7 +17,9 @@ const fallbackBusiness = {
   maps_url: null,
   info_text: null,
   instagram_url: null,
-  facebook_url: null
+  facebook_url: null,
+  email: "modopizzasmedellin@gmail.com",
+  legal_contact_email: "modopizzasmedellin@gmail.com"
 };
 
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {

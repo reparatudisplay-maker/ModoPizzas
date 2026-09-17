@@ -2511,25 +2511,34 @@ export async function savePublicBusinessSettings(_previousState: FormActionState
     return { status: "error", message: "Revisa los horarios configurados." };
   }
 
-  const { error } = await supabase
-    .from("site_settings")
-    .update({
-      business_name: businessName,
-      whatsapp_number: whatsappNumber,
-      public_phone: getOptionalString(formData, "public_phone"),
-      public_address: getOptionalString(formData, "public_address"),
-      public_neighborhood: getOptionalString(formData, "public_neighborhood"),
-      public_city: getOptionalString(formData, "public_city"),
-      public_weekday_hours: getOptionalString(formData, "public_weekday_hours"),
-      public_weekend_hours: getOptionalString(formData, "public_weekend_hours"),
-      public_maps_url: getOptionalString(formData, "public_maps_url"),
-      public_info_text: getOptionalString(formData, "public_info_text"),
-      public_instagram_url: getOptionalString(formData, "public_instagram_url"),
-      public_facebook_url: getOptionalString(formData, "public_facebook_url"),
-      public_opening_hours: openingHours
-    })
-    .eq("id", true);
-  if (error) return { status: "error", message: error.message };
+  const basePayload = {
+    business_name: businessName,
+    whatsapp_number: whatsappNumber,
+    public_phone: getOptionalString(formData, "public_phone"),
+    public_address: getOptionalString(formData, "public_address"),
+    public_neighborhood: getOptionalString(formData, "public_neighborhood"),
+    public_city: getOptionalString(formData, "public_city"),
+    public_weekday_hours: getOptionalString(formData, "public_weekday_hours"),
+    public_weekend_hours: getOptionalString(formData, "public_weekend_hours"),
+    public_maps_url: getOptionalString(formData, "public_maps_url"),
+    public_info_text: getOptionalString(formData, "public_info_text"),
+    public_instagram_url: getOptionalString(formData, "public_instagram_url"),
+    public_facebook_url: getOptionalString(formData, "public_facebook_url"),
+    public_opening_hours: openingHours
+  };
+  const legalPayload = {
+    ...basePayload,
+    public_email: getOptionalString(formData, "public_email"),
+    legal_contact_email: getOptionalString(formData, "legal_contact_email")
+  };
+
+  const { error } = await supabase.from("site_settings").update(legalPayload).eq("id", true);
+  if (error && /public_email|legal_contact_email|schema cache/i.test(error.message)) {
+    const { error: retryError } = await supabase.from("site_settings").update(basePayload).eq("id", true);
+    if (retryError) return { status: "error", message: retryError.message };
+  } else if (error) {
+    return { status: "error", message: error.message };
+  }
 
   revalidatePath("/");
   revalidatePath("/panel/configuracion/negocio");

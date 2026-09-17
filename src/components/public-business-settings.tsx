@@ -20,6 +20,8 @@ export type PublicBusinessSettingsData = {
   public_info_text: string | null;
   public_instagram_url: string | null;
   public_facebook_url: string | null;
+  public_email?: string | null;
+  legal_contact_email?: string | null;
 };
 
 const days = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
@@ -45,6 +47,8 @@ export function PublicBusinessSettings({ settings }: { settings: PublicBusinessS
         <label>Nombre comercial<input defaultValue={settings.business_name} name="business_name" required /></label>
         <label>WhatsApp de pedidos<input defaultValue={settings.whatsapp_number} inputMode="numeric" name="whatsapp_number" required placeholder="573170135775" /></label>
         <label>Telefono publico<input defaultValue={settings.public_phone ?? ""} name="public_phone" placeholder="+57 317 013 5775" /></label>
+        <label>Correo público<input defaultValue={settings.public_email ?? ""} name="public_email" placeholder="modopizzasmedellin@gmail.com" type="email" /></label>
+        <label>Correo legal/PQRS<input defaultValue={settings.legal_contact_email ?? settings.public_email ?? ""} name="legal_contact_email" placeholder="modopizzasmedellin@gmail.com" type="email" /></label>
         <label>Direccion<input defaultValue={settings.public_address ?? ""} name="public_address" placeholder="Direccion del local" /></label>
         <label>Barrio<input defaultValue={settings.public_neighborhood ?? ""} name="public_neighborhood" /></label>
         <label>Ciudad<input defaultValue={settings.public_city ?? ""} name="public_city" /></label>

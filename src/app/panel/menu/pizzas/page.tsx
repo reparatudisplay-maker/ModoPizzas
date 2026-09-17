@@ -106,7 +106,7 @@ type BaseSourceRow = {
   alternative_preparation_quantity_base: number | null;
   alternative_preparation_unit: StockUnit | null;
   inventory_items: { name: string } | null;
-  preparations: { name: string } | null;
+  source_preparation: { name: string } | null;
   alternative_preparation: { name: string } | null;
 };
 
@@ -164,7 +164,7 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
     supabase.from("preparations").select("id, name, base_unit").eq("is_active", true).order("name"),
     supabase
       .from("pizza_size_base_sources")
-      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, alternative_preparation_id, alternative_preparation_quantity_base, alternative_preparation_unit, inventory_items(name), preparations(name), alternative_preparation:preparations!pizza_size_base_sources_alternative_preparation_id_fkey(name)"),
+      .select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit, display_quantity, display_unit, alternative_preparation_id, alternative_preparation_quantity_base, alternative_preparation_unit, inventory_items(name), source_preparation:preparations!pizza_size_base_sources_source_preparation_id_fkey(name), alternative_preparation:preparations!pizza_size_base_sources_alternative_preparation_id_fkey(name)"),
     supabase.from("pizza_size_component_quantities").select("pizza_size_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, unit"),
     supabase
       .from("pizza_additions")
@@ -225,7 +225,7 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
         size_id: base.pizza_size_id,
         source_kind: base.source_kind,
         source_id: sourceId ?? "",
-        source_name: base.source_kind === "preparation" ? base.preparations?.name ?? "Sin preparacion" : base.inventory_items?.name ?? "Sin ingrediente",
+        source_name: base.source_kind === "preparation" ? base.source_preparation?.name ?? "Sin preparacion" : base.inventory_items?.name ?? "Sin ingrediente",
         quantity_base: Number(base.quantity_base ?? 0),
         unit: base.unit,
         display_quantity: Number(base.display_quantity ?? 0),

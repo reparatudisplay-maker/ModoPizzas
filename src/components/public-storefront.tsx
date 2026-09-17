@@ -1,6 +1,8 @@
 "use client";
 
+import type { KeyboardEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, MapPin, MessageCircle, Minus, Phone, Plus, Search, ShoppingBag, Star, Trash2, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -11,7 +13,7 @@ export type PublicProduct = { id: string; name: string; image_url: string | null
 type Addition = { id: string; name: string; image_url: string | null; size_id: string; price_cop: number; max_allowed: number; flavor_ids: string[]; category_ids: string[] };
 type Promotion = { id: string; name: string; image_url: string | null; main_text: string; secondary_text: string | null; normal_price_cop: number | null; promo_price_cop: number | null };
 type OpeningHour = { day: string; is_open: boolean; opens_at: string; closes_at: string };
-export type PublicBusinessInfo = { business_name: string; phone: string; whatsapp_number: string; address: string | null; neighborhood: string | null; city: string | null; weekday_hours: string | null; weekend_hours: string | null; opening_hours: OpeningHour[]; maps_url: string | null; info_text: string | null; instagram_url: string | null; facebook_url: string | null };
+export type PublicBusinessInfo = { business_name: string; phone: string; whatsapp_number: string; address: string | null; neighborhood: string | null; city: string | null; weekday_hours: string | null; weekend_hours: string | null; opening_hours: OpeningHour[]; maps_url: string | null; info_text: string | null; instagram_url: string | null; facebook_url: string | null; email?: string | null; legal_contact_email?: string | null };
 export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; promotions: Promotion[]; business: PublicBusinessInfo };
 type CartAddition = Addition & { quantity: number; scope: "whole" | "left" | "right"; scope_label: string | null };
 type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secondary_id?: string | null; name: string; secondary_name?: string | null; size_name?: string | null; image_url: string | null; quantity: number; unit_price_cop: number; additions: CartAddition[]; removed_components: Ingredient[]; presentation?: string | null };
@@ -49,7 +51,6 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
   const total = cart.reduce((sum, line) => sum + lineTotal(line), 0);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const whatsapp = catalog.business.whatsapp_number.replace(/\D/g, "");
-  const businessName = publicBusinessName(catalog.business.business_name);
 
   function addLine(line: CartLine, drinks: Array<{ product: PublicProduct; quantity: number }> = []) {
     setCart((current) => {
@@ -113,7 +114,30 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
 }
 
 function PizzaCard({ group, onOrder }: { group: PizzaGroup; onOrder: () => void }) { const from = Math.min(...group.prices.map((item) => item.sale_price_cop)); return <article className="public-pizza-card"><div className="public-card-image">{group.price.image_url ? <img alt={group.price.flavor_name} src={group.price.image_url}/> : <div className="public-pizza-art"/>}</div><div className="public-card-content"><small>{group.price.category_name}</small><h3>{group.price.flavor_name}</h3><p>{group.price.commercial_description || "Una combinacion irresistible, horneada al momento."}</p><div><strong>Desde {formatCop(from)}</strong><button onClick={onOrder} type="button">Pedir <ChevronRight size={16}/></button></div></div></article>; }
-function ProductCard({ product, onAdd }: { product: PublicProduct; onAdd: () => void }) { return <article className="public-product-card"><div>{product.image_url ? <img alt={product.name} src={product.image_url}/> : <span>{product.name.slice(0, 2)}</span>}</div><h3>{product.name}</h3><p>{presentation(product)}</p><strong>{formatCop(product.sale_price_cop)}</strong><button onClick={onAdd} type="button">Agregar <Plus size={15}/></button></article>; }
+function ProductCard({ product, onAdd }: { product: PublicProduct; onAdd: () => void }) {
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (product.available) onAdd();
+  }
+
+  return (
+    <article
+      aria-disabled={!product.available}
+      className={`public-product-card${product.available ? " clickable" : " sold-out"}`}
+      onClick={() => { if (product.available) onAdd(); }}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={product.available ? 0 : -1}
+    >
+      <div>{product.image_url ? <img alt={product.name} src={product.image_url}/> : <span>{product.name.slice(0, 2)}</span>}</div>
+      <h3>{product.name}</h3>
+      <p>{presentation(product)}</p>
+      <strong>{formatCop(product.sale_price_cop)}</strong>
+      <button disabled={!product.available} onClick={(event) => { event.stopPropagation(); onAdd(); }} type="button">Agregar <Plus size={15}/></button>
+    </article>
+  );
+}
 
 function PizzaConfigurator({ catalog, existing, initial, onAdd, onClose }: { catalog: PublicCatalog; existing: CartLine | null; initial: PublicPizzaPrice; onAdd: (line: CartLine, drinks?: Array<{ product: PublicProduct; quantity: number }>) => void; onClose: () => void }) {
   const [selected, setSelected] = useState(initial);
@@ -185,6 +209,41 @@ function CartDrawer({ business, cart, products, total, onClose, onQuantity, onAd
 
 function BusinessSection({ business }: { business: PublicBusinessInfo }) { const hours = business.opening_hours ?? []; return <section className="public-business" id="informacion"><div><span className="public-eyebrow">VISITANOS</span><h2>Una buena pizza merece verse de cerca.</h2><p>{business.info_text || "Encuentra la ruta, horarios y la forma más rápida de escribirnos."}</p><div className="public-map-card"> <MapPin size={28}/><div><strong>{business.address || "Ubicacion por confirmar"}</strong><span>{[business.neighborhood, business.city].filter(Boolean).join(", ")}</span></div>{business.maps_url ? <a href={business.maps_url} rel="noreferrer" target="_blank">Abrir en Google Maps <ChevronRight size={16}/></a> : null}</div></div><dl><div><dt><MessageCircle size={18}/>WhatsApp</dt><dd>{business.phone || business.whatsapp_number || "No configurado"}</dd></div><div><dt><Clock3 size={18}/>Horarios</dt><dd className="public-hours-list">{hours.length ? hours.map((hour) => <span key={hour.day}><b>{hour.day}</b>{hour.is_open ? `${formatTime(hour.opens_at)} - ${formatTime(hour.closes_at)}` : "Cerrado"}</span>) : "Horarios por confirmar."}</dd></div><div><dt><Phone size={18}/>Contacto</dt><dd>{business.phone || business.whatsapp_number || "No configurado"}</dd></div></dl></section>; }
 
-function PublicFooter({ business }: { business: PublicBusinessInfo }) { const legal = [{ slug: "tratamiento-datos", label: "Politica de Tratamiento de Datos" }, { slug: "terminos", label: "Terminos y Condiciones" }, { slug: "reversion-pagos", label: "Reversion de Pagos" }, { slug: "alergenos", label: "Politica de Alergenos" }, { slug: "sugerencias-reclamos", label: "Sugerencias y Reclamos" }, { slug: "privacidad", label: "Aviso de Privacidad" }]; const businessName = publicBusinessName(business.business_name); return <footer className="public-footer"><div><strong>{businessName}</strong><span>{businessAddress(business) || "Direccion por confirmar"}</span><span>WhatsApp: {business.phone || business.whatsapp_number || "No configurado"}</span></div><div><strong>Informacion</strong>{legal.map((item) => <a href={`/legal/${item.slug}`} key={item.slug}>{item.label}</a>)}<a href="https://www.sic.gov.co/" rel="noreferrer" target="_blank">Superintendencia de Industria y Comercio - SIC</a></div><div><strong>Siguenos</strong>{business.instagram_url ? <a href={business.instagram_url} rel="noreferrer" target="_blank"><Instagram size={16}/>Instagram</a> : null}{business.facebook_url ? <a href={business.facebook_url} rel="noreferrer" target="_blank"><Facebook size={16}/>Facebook</a> : null}<span>{new Date().getFullYear()} © {businessName}</span></div></footer>; }
+function PublicFooter({ business }: { business: PublicBusinessInfo }) {
+  const businessName = publicBusinessName(business.business_name);
+  const contactEmail = business.legal_contact_email || business.email || "modopizzasmedellin@gmail.com";
+  return (
+    <footer className="public-footer">
+      <div>
+        <strong>{businessName}</strong>
+        <a href="#menu">Menú</a>
+        <a href="#promos">Promociones</a>
+        <Link href="/legal/informacion">Información</Link>
+      </div>
+      <div>
+        <strong>Ayuda</strong>
+        <Link href="/legal/sugerencias-reclamos">Sugerencias y Reclamos</Link>
+        <Link href="/legal/alergenos">Información sobre Alérgenos</Link>
+      </div>
+      <div>
+        <strong>Legal</strong>
+        <Link href="/legal/tratamiento-datos">Tratamiento de Datos</Link>
+        <Link href="/legal/terminos">Términos y Condiciones</Link>
+        <Link href="/legal/reversion-pagos">Reversión de Pagos</Link>
+        <Link href="/legal/privacidad">Aviso de Privacidad</Link>
+      </div>
+      <div>
+        <strong>Consumidor</strong>
+        <Link href="/legal/sic">Superintendencia de Industria y Comercio - SIC</Link>
+        <span>{businessAddress(business) || "Dirección por confirmar"}</span>
+        <span>WhatsApp: {business.phone || business.whatsapp_number || "No configurado"}</span>
+        <span>{contactEmail}</span>
+        {business.instagram_url ? <a href={business.instagram_url} rel="noreferrer" target="_blank"><Instagram size={16}/>Instagram</a> : null}
+        {business.facebook_url ? <a href={business.facebook_url} rel="noreferrer" target="_blank"><Facebook size={16}/>Facebook</a> : null}
+        <span>{new Date().getFullYear()} © {businessName}</span>
+      </div>
+    </footer>
+  );
+}
 
 function buildWhatsAppMessage({ cart, total, kind, customerName, phone, address, complement, notes }: { cart: CartLine[]; total: number; kind: "pickup" | "delivery"; customerName: string; phone: string; address: string; complement: string; notes: string }) { const lines = ["Hola, quiero realizar este pedido en Modo Pizzas:", "", "PEDIDO", ""]; cart.forEach((line) => { lines.push(`${line.quantity}x ${line.name}${line.secondary_name ? ` / ${line.secondary_name}` : ""}${line.size_name ? ` ${line.size_name}` : ""}`); if (line.secondary_name) lines.push(`Mitad y mitad: ${line.name} / ${line.secondary_name}`); if (line.removed_components.length) lines.push(`Sin: ${line.removed_components.map((item) => item.name).join(", ")}`); if (line.additions.length) { lines.push("Adiciones:"); line.additions.forEach((addition) => lines.push(`+ ${addition.name} x${addition.quantity}${addition.scope_label ? ` (${addition.scope_label})` : ""}`)); } lines.push(formatCop(lineTotal(line)), ""); }); lines.push(`TOTAL: ${formatCop(total)}`, "", "TIPO:", kind === "pickup" ? "Recoger" : "Domicilio", "", "CLIENTE:", customerName, phone); if (kind === "delivery") { lines.push(`Direccion: ${address}`); if (complement.trim()) lines.push(`Complemento: ${complement.trim()}`); } if (notes.trim()) lines.push("", "OBSERVACIONES:", notes.trim()); return lines.join("\n"); }

@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Ban, CalendarClock, Eye, Search, X } from "lucide-react";
+import { Ban, CalendarClock, Eye, Search, Settings, X } from "lucide-react";
 import { cancelPosOrder, updatePosOrderOperationalDate, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -17,6 +17,7 @@ export type PosOrderListRow = {
   customer_name: string | null;
   subtotal_cop: number;
   discount_cop: number;
+  delivery_cop: number;
   discount_type: "none" | "percentage" | "amount";
   discount_value: number;
   total_cop: number;
@@ -68,6 +69,38 @@ export type PosOrderListRow = {
 };
 
 const initialState: FormActionState = { status: "idle", message: "" };
+const orderColumnsKey = "modopizzas.pos-orders.columns";
+type OrderColumn = "code" | "kind" | "customer" | "user" | "summary" | "items" | "subtotal" | "discount" | "delivery" | "total" | "payment" | "status" | "date" | "time" | "actions";
+const allOrderColumns: OrderColumn[] = ["code", "kind", "customer", "user", "summary", "items", "subtotal", "discount", "delivery", "total", "payment", "status", "date", "time", "actions"];
+const defaultOrderColumns: OrderColumn[] = ["code", "kind", "user", "summary", "total", "payment", "status", "date", "actions"];
+const orderColumnLabels: Record<OrderColumn, string> = {
+  code: "Código",
+  kind: "Tipo",
+  customer: "Cliente",
+  user: "Usuario",
+  summary: "Resumen",
+  items: "Ítems",
+  subtotal: "Subtotal",
+  discount: "Descuento",
+  delivery: "Domicilio",
+  total: "Total",
+  payment: "Pago",
+  status: "Estado",
+  date: "Fecha",
+  time: "Hora",
+  actions: "Acciones"
+};
+
+function initialOrderColumns() {
+  if (typeof window === "undefined") return defaultOrderColumns;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(orderColumnsKey) ?? "[]");
+    const columns = Array.isArray(parsed) ? parsed.filter((item): item is OrderColumn => allOrderColumns.includes(item)) : [];
+    return columns.length ? columns : defaultOrderColumns;
+  } catch {
+    return defaultOrderColumns;
+  }
+}
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -96,19 +129,32 @@ function operationalDateParts(value: string) {
 export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOperationalDate: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [columns, setColumns] = useState<OrderColumn[]>(initialOrderColumns);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<PosOrderListRow | null>(null);
   const [dateOrder, setDateOrder] = useState<PosOrderListRow | null>(null);
   const normalizedQuery = normalizeMasterText(query);
+  useEffect(() => {
+    window.localStorage.setItem(orderColumnsKey, JSON.stringify(columns));
+  }, [columns]);
   const filteredOrders = useMemo(
     () =>
       orders.filter((order) => {
-        const text = `${order.code} ${order.customer_name ?? ""} ${order.status} ${order.kind}`;
+        const text = `${order.code} ${order.customer_name ?? ""} ${order.created_by_name} ${order.status} ${order.kind} ${order.items.map((item) => item.product_name_snapshot).join(" ")}`;
         const matchesQuery = !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
         const matchesStatus = status ? order.status === status : true;
         return matchesQuery && matchesStatus;
       }),
     [normalizedQuery, orders, status]
   );
+  const visibleColumn = (column: OrderColumn) => columns.includes(column);
+  const visibleCount = columns.length || defaultOrderColumns.length;
+  const toggleColumn = (column: OrderColumn) =>
+    setColumns((current) => {
+      if (!current.includes(column)) return [...current, column];
+      if (current.length <= 1) return current;
+      return current.filter((item) => item !== column);
+    });
 
   return (
     <section className="form-panel">
@@ -127,50 +173,96 @@ export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOpera
             <option value="delivered">Entregados</option>
             <option value="cancelled">Cancelados</option>
           </select>
+          <button className="ghost-button table-settings-button" onClick={() => setSettingsOpen(true)} type="button">
+            <Settings size={18} /> Configuración
+          </button>
         </form>
       </div>
       <div className="data-table-wrap">
         <table className="data-table">
           <thead>
             <tr>
-              <th>CODIGO</th>
-              <th>TIPO</th>
-              <th>CLIENTE</th>
-              <th>USUARIO</th>
-              <th>ITEMS</th>
-              <th>TOTAL</th>
-              <th>PAGO</th>
-              <th>ESTADO</th>
-              <th>FECHA</th>
-              <th className="actions-column compact-actions-column">ACCIONES</th>
+              {visibleColumn("code") ? <th>CÓDIGO</th> : null}
+              {visibleColumn("kind") ? <th>TIPO</th> : null}
+              {visibleColumn("customer") ? <th>CLIENTE</th> : null}
+              {visibleColumn("user") ? <th>USUARIO</th> : null}
+              {visibleColumn("summary") ? <th>RESUMEN</th> : null}
+              {visibleColumn("items") ? <th>ÍTEMS</th> : null}
+              {visibleColumn("subtotal") ? <th>SUBTOTAL</th> : null}
+              {visibleColumn("discount") ? <th>DESCUENTO</th> : null}
+              {visibleColumn("delivery") ? <th>DOMICILIO</th> : null}
+              {visibleColumn("total") ? <th>TOTAL</th> : null}
+              {visibleColumn("payment") ? <th>PAGO</th> : null}
+              {visibleColumn("status") ? <th>ESTADO</th> : null}
+              {visibleColumn("date") ? <th>FECHA</th> : null}
+              {visibleColumn("time") ? <th>HORA</th> : null}
+              {visibleColumn("actions") ? <th className="actions-column compact-actions-column">ACCIONES</th> : null}
             </tr>
           </thead>
           <tbody>
             {filteredOrders.map((order) => (
               <tr key={order.id}>
-                <td><strong>{order.code}</strong></td>
-                <td>{kindLabel(order.kind)}</td>
-                <td>{order.customer_name ?? "Sin cliente"}</td>
-                <td>{order.created_by_name}</td>
-                <td>{order.items_count}</td>
-                <td>{formatCop(order.total_cop)}</td>
-                <td>{order.payment_method}</td>
-                <td><span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span></td>
-                <td>{new Date(order.ordered_at).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</td>
-                <td className="actions-column compact-actions-column">
+                {visibleColumn("code") ? <td><strong>{order.code}</strong></td> : null}
+                {visibleColumn("kind") ? <td>{kindLabel(order.kind)}</td> : null}
+                {visibleColumn("customer") ? <td>{order.customer_name ?? "Sin cliente"}</td> : null}
+                {visibleColumn("user") ? <td>{order.created_by_name}</td> : null}
+                {visibleColumn("summary") ? <td><OrderSummary order={order} /></td> : null}
+                {visibleColumn("items") ? <td>{order.items_count}</td> : null}
+                {visibleColumn("subtotal") ? <td>{formatCop(order.subtotal_cop)}</td> : null}
+                {visibleColumn("discount") ? <td>{order.discount_cop > 0 ? `-${formatCop(order.discount_cop)}` : "—"}</td> : null}
+                {visibleColumn("delivery") ? <td>{order.delivery_cop > 0 ? formatCop(order.delivery_cop) : "—"}</td> : null}
+                {visibleColumn("total") ? <td>{formatCop(order.total_cop)}</td> : null}
+                {visibleColumn("payment") ? <td>{paymentLabel(order.payment_method)}</td> : null}
+                {visibleColumn("status") ? <td><span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span></td> : null}
+                {visibleColumn("date") ? <td>{new Date(order.ordered_at).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</td> : null}
+                {visibleColumn("time") ? <td>{new Date(order.ordered_at).toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" })}</td> : null}
+                {visibleColumn("actions") ? <td className="actions-column compact-actions-column">
                   <button className="icon-button" onClick={() => setDetailOrder(order)} title={`Ver detalle de ${order.code}`} type="button"><Eye size={16} /></button>
                   {canEditOperationalDate ? <button className="icon-button" onClick={() => setDateOrder(order)} title={`Editar fecha de ${order.code}`} type="button"><CalendarClock size={16} /></button> : null}
                   {order.status !== "cancelled" && order.status !== "delivered" ? <CancelOrderButton id={order.id} /> : null}
-                </td>
+                </td> : null}
               </tr>
             ))}
-            {filteredOrders.length === 0 ? <tr><td colSpan={10}>Sin pedidos.</td></tr> : null}
+            {filteredOrders.length === 0 ? <tr><td colSpan={visibleCount}>Sin pedidos.</td></tr> : null}
           </tbody>
         </table>
       </div>
+      {settingsOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+          <section aria-label="Configuración de columnas" aria-modal="true" className="modal-panel inventory-settings-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modal-header">
+              <div><strong>Configuración de columnas</strong><span>Elige la información visible en este navegador.</span></div>
+              <button className="icon-button" onClick={() => setSettingsOpen(false)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="column-settings-grid">
+              {allOrderColumns.map((column) => (
+                <label key={column}>
+                  <input checked={visibleColumn(column)} disabled={columns.length <= 1 && visibleColumn(column)} onChange={() => toggleColumn(column)} type="checkbox" />
+                  <span>{orderColumnLabels[column]}</span>
+                </label>
+              ))}
+            </div>
+            <footer className="modal-footer">
+              <button className="ghost-button" onClick={() => setColumns(defaultOrderColumns)} type="button">Restablecer columnas</button>
+              <button className="primary-button" onClick={() => setSettingsOpen(false)} type="button">Cerrar</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
       {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
       {dateOrder ? <OperationalDateModal order={dateOrder} onClose={() => setDateOrder(null)} /> : null}
     </section>
+  );
+}
+
+function OrderSummary({ order }: { order: PosOrderListRow }) {
+  const visibleItems = order.items.slice(0, 2);
+  const hiddenCount = Math.max(0, order.items.length - visibleItems.length);
+  return (
+    <div className="order-row-summary">
+      {visibleItems.map((item) => <span key={item.id}>{item.quantity}× {item.product_name_snapshot}</span>)}
+      {hiddenCount > 0 ? <small>+{hiddenCount} productos más</small> : null}
+    </div>
   );
 }
 

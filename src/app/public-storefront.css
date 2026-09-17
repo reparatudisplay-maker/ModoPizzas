@@ -1450,3 +1450,179 @@
   .public-cart-button { width: 39px; height: 39px; }
 }
 @media (max-width: 700px) { .public-pizza-review { grid-template-columns: 108px 1fr; gap: 14px; }.public-config-body { min-height: 250px; }.public-footer { grid-template-columns: 1fr; gap: 24px; padding: 32px 20px 104px; }.public-whatsapp-float { right: 12px; bottom: 78px; padding: 0; width: 48px; justify-content: center; }.public-whatsapp-float span { display: none; }.public-map-card { padding: 13px; }.public-hour-row { grid-template-columns: 1fr 88px 76px auto 76px; gap: 5px; font-size: 12px; }.public-hour-row input[type="time"] { min-width: 0; font-size: 11px; }.public-hours-editor { overflow-x: auto; }.public-configurator footer .public-secondary { color: #493d37; }.public-cross-sell { margin-bottom: 14px; } }
+
+.public-product-card.clickable {
+  cursor: pointer;
+  outline: none;
+}
+
+.public-product-card.clickable:hover {
+  border-color: #e98767;
+  box-shadow: 0 16px 34px #38120720;
+  transform: translateY(-3px);
+}
+
+.public-product-card.clickable:focus-visible {
+  border-color: #e63824;
+  box-shadow: 0 0 0 3px #e6382433, 0 16px 34px #38120720;
+}
+
+.public-cart-drawer > header > button[aria-label="Cerrar carrito"],
+.public-configurator > header > button[aria-label="Cerrar"] {
+  border-color: #cab7aa;
+  background: #fffaf4;
+  color: #2a1d18;
+}
+
+.public-cart-drawer > header > button[aria-label="Cerrar carrito"]:hover,
+.public-cart-drawer > header > button[aria-label="Cerrar carrito"]:focus-visible,
+.public-configurator > header > button[aria-label="Cerrar"]:hover,
+.public-configurator > header > button[aria-label="Cerrar"]:focus-visible {
+  border-color: #c92d1c;
+  background: #fff0e9;
+  color: #a82317;
+}
+
+.public-footer {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.public-footer > div {
+  align-content: start;
+}
+
+.public-footer a {
+  width: fit-content;
+}
+
+.public-legal-page {
+  min-height: 100vh;
+  padding: 38px max(20px, 7vw) 68px;
+  background: #fff9f2;
+  color: #201613;
+}
+
+.public-legal-page article {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 780px);
+  gap: 26px 42px;
+  max-width: 1120px;
+  margin: 34px auto 0;
+}
+
+.public-legal-header {
+  grid-column: 1 / -1;
+}
+
+.public-legal-header > span {
+  color: #e63824;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+
+.public-legal-page h1 {
+  max-width: 900px;
+  margin: 8px 0 14px;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: .96;
+}
+
+.public-legal-summary {
+  max-width: 780px;
+  padding: 16px;
+  border-left: 3px solid #e63824;
+  background: #fff0e9;
+  color: #5f514b;
+  line-height: 1.6;
+}
+
+.public-legal-header small {
+  color: #8a746a;
+  font-weight: 700;
+}
+
+.public-legal-index {
+  position: sticky;
+  top: 96px;
+  align-self: start;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #eadbd2;
+  border-radius: 8px;
+  background: #fffdf9;
+}
+
+.public-legal-index a {
+  color: #6b5147;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.public-legal-index a:hover {
+  color: #e63824;
+}
+
+.public-legal-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.public-legal-sections section {
+  padding: 18px;
+  border: 1px solid #eadbd2;
+  border-radius: 8px;
+  background: #fffdf9;
+}
+
+.public-legal-page h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.public-legal-page p {
+  margin: 9px 0 0;
+  color: #5f514b;
+  line-height: 1.66;
+}
+
+.public-legal-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border-radius: 6px;
+  background: #201613;
+  color: white;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.public-legal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.public-legal-back {
+  color: #201613;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+@media (max-width: 820px) {
+  .public-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .public-legal-page article {
+    grid-template-columns: 1fr;
+  }
+
+  .public-legal-index {
+    position: static;
+  }
+}

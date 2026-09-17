@@ -10,7 +10,7 @@ export default async function PublicBusinessSettingsPage() {
   const { user, roleNames, moduleKeys } = await requireAdminPanelAccess(supabase);
   const { data, error } = await supabase
     .from("site_settings")
-    .select("business_name, whatsapp_number, public_phone, public_address, public_neighborhood, public_city, public_weekday_hours, public_weekend_hours, public_opening_hours, public_maps_url, public_info_text, public_instagram_url, public_facebook_url")
+    .select("*")
     .eq("id", true)
     .single();
 

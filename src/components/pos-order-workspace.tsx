@@ -5,7 +5,7 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -141,7 +141,29 @@ const minCardScale = 0;
 const maxCardScale = 2;
 const pizzaCardScaleKey = "modo-pos-pizza-card-scale";
 const productCardScaleKey = "modo-pos-product-card-scale";
+const productViewSettingsKey = "modo-pos-product-view-settings";
 const cashDenominations = [2000, 5000, 10000, 20000, 50000, 100000];
+
+type ProductViewSettings = {
+  showCost: boolean;
+  showStock: boolean;
+  showSoldOut: boolean;
+};
+
+function initialProductViewSettings(): ProductViewSettings {
+  const fallback = { showCost: true, showStock: true, showSoldOut: true };
+  if (typeof window === "undefined") return fallback;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(productViewSettingsKey) ?? "");
+    return {
+      showCost: typeof parsed?.showCost === "boolean" ? parsed.showCost : fallback.showCost,
+      showStock: typeof parsed?.showStock === "boolean" ? parsed.showStock : fallback.showStock,
+      showSoldOut: typeof parsed?.showSoldOut === "boolean" ? parsed.showSoldOut : fallback.showSoldOut
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 function initialCardScale(storageKey: string) {
   if (typeof window === "undefined") return 1;
@@ -271,6 +293,8 @@ export function PosOrderWorkspace({
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [pizzaCardScale, setPizzaCardScale] = useState(() => initialCardScale(pizzaCardScaleKey));
   const [productCardScale, setProductCardScale] = useState(() => initialCardScale(productCardScaleKey));
+  const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(initialProductViewSettings);
+  const [productSettingsOpen, setProductSettingsOpen] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -308,6 +332,10 @@ export function PosOrderWorkspace({
   useEffect(() => {
     window.localStorage.setItem(productCardScaleKey, String(productCardScale));
   }, [productCardScale]);
+
+  useEffect(() => {
+    window.localStorage.setItem(productViewSettingsKey, JSON.stringify(productViewSettings));
+  }, [productViewSettings]);
 
   useEffect(() => {
     if (state.status === "success") {
@@ -381,9 +409,11 @@ export function PosOrderWorkspace({
     () =>
       saleProducts.filter((product) => {
         const text = `${product.sku ?? ""} ${product.name} ${product.presentation ?? ""}`;
-        return !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
+        const matchesSearch = !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
+        const matchesStock = productViewSettings.showSoldOut || Math.max(0, Math.floor(product.stock_base ?? 0)) > 0;
+        return matchesSearch && matchesStock;
       }),
-    [normalizedQuery, saleProducts]
+    [normalizedQuery, productViewSettings.showSoldOut, saleProducts]
   );
 
   const saleProductById = useMemo(() => new Map(saleProducts.map((product) => [product.id, product])), [saleProducts]);
@@ -673,6 +703,15 @@ export function PosOrderWorkspace({
             <div className="pos-tabs">
               <button className={tab === "pizzas" ? "active" : ""} onClick={() => setTab("pizzas")} type="button">Pizzas</button>
               <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
+              <button
+                aria-label="Configurar vista de productos"
+                className="pos-products-settings-button"
+                onClick={() => setProductSettingsOpen(true)}
+                title="Configurar vista de productos"
+                type="button"
+              >
+                <Settings size={17} />
+              </button>
             </div>
             <label className="pos-search">
               <Search size={18} />
@@ -727,8 +766,8 @@ export function PosOrderWorkspace({
                     <small className={product.sale_price_cop > 0 ? "pos-product-price" : "danger-text"}>
                       {product.sale_price_cop > 0 ? `Precio: ${formatCop(product.sale_price_cop)}` : "Sin precio de venta"}
                     </small>
-                    <small>{formatPosUnitCost(product.unit_cost_cop)}</small>
-                    <small className="pos-product-stock">Stock: {formatStockQuantity(product.stock_base, product.unit)}</small>
+                    {productViewSettings.showCost ? <small>{formatPosUnitCost(product.unit_cost_cop)}</small> : null}
+                    {productViewSettings.showStock ? <small className="pos-product-stock">Stock: {formatStockQuantity(product.stock_base, product.unit)}</small> : null}
                   </button>
                 ))}
             {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
@@ -877,6 +916,14 @@ export function PosOrderWorkspace({
           onOpenProduction={() => window.open("/panel/produccion", "_blank", "noopener,noreferrer")}
           onOpenPurchases={() => window.open("/panel/compras", "_blank", "noopener,noreferrer")}
           shortages={state.stockShortages}
+        />
+      ) : null}
+
+      {productSettingsOpen ? (
+        <ProductViewSettingsModal
+          onChange={setProductViewSettings}
+          onClose={() => setProductSettingsOpen(false)}
+          settings={productViewSettings}
         />
       ) : null}
 
@@ -1655,6 +1702,49 @@ function PizzaBaseSelectorModal({
           </div>
         </div>
         <footer className="form-actions modal-form-actions"><button className="ghost-button" onClick={onClose} type="button">Cancelar</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function ProductViewSettingsModal({
+  onChange,
+  onClose,
+  settings
+}: {
+  onChange: (settings: ProductViewSettings) => void;
+  onClose: () => void;
+  settings: ProductViewSettings;
+}) {
+  function updateSetting(key: keyof ProductViewSettings, value: boolean) {
+    onChange({ ...settings, [key]: value });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-label="Configuración de productos" aria-modal="true" className="modal-panel compact-modal pos-products-settings-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header">
+          <div>
+            <strong>Configuración de productos</strong>
+            <span>Preferencias guardadas en este navegador.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="pos-products-settings-list">
+          <label>
+            <input checked={settings.showCost} onChange={(event) => updateSetting("showCost", event.target.checked)} type="checkbox" />
+            <span>Mostrar costo</span>
+          </label>
+          <label>
+            <input checked={settings.showStock} onChange={(event) => updateSetting("showStock", event.target.checked)} type="checkbox" />
+            <span>Mostrar stock</span>
+          </label>
+          <label>
+            <input checked={settings.showSoldOut} onChange={(event) => updateSetting("showSoldOut", event.target.checked)} type="checkbox" />
+            <span>Mostrar productos agotados</span>
+          </label>
+        </div>
+        <footer className="form-actions modal-form-actions"><button className="positive-button" onClick={onClose} type="button">Listo</button></footer>
       </section>
     </div>
   );
