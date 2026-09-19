@@ -1377,19 +1377,27 @@ a {
 
 .theme-toggle {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 50;
-  display: inline-flex;
+  z-index: 80;
+  display: grid;
+  place-items: center;
   align-items: center;
-  gap: 8px;
-  min-height: 46px;
+  height: 44px;
+  width: 44px;
+  min-height: 44px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--foreground);
   color: var(--background);
-  padding: 0 14px;
+  padding: 0;
   box-shadow: var(--shadow);
+  touch-action: none;
+  user-select: none;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22);
 }
 
 .auth-page,
@@ -4620,6 +4628,27 @@ a {
   min-width: 0;
 }
 
+.pos-cart-line-title {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pos-cart-line-title strong {
+  min-width: 0;
+}
+
+.pos-cart-line-title .icon-button {
+  align-items: center;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
 .pos-cart-base {
   align-items: center;
   display: flex;
@@ -5316,6 +5345,25 @@ a {
 
 .pos-wizard-step-header h3 {
   margin: 0;
+}
+
+.pos-edit-flavor-picker {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.pos-edit-flavor-picker h4 {
+  margin: 0;
+}
+
+.pos-edit-flavor-picker select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--foreground);
+  min-height: 42px;
+  padding: 0 10px;
 }
 
 .pos-option-grid,

@@ -112,6 +112,7 @@ type CartAddition = {
 
 type CartLine = {
   key: string;
+  signature: string;
   kind: "pizza" | "sale_product";
   id: string;
   secondary_id?: string | null;
@@ -123,6 +124,7 @@ type CartLine = {
   additions: CartAddition[];
   notes?: string;
   removed_components?: Array<{ source_kind: "inventory_item" | "preparation"; source_id: string }>;
+  removed_ingredient_keys?: string[];
   base_override?: PizzaBaseOverride | null;
 };
 
@@ -134,6 +136,8 @@ type PizzaWizard = {
   secondFlavor: PosPizzaOption | null;
   quantity: number;
   removedIngredientKeys: string[];
+  editingLineKey: string | null;
+  editingBaseOverride: PizzaBaseOverride | null;
 };
 
 const initialState: PosOrderActionState = { status: "idle", message: "" };
@@ -187,12 +191,17 @@ function cashQuickSuggestions(total: number) {
   return suggestions;
 }
 
-function productKey(line: Omit<CartLine, "key" | "quantity">) {
+function productKey(line: Omit<CartLine, "key" | "quantity" | "signature">) {
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
   const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.scope}:${addition.quantity}`).sort().join("|");
   const removedKey = (line.removed_components ?? []).map((component) => `${component.source_kind}:${component.source_id}`).sort().join("|");
   const baseKey = line.base_override ? `${line.base_override.source_kind}:${line.base_override.source_id}` : "default";
   return `pizza:${line.id}:${line.secondary_id ?? "whole"}:${line.notes ?? ""}:${removedKey}:${additionsKey}:${baseKey}`;
+}
+
+function cartLineKey() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `line:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 }
 
 function orderKindLabel(kind: OrderKind) {
@@ -441,7 +450,8 @@ export function PosOrderWorkspace({
     return sum + line.quantity * (line.unit_price_cop + additionsSubtotal);
   }, 0);
   const deliveryValue = orderKind === "delivery" ? Number(delivery || 0) : 0;
-  const discountCop = discount?.amount_cop ?? 0;
+  const rawDiscountCop = discount?.type === "percentage" ? Math.round(subtotal * discount.value / 100) : discount?.amount_cop ?? 0;
+  const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
   const total = Math.max(0, subtotal - discountCop + deliveryValue);
   const parsedDiscountInput = Number(discountInput.replace(",", "."));
   const previewDiscountCop = discountType === "percentage"
@@ -477,12 +487,12 @@ export function PosOrderWorkspace({
   const wizardIngredientChoices = wizard ? ingredientChoicesForWizard(wizard) : [];
   const wizardRemovedNotes = wizard ? removedIngredientNotes(wizard) : "";
 
-  function addLine(line: Omit<CartLine, "key" | "quantity">, quantity = 1) {
-    const key = productKey(line);
+  function addLine(line: Omit<CartLine, "key" | "quantity" | "signature">, quantity = 1) {
+    const signature = productKey(line);
     setCart((current) => {
-      const existing = current.find((item) => item.key === key);
-      if (existing) return current.map((item) => (item.key === key ? { ...item, quantity: item.quantity + quantity } : item));
-      return [...current, { ...line, key, quantity }];
+      const existing = current.find((item) => item.signature === signature);
+      if (existing) return current.map((item) => (item.key === existing.key ? { ...item, quantity: item.quantity + quantity } : item));
+      return [...current, { ...line, key: cartLineKey(), signature, quantity }];
     });
   }
 
@@ -507,13 +517,47 @@ export function PosOrderWorkspace({
     setSelectedAdditions({});
     setAdditionScopes({});
     setIngredientModalOpen(false);
-    setWizard({ flavor, step: "size", selectedSize: null, mode: "whole", secondFlavor: null, quantity: 1, removedIngredientKeys: [] });
+    setWizard({ flavor, step: "size", selectedSize: null, mode: "whole", secondFlavor: null, quantity: 1, removedIngredientKeys: [], editingLineKey: null, editingBaseOverride: null });
+  }
+
+  function openEditPizzaWizard(line: CartLine) {
+    if (line.kind !== "pizza") return;
+    const firstFlavor = pizzas.find((pizza) => pizza.prices.some((price) => price.id === line.id));
+    const selectedSize = firstFlavor?.prices.find((price) => price.id === line.id) ?? null;
+    if (!firstFlavor || !selectedSize) return;
+    const secondFlavor = line.secondary_id ? pizzas.find((pizza) => pizza.prices.some((price) => price.id === line.secondary_id)) ?? null : null;
+    const baseOverride = selectedSize ? validBaseOverrideForSize(selectedSize.size_id, line.base_override ?? null) : null;
+    const draftWizard: PizzaWizard = {
+      flavor: firstFlavor,
+      step: "size",
+      selectedSize,
+      mode: secondFlavor ? "half" : "whole",
+      secondFlavor,
+      quantity: line.quantity,
+      removedIngredientKeys: [],
+      editingLineKey: line.key,
+      editingBaseOverride: baseOverride
+    };
+    const selected = Object.fromEntries(line.additions.map((addition) => [additionSelectionKey(addition.id, addition.scope), addition.quantity]));
+    const scopes = Object.fromEntries(line.additions.map((addition) => [addition.id, addition.scope]));
+    const ingredientChoices = ingredientChoicesForWizard(draftWizard);
+    const removedKeys = line.removed_ingredient_keys?.length
+      ? line.removed_ingredient_keys.filter((key) => ingredientChoices.some((ingredient) => ingredient.key === key))
+      : ingredientChoices
+          .filter((ingredient) => line.removed_components?.some((component) => component.source_kind === ingredient.source_kind && component.source_id === ingredient.source_id))
+          .map((ingredient) => ingredient.key);
+    setSelectedAdditions(selected);
+    setAdditionScopes(scopes);
+    setIngredientModalOpen(false);
+    setWizard({ ...draftWizard, removedIngredientKeys: removedKeys, step: "summary" });
   }
 
   function selectPizzaSize(size: PosPizzaSizePrice) {
     if (!wizard) return;
     if (!size.is_active || !size.id || size.price_cop === null) return;
-    const nextWizard = { ...wizard, selectedSize: size, step: "type" as PizzaStep, mode: "whole" as PizzaMode, secondFlavor: null, removedIngredientKeys: [] };
+    const nextBaseOverride = validBaseOverrideForSize(size.size_id, wizard.editingBaseOverride);
+    if (wizard.editingBaseOverride && !nextBaseOverride) setStockNotice("La base alternativa no era compatible con el nuevo tamano y se uso la base predeterminada.");
+    const nextWizard = { ...wizard, selectedSize: size, step: "type" as PizzaStep, mode: "whole" as PizzaMode, secondFlavor: null, removedIngredientKeys: [], editingBaseOverride: nextBaseOverride };
     if (!wizard.flavor.allows_half_and_half) {
       nextWizard.step = "summary";
     }
@@ -522,35 +566,76 @@ export function PosOrderWorkspace({
     setAdditionScopes({});
   }
 
-  function addConfiguredPizza(source = wizard, additionsToUse = selectedAdditionsList, quantity = wizard?.quantity ?? 1) {
-    if (!source?.selectedSize) return;
+  function selectWizardFlavor(flavor: PosPizzaOption) {
+    if (!wizard) return;
+    const nextSize = wizard.selectedSize ? priceForSize(flavor, wizard.selectedSize.size_id) : null;
+    const nextSecondFlavor =
+      wizard.mode === "half" && wizard.secondFlavor && wizard.secondFlavor.flavor_id !== flavor.flavor_id && nextSize && priceForSize(wizard.secondFlavor, nextSize.size_id)
+        ? wizard.secondFlavor
+        : null;
+    const nextMode = nextSecondFlavor ? "half" : "whole";
+    const nextBaseOverride = nextSize ? validBaseOverrideForSize(nextSize.size_id, wizard.editingBaseOverride) : null;
+    if (wizard.editingBaseOverride && nextSize && !nextBaseOverride) setStockNotice("La base alternativa no era compatible con la nueva pizza y se uso la base predeterminada.");
+    setSelectedAdditions({});
+    setAdditionScopes({});
+    setWizard({
+      ...wizard,
+      flavor,
+      selectedSize: nextSize,
+      mode: nextMode,
+      secondFlavor: nextSecondFlavor,
+      removedIngredientKeys: [],
+      editingBaseOverride: nextBaseOverride
+    });
+  }
+
+  function configuredPizzaLine(source: PizzaWizard, additionsToUse: CartAddition[]): Omit<CartLine, "key" | "quantity" | "signature"> | null {
+    if (!source?.selectedSize) return null;
     const firstPrice = source.selectedSize;
     const secondPrice = source.mode === "half" && source.secondFlavor ? priceForSize(source.secondFlavor, firstPrice.size_id) : null;
     const orderPrice = selectedOrderPrice(source, firstPrice, secondPrice);
-    if (!firstPrice.id || !orderPrice?.id || orderPrice.price_cop === null) return;
-    if (source.mode === "half" && (!secondPrice?.id || secondPrice.id === firstPrice.id)) return;
+    if (!firstPrice.id || !orderPrice?.id || orderPrice.price_cop === null) return null;
+    if (source.mode === "half" && (!secondPrice?.id || secondPrice.id === firstPrice.id)) return null;
     const name =
       source.mode === "half" && source.secondFlavor
         ? `${source.flavor.flavor_name} / ${source.secondFlavor.flavor_name} ${firstPrice.size_name}`
         : `${source.flavor.flavor_name} ${firstPrice.size_name}`;
 
-    addLine(
-      {
-        kind: "pizza",
-        id: firstPrice.id,
-        secondary_id: secondPrice?.id ?? null,
-        name,
-        sku: orderPrice.sku,
-        image_src: source.flavor.image_src,
-        unit_price_cop: orderPrice.price_cop,
-        additions: additionsToUse,
-        notes: removedIngredientNotes(source) || undefined,
-        removed_components: ingredientChoicesForWizard(source)
-          .filter((ingredient) => source.removedIngredientKeys.includes(ingredient.key))
-          .map((ingredient) => ({ source_kind: ingredient.source_kind, source_id: ingredient.source_id }))
-      },
-      quantity
-    );
+    const validBaseOverride = validBaseOverrideForSize(firstPrice.size_id, source.editingBaseOverride);
+    return {
+      kind: "pizza",
+      id: firstPrice.id,
+      secondary_id: secondPrice?.id ?? null,
+      name,
+      sku: orderPrice.sku,
+      image_src: source.flavor.image_src,
+      unit_price_cop: orderPrice.price_cop,
+      additions: additionsToUse,
+      notes: removedIngredientNotes(source) || undefined,
+      removed_components: ingredientChoicesForWizard(source)
+        .filter((ingredient) => source.removedIngredientKeys.includes(ingredient.key))
+        .map((ingredient) => ({ source_kind: ingredient.source_kind, source_id: ingredient.source_id })),
+      removed_ingredient_keys: source.removedIngredientKeys,
+      base_override: validBaseOverride
+    };
+  }
+
+  function addConfiguredPizza(source = wizard, additionsToUse = selectedAdditionsList, quantity = wizard?.quantity ?? 1) {
+    if (!source) return;
+    const line = configuredPizzaLine(source, additionsToUse);
+    if (!line) return;
+    if (source.editingLineKey) {
+      const signature = productKey(line);
+      setCart((current) =>
+        current.map((item) =>
+          item.key === source.editingLineKey
+            ? { ...line, key: item.key, signature, quantity }
+            : item
+        )
+      );
+    } else {
+      addLine(line, quantity);
+    }
     setWizard(null);
     setSelectedAdditions({});
     setAdditionScopes({});
@@ -587,6 +672,12 @@ export function PosOrderWorkspace({
     return options.find((option) => option.source_kind === line.base_override?.source_kind && option.source_id === line.base_override?.source_id) ?? null;
   }
 
+  function validBaseOverrideForSize(sizeId: string, override: PizzaBaseOverride | null | undefined) {
+    if (!override) return null;
+    const option = baseOptions.find((item) => item.pizza_size_id === sizeId && item.source_kind === override.source_kind && item.source_id === override.source_id);
+    return option?.is_default ? null : option ? override : null;
+  }
+
   function applyBaseOverride(lineKey: string, option: PosPizzaBaseOption) {
     setCart((current) => {
       const line = current.find((item) => item.key === lineKey);
@@ -595,13 +686,13 @@ export function PosOrderWorkspace({
         ...line,
         base_override: option.is_default ? null : { source_kind: option.source_kind, source_id: option.source_id }
       };
-      const nextKey = productKey(nextLine);
+      const nextSignature = productKey(nextLine);
       const withoutCurrent = current.filter((item) => item.key !== lineKey);
-      const matching = withoutCurrent.find((item) => item.key === nextKey);
+      const matching = withoutCurrent.find((item) => item.signature === nextSignature);
       if (matching) {
-        return withoutCurrent.map((item) => item.key === nextKey ? { ...item, quantity: item.quantity + line.quantity } : item);
+        return withoutCurrent.map((item) => item.key === matching.key ? { ...item, quantity: item.quantity + line.quantity } : item);
       }
-      return [...withoutCurrent, { ...nextLine, key: nextKey }];
+      return [...withoutCurrent, { ...nextLine, key: line.key, signature: nextSignature }];
     });
     setBaseLineKey(null);
   }
@@ -801,7 +892,20 @@ export function PosOrderWorkspace({
             {cart.map((line) => (
               <article className="pos-cart-line" key={line.key}>
                 <div>
-                  <strong>{line.name}</strong>
+                  <span className="pos-cart-line-title">
+                    <strong>{line.name}</strong>
+                    {line.kind === "pizza" ? (
+                      <button
+                        aria-label={`Editar pizza ${line.name}`}
+                        className="icon-button"
+                        onClick={() => openEditPizzaWizard(line)}
+                        title="Editar pizza"
+                        type="button"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    ) : null}
+                  </span>
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
                   {line.kind === "pizza" ? (() => {
                     const defaultBase = defaultBaseForLine(line);
@@ -940,10 +1044,10 @@ export function PosOrderWorkspace({
 
       {wizard ? (
         <div className="modal-backdrop" role="presentation">
-          <section aria-label="Configurar pizza" aria-modal="true" className="modal-panel pos-pizza-modal" role="dialog">
+          <section aria-label={wizard.editingLineKey ? "Editar pizza" : "Configurar pizza"} aria-modal="true" className="modal-panel pos-pizza-modal" role="dialog">
             <header className="modal-header">
               <div>
-                <strong>Configurar pizza</strong>
+                <strong>{wizard.editingLineKey ? "Editar pizza" : "Configurar pizza"}</strong>
                 <span>{wizard.step === "summary" ? "Resumen final" : "Selecciona las opciones"}</span>
               </div>
               <button
@@ -964,6 +1068,17 @@ export function PosOrderWorkspace({
 
               {wizard.step === "size" ? (
                 <WizardStep title="Tamano">
+                  {wizard.editingLineKey ? (
+                    <div className="pos-edit-flavor-picker">
+                      <h4>Sabor</h4>
+                      <select onChange={(event) => {
+                        const nextFlavor = pizzas.find((pizza) => pizza.flavor_id === event.target.value);
+                        if (nextFlavor) selectWizardFlavor(nextFlavor);
+                      }} value={wizard.flavor.flavor_id}>
+                        {pizzas.map((pizza) => <option key={pizza.flavor_id} value={pizza.flavor_id}>{pizza.flavor_name}</option>)}
+                      </select>
+                    </div>
+                  ) : null}
                   <div className="pos-option-grid">
                     {wizard.flavor.prices.map((price) => (
                       <button
@@ -1083,7 +1198,7 @@ export function PosOrderWorkspace({
                 Cancelar
               </button>
               {wizard.step === "summary" ? (
-                <button className="positive-button" onClick={() => addConfiguredPizza()} type="button">Agregar al pedido</button>
+                <button className="positive-button" onClick={() => addConfiguredPizza()} type="button">{wizard.editingLineKey ? "Guardar cambios" : "Agregar al pedido"}</button>
               ) : null}
             </div>
           </section>
