@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosPizzaBaseOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosPizzaBaseOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -91,6 +91,33 @@ type PizzaBaseOptionRow = {
   available_quantity: number;
 };
 
+type ComboRow = {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  sale_price_cop: number;
+  combo_groups: Array<{
+    id: string;
+    name: string;
+    group_kind: "pizza" | "sale_product";
+    quantity_to_choose: number;
+    is_required: boolean;
+    pizza_size_id: string | null;
+    sort_order: number | null;
+    combo_group_options: Array<{
+      id: string;
+      pizza_flavor_id: string | null;
+      inventory_item_id: string | null;
+      supplement_cop: number;
+      sort_order: number | null;
+      pizza_flavors: { id: string; name: string; image_url: string | null } | null;
+      inventory_items: { id: string; name: string; image_url: string | null; sale_price_cop: number | null; sale_is_enabled: boolean | null } | null;
+    }>;
+  }>;
+};
+
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
   if (!path) return null;
   if (path.startsWith("http")) return path;
@@ -114,6 +141,7 @@ export default async function NuevoPedidoPage() {
     flavorIngredientsResult,
     additionsResult,
     saleProductsResult,
+    combosResult,
     baseOptionsResult
   ] = await Promise.all([
     supabase
@@ -140,6 +168,11 @@ export default async function NuevoPedidoPage() {
       .eq("is_available", true)
       .order("sort_order"),
     supabase.rpc("get_pos_sale_product_catalog"),
+    supabase
+      .from("combo_configs")
+      .select("id, sku, name, description, image_url, sale_price_cop, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, supplement_cop, sort_order, pizza_flavors(id, name, image_url), inventory_items(id, name, image_url, sale_price_cop, sale_is_enabled)))")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true }),
     supabase.rpc("get_pos_pizza_base_options")
   ]);
 
@@ -150,6 +183,7 @@ export default async function NuevoPedidoPage() {
     flavorIngredientsResult.error ??
     additionsResult.error ??
     saleProductsResult.error ??
+    combosResult.error ??
     baseOptionsResult.error;
 
   const signedImageCache = new Map<string, Promise<string | null>>();
@@ -279,10 +313,77 @@ export default async function NuevoPedidoPage() {
     available_quantity: Number(option.available_quantity)
   }));
 
+  const priceByFlavorAndSize = new Map<string, { price_config_id: string; sale_price_cop: number }>();
+  for (const pizza of pizzas) {
+    for (const price of pizza.prices) {
+      if (!price.id || price.price_cop === null) continue;
+      priceByFlavorAndSize.set(`${pizza.flavor_id}:${price.size_id}`, { price_config_id: price.id, sale_price_cop: price.price_cop });
+    }
+  }
+  const productById = new Map(saleProducts.map((product) => [product.id, product]));
+  const combos: PosComboOption[] = await Promise.all(
+    ((combosResult.data ?? []) as unknown as ComboRow[]).map(async (combo) => {
+      const groups = (combo.combo_groups ?? [])
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+        .map((group) => ({
+          id: group.id,
+          name: group.name,
+          group_kind: group.group_kind,
+          quantity_to_choose: Number(group.quantity_to_choose ?? 1),
+          is_required: group.is_required,
+          pizza_size_id: group.pizza_size_id,
+          options: (group.combo_group_options ?? [])
+            .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+            .map((option) => {
+              if (group.group_kind === "pizza") {
+                const price = option.pizza_flavor_id && group.pizza_size_id ? priceByFlavorAndSize.get(`${option.pizza_flavor_id}:${group.pizza_size_id}`) : null;
+                return {
+                  id: option.id,
+                  name: option.pizza_flavors?.name ?? "Pizza",
+                  image_src: null,
+                  pizza_flavor_id: option.pizza_flavor_id,
+                  pizza_price_config_id: price?.price_config_id ?? null,
+                  inventory_item_id: null,
+                  unit_price_cop: Number(price?.sale_price_cop ?? 0),
+                  supplement_cop: Number(option.supplement_cop ?? 0)
+                };
+              }
+              const product = option.inventory_item_id ? productById.get(option.inventory_item_id) : null;
+              return {
+                id: option.id,
+                name: product?.name ?? option.inventory_items?.name ?? "Producto",
+                image_src: product?.image_src ?? null,
+                pizza_flavor_id: null,
+                pizza_price_config_id: null,
+                inventory_item_id: option.inventory_item_id,
+                unit_price_cop: Number(product?.sale_price_cop ?? option.inventory_items?.sale_price_cop ?? 0),
+                supplement_cop: Number(option.supplement_cop ?? 0)
+              };
+            })
+            .filter((option) => option.unit_price_cop > 0 && (option.pizza_price_config_id || option.inventory_item_id))
+        }))
+        .filter((group) => group.options.length >= group.quantity_to_choose);
+      const normalPrice = groups.reduce((sum, group) => {
+        const prices = group.options.map((option) => option.unit_price_cop).filter((price) => price > 0);
+        return sum + (prices.length ? Math.min(...prices) * group.quantity_to_choose : 0);
+      }, 0);
+      return {
+        id: combo.id,
+        sku: combo.sku,
+        name: combo.name,
+        description: combo.description,
+        image_src: await signedCachedImage(combo.image_url),
+        sale_price_cop: Number(combo.sale_price_cop ?? 0),
+        normal_price_cop: normalPrice,
+        groups
+      };
+    })
+  );
+
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} pizzas={pizzas} saleProducts={saleProducts} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} combos={combos} pizzas={pizzas} saleProducts={saleProducts} />
     </PanelShell>
   );
 }

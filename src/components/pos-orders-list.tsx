@@ -3,8 +3,8 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Ban, CalendarClock, Eye, Search, Settings, X } from "lucide-react";
-import { cancelPosOrder, updatePosOrderOperationalDate, type FormActionState } from "@/app/admin/actions";
+import { Ban, CalendarClock, Eye, Search, Settings, WalletCards, X } from "lucide-react";
+import { cancelPosOrder, updatePosOrderOperationalDate, updatePosOrderPaymentMethod, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -126,17 +126,27 @@ function operationalDateParts(value: string) {
   return { date: `${part("year")}-${part("month")}-${part("day")}`, time: `${part("hour")}:${part("minute")}` };
 }
 
-export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOperationalDate: boolean; orders: PosOrderListRow[] }) {
+export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }: { canEditOperationalDate: boolean; canEditPayment: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
-  const [columns, setColumns] = useState<OrderColumn[]>(initialOrderColumns);
+  const [columns, setColumns] = useState<OrderColumn[]>(defaultOrderColumns);
+  const [columnsReady, setColumnsReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<PosOrderListRow | null>(null);
   const [dateOrder, setDateOrder] = useState<PosOrderListRow | null>(null);
+  const [paymentOrder, setPaymentOrder] = useState<PosOrderListRow | null>(null);
   const normalizedQuery = normalizeMasterText(query);
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setColumns(initialOrderColumns());
+      setColumnsReady(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+  useEffect(() => {
+    if (!columnsReady) return;
     window.localStorage.setItem(orderColumnsKey, JSON.stringify(columns));
-  }, [columns]);
+  }, [columns, columnsReady]);
   const filteredOrders = useMemo(
     () =>
       orders.filter((order) => {
@@ -219,6 +229,7 @@ export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOpera
                 {visibleColumn("actions") ? <td className="actions-column compact-actions-column">
                   <button className="icon-button" onClick={() => setDetailOrder(order)} title={`Ver detalle de ${order.code}`} type="button"><Eye size={16} /></button>
                   {canEditOperationalDate ? <button className="icon-button" onClick={() => setDateOrder(order)} title={`Editar fecha de ${order.code}`} type="button"><CalendarClock size={16} /></button> : null}
+                  {canEditPayment && order.status !== "cancelled" ? <button className="icon-button" onClick={() => setPaymentOrder(order)} title={`Editar pago de ${order.code}`} type="button"><WalletCards size={16} /></button> : null}
                   {order.status !== "cancelled" && order.status !== "delivered" ? <CancelOrderButton id={order.id} /> : null}
                 </td> : null}
               </tr>
@@ -251,6 +262,7 @@ export function PosOrdersList({ canEditOperationalDate, orders }: { canEditOpera
       ) : null}
       {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
       {dateOrder ? <OperationalDateModal order={dateOrder} onClose={() => setDateOrder(null)} /> : null}
+      {paymentOrder ? <PaymentMethodModal order={paymentOrder} onClose={() => setPaymentOrder(null)} /> : null}
     </section>
   );
 }
@@ -362,6 +374,83 @@ function OperationalDateModal({ order, onClose }: { order: PosOrderListRow; onCl
 function UpdateOperationalDateButton() {
   const { pending } = useFormStatus();
   return <button className="primary-button" disabled={pending} type="submit">{pending ? "Actualizando..." : "Actualizar fecha"}</button>;
+}
+
+function PaymentMethodModal({ order, onClose }: { order: PosOrderListRow; onClose: () => void }) {
+  const [state, action] = useActionState(updatePosOrderPaymentMethod, initialState);
+  const [method, setMethod] = useState(order.payment_method === "card" ? "transfer" : order.payment_method);
+  const [cashReceived, setCashReceived] = useState(String(Math.round(order.total_cop)));
+  const [mixedCash, setMixedCash] = useState("");
+  const [mixedTransfer, setMixedTransfer] = useState("");
+  const [mixedCashReceived, setMixedCashReceived] = useState("");
+  const router = useRouter();
+  const mixedSum = Number(mixedCash || 0) + Number(mixedTransfer || 0);
+
+  useEffect(() => {
+    if (state.status !== "success") return;
+    const timeout = window.setTimeout(() => {
+      onClose();
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [onClose, router, state.status]);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <form action={action} aria-label={`Editar metodo de pago del pedido ${order.code}`} aria-modal="true" className="modal-panel compact-modal operational-date-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <input name="order_id" type="hidden" value={order.id} />
+        <input name="total_cop" type="hidden" value={Math.round(order.total_cop)} />
+        <header className="modal-header">
+          <div>
+            <strong>Editar pago del pedido {order.code}</strong>
+            <span>Solo corrige el método de pago; no altera inventario ni total.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="compact-card operational-date-body">
+          <div className="summary-grid">
+            <span>Total <strong>{formatCop(order.total_cop)}</strong></span>
+            <span>Pago actual <strong>{paymentLabel(order.payment_method)}</strong></span>
+          </div>
+          <div className="field">
+            <label>Método de pago</label>
+            <select name="payment_method" onChange={(event) => setMethod(event.target.value)} value={method}>
+              <option value="cash">Efectivo</option>
+              <option value="transfer">Transferencia</option>
+              <option value="mixed">Mixto</option>
+              <option value="pending">Pendiente</option>
+            </select>
+          </div>
+          {method === "cash" ? (
+            <div className="form-grid">
+              <div className="field"><label>Efectivo recibido</label><input inputMode="numeric" name="cash_received_cop" onChange={(event) => setCashReceived(event.target.value.replace(/\D/g, ""))} value={cashReceived} /></div>
+              <div className="field"><label>Cambio</label><input readOnly value={formatCop(Math.max(0, Number(cashReceived || 0) - order.total_cop))} /></div>
+            </div>
+          ) : null}
+          {method === "mixed" ? (
+            <div className="form-grid">
+              <div className="field"><label>Efectivo</label><input inputMode="numeric" name="mixed_cash_cop" onChange={(event) => setMixedCash(event.target.value.replace(/\D/g, ""))} value={mixedCash} /></div>
+              <div className="field"><label>Transferencia</label><input inputMode="numeric" name="mixed_transfer_cop" onChange={(event) => setMixedTransfer(event.target.value.replace(/\D/g, ""))} value={mixedTransfer} /></div>
+              <div className="field"><label>Efectivo recibido</label><input inputMode="numeric" name="mixed_cash_received_cop" onChange={(event) => setMixedCashReceived(event.target.value.replace(/\D/g, ""))} value={mixedCashReceived} /></div>
+              <div className="field"><label>Validación</label><input readOnly value={`${formatCop(mixedSum)} / ${formatCop(order.total_cop)}`} /></div>
+            </div>
+          ) : null}
+          <div className="field"><label>Motivo</label><textarea name="reason" placeholder="Corrección de método de pago" /></div>
+          {order.status === "cancelled" ? <p className="form-status error">Los pedidos cancelados no se pueden modificar.</p> : null}
+          {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+        </div>
+        <footer className="modal-footer">
+          <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
+          <UpdatePaymentMethodButton disabled={order.status === "cancelled"} />
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function UpdatePaymentMethodButton({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return <button className="primary-button" disabled={pending || disabled} type="submit">{pending ? "Actualizando..." : "Actualizar pago"}</button>;
 }
 
 function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClose }: { canEditOperationalDate: boolean; onEditDate: () => void; order: PosOrderListRow; onClose: () => void }) {

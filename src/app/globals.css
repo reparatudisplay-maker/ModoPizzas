@@ -4649,6 +4649,28 @@ a {
   width: 28px;
 }
 
+.pos-combo-cart-group {
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+
+.pos-combo-component-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.pos-combo-component-row .icon-button {
+  align-items: center;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
 .pos-cart-base {
   align-items: center;
   display: flex;
@@ -6130,3 +6152,80 @@ a {
 .order-row-summary small { color: var(--muted); font-size: 12px; }
 .table-settings-button { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 700px) { .column-settings-grid { grid-template-columns: 1fr; } }
+
+.xwide-modal {
+  max-width: min(1120px, calc(100vw - 28px));
+  width: 100%;
+}
+
+.combo-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.combo-editor-grid .full {
+  grid-column: 1 / -1;
+}
+
+.combo-groups-editor {
+  display: grid;
+  gap: 12px;
+  max-height: min(52vh, 560px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.combo-group-header {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 150px 92px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.combo-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.combo-option-card {
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 52px minmax(0, 1fr);
+  padding: 8px;
+}
+
+.combo-option-card.selected {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-subtle));
+}
+
+.combo-option-card input[type="text"],
+.combo-option-card input[inputmode="numeric"] {
+  grid-column: 1 / -1;
+}
+
+.pos-combo-card small {
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.pos-summary-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+@media (max-width: 760px) {
+  .combo-editor-grid,
+  .combo-group-header {
+    grid-template-columns: 1fr;
+  }
+}

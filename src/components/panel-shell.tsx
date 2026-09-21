@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -77,7 +77,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const moduleAccess = new Set(moduleKeys ?? fallbackModuleAccessForRoles(roleNames));
   const canAccess = (moduleKey: SystemModuleKey) => isAdmin || moduleAccess.has(moduleKey);
   const orderStorageKey = `modo-pizzas-nav-order:${userEmail || "usuario"}`;
-  const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => readNavOrder(orderStorageKey));
+  const [navOrder, setNavOrder] = useState<Record<string, string[]>>({});
+  const [navOrderReady, setNavOrderReady] = useState(false);
   const [dragging, setDragging] = useState<{ group: string; key: string } | null>(null);
   const [profile, setProfile] = useState<{ name: string; avatarUrl: string | null }>({ name: "", avatarUrl: null });
   const [accountOpen, setAccountOpen] = useState(false);
@@ -86,8 +87,17 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const suppressClickRef = useRef(false);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setNavOrder(readNavOrder(orderStorageKey));
+      setNavOrderReady(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [orderStorageKey]);
+
+  useEffect(() => {
+    if (!navOrderReady) return;
     if (typeof window !== "undefined") window.localStorage.setItem(orderStorageKey, JSON.stringify(navOrder));
-  }, [navOrder, orderStorageKey]);
+  }, [navOrder, navOrderReady, orderStorageKey]);
 
   useEffect(() => {
     let activeRequest = true;
@@ -142,11 +152,12 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canAccess("cocina") }
   ];
   const menuMainLinks: NavLink[] = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: canAccess("menu") }];
-  const menuPriceLinks: NavLink[] = [
-    { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: canAccess("menu") },
-    { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") },
-    { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: canAccess("menu") }
-  ];
+const menuPriceLinks: NavLink[] = [
+  { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: canAccess("menu") },
+  { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") },
+  { key: "menu-precios-combos", href: "/panel/menu/precios/combos", label: "Combos", icon: BadgePercent, show: canAccess("menu") },
+  { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: canAccess("menu") }
+];
   const marketingLinks: NavLink[] = [
     { key: "marketing-pantallas", href: "/panel/marketing/pantallas", label: "Pantallas", icon: MonitorPlay, show: canAccess("marketing") },
     { key: "marketing-promociones", href: "/panel/marketing/promociones", label: "Promociones", icon: Megaphone, show: canAccess("marketing") }

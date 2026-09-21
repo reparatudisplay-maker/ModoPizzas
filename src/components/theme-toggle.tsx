@@ -10,8 +10,7 @@ const positionStorageKey = "modoPizzasThemeTogglePosition";
 const toggleSize = 44;
 const edgePadding = 14;
 
-function getInitialTheme(): ThemeMode {
-  if (typeof window === "undefined") return "light";
+function readStoredTheme(): ThemeMode {
   const stored = window.localStorage.getItem("modo-pizzas-theme");
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -37,9 +36,17 @@ function initialPosition(): TogglePosition {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
-  const [position, setPosition] = useState<TogglePosition>(initialPosition);
+  const [theme, setTheme] = useState<ThemeMode>("light");
+  const [position, setPosition] = useState<TogglePosition>({ x: edgePadding, y: edgePadding });
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number; moved: boolean; position: TogglePosition } | null>(null);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setTheme(readStoredTheme());
+      setPosition(initialPosition());
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

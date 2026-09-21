@@ -20,7 +20,7 @@ type AppliedDiscount = {
   value: number;
   amount_cop: number;
 };
-type CatalogTab = "pizzas" | "products";
+type CatalogTab = "pizzas" | "products" | "combos";
 type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
 type AdditionScope = "whole" | "left" | "right";
@@ -99,6 +99,45 @@ export type PosPizzaBaseOption = {
 
 type PizzaBaseOverride = Pick<PosPizzaBaseOption, "source_kind" | "source_id">;
 
+export type PosComboOption = {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  image_src: string | null;
+  sale_price_cop: number;
+  normal_price_cop: number;
+  groups: Array<{
+    id: string;
+    name: string;
+    group_kind: "pizza" | "sale_product";
+    quantity_to_choose: number;
+    is_required: boolean;
+    pizza_size_id: string | null;
+    options: Array<{
+      id: string;
+      name: string;
+      image_src: string | null;
+      pizza_flavor_id: string | null;
+      pizza_price_config_id: string | null;
+      inventory_item_id: string | null;
+      unit_price_cop: number;
+      supplement_cop: number;
+    }>;
+  }>;
+};
+
+type ComboChoice = {
+  group_id: string;
+  option_id: string;
+  kind: "pizza" | "sale_product";
+  id: string;
+  name: string;
+  unit_price_cop: number;
+  supplement_cop: number;
+  line_key?: string;
+};
+
 type CartAddition = {
   key: string;
   id: string;
@@ -113,7 +152,7 @@ type CartAddition = {
 type CartLine = {
   key: string;
   signature: string;
-  kind: "pizza" | "sale_product";
+  kind: "pizza" | "sale_product" | "combo";
   id: string;
   secondary_id?: string | null;
   name: string;
@@ -126,6 +165,17 @@ type CartLine = {
   removed_components?: Array<{ source_kind: "inventory_item" | "preparation"; source_id: string }>;
   removed_ingredient_keys?: string[];
   base_override?: PizzaBaseOverride | null;
+  combo_instance_id?: string | null;
+  combo_config_id?: string | null;
+  combo_name?: string | null;
+  combo_sku?: string | null;
+  combo_choices?: ComboChoice[];
+  combo_normal_price_cop?: number;
+  combo_savings_cop?: number;
+  combo_unit_price_cop?: number;
+  combo_component_normal_price_cop?: number;
+  combo_component_label?: string;
+  combo_is_primary?: boolean;
 };
 
 type PizzaWizard = {
@@ -154,9 +204,10 @@ type ProductViewSettings = {
   showSoldOut: boolean;
 };
 
-function initialProductViewSettings(): ProductViewSettings {
-  const fallback = { showCost: true, showStock: true, showSoldOut: true };
-  if (typeof window === "undefined") return fallback;
+const defaultProductViewSettings: ProductViewSettings = { showCost: true, showStock: true, showSoldOut: true };
+
+function readProductViewSettings(): ProductViewSettings {
+  const fallback = defaultProductViewSettings;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(productViewSettingsKey) ?? "");
     return {
@@ -192,7 +243,14 @@ function cashQuickSuggestions(total: number) {
 }
 
 function productKey(line: Omit<CartLine, "key" | "quantity" | "signature">) {
+  if (line.combo_instance_id) {
+    return `combo-component:${line.combo_instance_id}:${line.kind}:${line.id}:${line.secondary_id ?? "whole"}:${line.combo_component_label ?? ""}`;
+  }
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
+  if (line.kind === "combo") {
+    const choicesKey = (line.combo_choices ?? []).map((choice) => `${choice.group_id}:${choice.option_id}:${choice.supplement_cop}`).sort().join("|");
+    return `combo:${line.id}:${line.unit_price_cop}:${choicesKey}`;
+  }
   const additionsKey = line.additions.map((addition) => `${addition.id}:${addition.scope}:${addition.quantity}`).sort().join("|");
   const removedKey = (line.removed_components ?? []).map((component) => `${component.source_kind}:${component.source_id}`).sort().join("|");
   const baseKey = line.base_override ? `${line.base_override.source_kind}:${line.base_override.source_id}` : "default";
@@ -289,20 +347,22 @@ export function PosOrderWorkspace({
   pizzas,
   additions,
   saleProducts,
+  combos,
   baseOptions
 }: {
   pizzas: PosPizzaOption[];
   additions: PosAdditionOption[];
   saleProducts: PosSaleProductOption[];
+  combos: PosComboOption[];
   baseOptions: PosPizzaBaseOption[];
 }) {
   const [state, action] = useActionState(createPosOrder, initialState);
   const [tab, setTab] = useState<CatalogTab>("pizzas");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [pizzaCardScale, setPizzaCardScale] = useState(() => initialCardScale(pizzaCardScaleKey));
-  const [productCardScale, setProductCardScale] = useState(() => initialCardScale(productCardScaleKey));
-  const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(initialProductViewSettings);
+  const [pizzaCardScale, setPizzaCardScale] = useState(1);
+  const [productCardScale, setProductCardScale] = useState(1);
+  const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(defaultProductViewSettings);
   const [productSettingsOpen, setProductSettingsOpen] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
@@ -312,6 +372,9 @@ export function PosOrderWorkspace({
   const [customerPhone, setCustomerPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [wizard, setWizard] = useState<PizzaWizard | null>(null);
+  const [comboWizard, setComboWizard] = useState<PosComboOption | null>(null);
+  const [comboSelections, setComboSelections] = useState<Record<string, string[]>>({});
+  const [editingComboLineKey, setEditingComboLineKey] = useState<string | null>(null);
   const [selectedAdditions, setSelectedAdditions] = useState<Record<string, number>>({});
   const [additionScopes, setAdditionScopes] = useState<Record<string, AdditionScope>>({});
   const [ingredientModalOpen, setIngredientModalOpen] = useState(false);
@@ -333,6 +396,15 @@ export function PosOrderWorkspace({
   const router = useRouter();
   const normalizedQuery = normalizeMasterText(query);
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPizzaCardScale(initialCardScale(pizzaCardScaleKey));
+      setProductCardScale(initialCardScale(productCardScaleKey));
+      setProductViewSettings(readProductViewSettings());
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(pizzaCardScaleKey, String(pizzaCardScale));
@@ -402,6 +474,7 @@ export function PosOrderWorkspace({
 
   const pizzaSuggestions = useMemo(() => pizzas.map((pizza) => pizza.flavor_name), [pizzas]);
   const productSuggestions = useMemo(() => saleProducts.map((product) => `${product.name} ${product.presentation ?? ""}`.trim()), [saleProducts]);
+  const comboSuggestions = useMemo(() => combos.map((combo) => combo.name), [combos]);
 
   const filteredPizzas = useMemo(
     () =>
@@ -424,6 +497,14 @@ export function PosOrderWorkspace({
       }),
     [normalizedQuery, productViewSettings.showSoldOut, saleProducts]
   );
+  const filteredCombos = useMemo(
+    () =>
+      combos.filter((combo) => {
+        const text = `${combo.sku} ${combo.name} ${combo.description ?? ""}`;
+        return !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
+      }),
+    [combos, normalizedQuery]
+  );
 
   const saleProductById = useMemo(() => new Map(saleProducts.map((product) => [product.id, product])), [saleProducts]);
   const pizzaPriceById = useMemo(
@@ -445,10 +526,16 @@ export function PosOrderWorkspace({
     return `Stock disponible: ${formatStockQuantity(saleProductStock(productId), "unit")}`;
   }
 
-  const subtotal = cart.reduce((sum, line) => {
+  const subtotalBeforeComboDiscount = cart.reduce((sum, line) => {
     const additionsSubtotal = line.additions.reduce((additionSum, addition) => additionSum + addition.quantity * addition.unit_price_cop, 0);
-    return sum + line.quantity * (line.unit_price_cop + additionsSubtotal);
+    const componentPrice = line.combo_instance_id ? line.combo_component_normal_price_cop ?? line.unit_price_cop : line.unit_price_cop;
+    return sum + line.quantity * (componentPrice + additionsSubtotal);
   }, 0);
+  const comboDiscountCop = cart.reduce((sum, line) => {
+    if (!line.combo_is_primary) return sum;
+    return sum + line.quantity * Math.max(0, line.combo_savings_cop ?? 0);
+  }, 0);
+  const subtotal = Math.max(0, subtotalBeforeComboDiscount - comboDiscountCop);
   const deliveryValue = orderKind === "delivery" ? Number(delivery || 0) : 0;
   const rawDiscountCop = discount?.type === "percentage" ? Math.round(subtotal * discount.value / 100) : discount?.amount_cop ?? 0;
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
@@ -625,6 +712,42 @@ export function PosOrderWorkspace({
     const line = configuredPizzaLine(source, additionsToUse);
     if (!line) return;
     if (source.editingLineKey) {
+      const existingLine = cart.find((item) => item.key === source.editingLineKey);
+      if (existingLine?.combo_instance_id) {
+        if (line.id !== existingLine.id || line.secondary_id !== existingLine.secondary_id) {
+          setStockNotice("Para cambiar el sabor o tamano de un combo usa Editar combo.");
+          return;
+        }
+        const comboLine = {
+          ...line,
+          combo_instance_id: existingLine.combo_instance_id,
+          combo_config_id: existingLine.combo_config_id,
+          combo_name: existingLine.combo_name,
+          combo_sku: existingLine.combo_sku,
+          combo_choices: existingLine.combo_choices,
+          combo_normal_price_cop: existingLine.combo_normal_price_cop,
+          combo_savings_cop: existingLine.combo_savings_cop,
+          combo_unit_price_cop: existingLine.combo_unit_price_cop,
+          combo_component_normal_price_cop: existingLine.combo_component_normal_price_cop,
+          combo_component_label: existingLine.combo_component_label,
+          combo_is_primary: existingLine.combo_is_primary,
+          unit_price_cop: existingLine.unit_price_cop,
+          notes: line.notes || existingLine.notes
+        };
+        const signature = productKey(comboLine);
+        setCart((current) =>
+          current.map((item) =>
+            item.key === source.editingLineKey
+              ? { ...comboLine, key: item.key, signature, quantity: item.quantity }
+              : item
+          )
+        );
+        setWizard(null);
+        setSelectedAdditions({});
+        setAdditionScopes({});
+        setIngredientModalOpen(false);
+        return;
+      }
       const signature = productKey(line);
       setCart((current) =>
         current.map((item) =>
@@ -642,8 +765,158 @@ export function PosOrderWorkspace({
     setIngredientModalOpen(false);
   }
 
+  function openComboWizard(combo: PosComboOption) {
+    const initialSelections: Record<string, string[]> = {};
+    for (const group of combo.groups) {
+      if (group.options.length <= group.quantity_to_choose) {
+        initialSelections[group.id] = group.options.slice(0, group.quantity_to_choose).map((option) => option.id);
+      } else if (group.quantity_to_choose === 1 && group.options.length === 1) {
+        initialSelections[group.id] = [group.options[0].id];
+      }
+    }
+    setComboSelections(initialSelections);
+    setEditingComboLineKey(null);
+    setComboWizard(combo);
+  }
+
+  function openEditComboWizard(line: CartLine) {
+    if (!line.combo_config_id || !line.combo_instance_id) return;
+    const combo = combos.find((item) => item.id === line.combo_config_id);
+    if (!combo) return;
+    const selections: Record<string, string[]> = {};
+    for (const choice of line.combo_choices ?? []) {
+      const selected = selections[choice.group_id] ?? [];
+      selections[choice.group_id] = [...selected, choice.option_id];
+    }
+    setComboSelections(selections);
+    setEditingComboLineKey(line.combo_instance_id);
+    setComboWizard(combo);
+  }
+
+  function toggleComboOption(groupId: string, optionId: string, limit: number) {
+    setComboSelections((current) => {
+      const selected = current[groupId] ?? [];
+      if (selected.includes(optionId)) return { ...current, [groupId]: selected.filter((id) => id !== optionId) };
+      return { ...current, [groupId]: [...selected, optionId].slice(-limit) };
+    });
+  }
+
+  function addConfiguredCombo() {
+    if (!comboWizard) return;
+    const choiceDrafts: ComboChoice[] = [];
+    for (const group of comboWizard.groups) {
+      const selected = comboSelections[group.id] ?? [];
+      if (group.is_required && selected.length !== group.quantity_to_choose) {
+        setStockNotice(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
+        return;
+      }
+      for (const optionId of selected) {
+        const option = group.options.find((item) => item.id === optionId);
+        if (!option) continue;
+        const sourceId = group.group_kind === "pizza" ? option.pizza_price_config_id : option.inventory_item_id;
+        if (!sourceId) continue;
+        choiceDrafts.push({
+          group_id: group.id,
+          option_id: option.id,
+          kind: group.group_kind,
+          id: sourceId,
+          name: option.name,
+          unit_price_cop: option.unit_price_cop,
+          supplement_cop: option.supplement_cop
+        });
+      }
+    }
+    const supplement = choiceDrafts.reduce((sum, choice) => sum + choice.supplement_cop, 0);
+    const normalPrice = choiceDrafts.reduce((sum, choice) => sum + choice.unit_price_cop + choice.supplement_cop, 0);
+    const comboUnitPrice = comboWizard.sale_price_cop + supplement;
+    const comboSavings = Math.max(0, normalPrice - comboUnitPrice);
+    const comboInstanceId = editingComboLineKey ?? cartLineKey();
+    const weightTotal = choiceDrafts.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop + choice.supplement_cop), 0);
+    let allocated = 0;
+    const choices = choiceDrafts.map((choice) => ({ ...choice, line_key: cartLineKey() }));
+    const nextLines = choices.map((choice, index) => {
+      const isLast = index === choices.length - 1;
+      const componentNormalPrice = choice.unit_price_cop + choice.supplement_cop;
+      const componentNetPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, componentNormalPrice)) / Math.max(1, weightTotal));
+      allocated += componentNetPrice;
+      const common = {
+        combo_instance_id: comboInstanceId,
+        combo_config_id: comboWizard.id,
+        combo_name: comboWizard.name,
+        combo_sku: comboWizard.sku,
+        combo_choices: choices,
+        combo_normal_price_cop: normalPrice,
+        combo_savings_cop: comboSavings,
+        combo_unit_price_cop: comboUnitPrice,
+        combo_component_normal_price_cop: componentNormalPrice,
+        combo_component_label: choice.name,
+        combo_is_primary: index === 0,
+        unit_price_cop: componentNetPrice,
+        additions: [],
+        notes: `COMBO ${comboWizard.sku}`
+      };
+      if (choice.kind === "pizza") {
+        const price = pizzaPriceById.get(choice.id);
+        const pizza = pizzas.find((item) => item.prices.some((candidate) => candidate.id === choice.id));
+        return {
+          ...common,
+          key: choice.line_key!,
+          signature: "",
+          kind: "pizza" as const,
+          id: choice.id,
+          secondary_id: null,
+          name: `${choice.name}${price?.size_name ? ` ${price.size_name}` : ""}`,
+          sku: price?.sku ?? null,
+          image_src: pizza?.image_src ?? comboWizard.image_src,
+          removed_components: [],
+          removed_ingredient_keys: [],
+          base_override: null
+        };
+      }
+      const product = saleProductById.get(choice.id);
+      return {
+        ...common,
+        key: choice.line_key!,
+        signature: "",
+        kind: "sale_product" as const,
+        id: choice.id,
+        name: product?.presentation ? `${choice.name} ${product.presentation}` : choice.name,
+        sku: product?.sku ?? null,
+        image_src: product?.image_src ?? comboWizard.image_src
+      };
+    }).map((line) => ({ ...line, signature: productKey(line) }));
+
+    if (editingComboLineKey) {
+      const previousQuantity = cart.find((item) => item.combo_instance_id === editingComboLineKey)?.quantity ?? 1;
+      setCart((current) => [...current.filter((item) => item.combo_instance_id !== editingComboLineKey), ...nextLines.map((line) => ({ ...line, quantity: previousQuantity }))]);
+    } else {
+      setCart((current) => [...current, ...nextLines.map((line) => ({ ...line, quantity: 1 }))]);
+    }
+    setComboWizard(null);
+    setComboSelections({});
+    setEditingComboLineKey(null);
+    setStockNotice("");
+  }
+
   function updateQuantity(key: string, delta: number) {
     const line = cart.find((item) => item.key === key);
+    if (line?.combo_instance_id) {
+      const groupLines = cart.filter((item) => item.combo_instance_id === line.combo_instance_id);
+      if (delta > 0) {
+        const blocked = groupLines.find((item) => item.kind === "sale_product" && item.quantity >= saleProductStock(item.id));
+        if (blocked) {
+          setStockNotice(stockMessage(blocked.id));
+          return;
+        }
+      }
+      setStockNotice("");
+      setCart((current) =>
+        current
+          .map((item) => (item.combo_instance_id === line.combo_instance_id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item))
+          .filter((item) => item.quantity > 0)
+      );
+      return;
+    }
     if (line?.kind === "sale_product" && delta > 0 && line.quantity >= saleProductStock(line.id)) {
       setStockNotice(stockMessage(line.id));
       return;
@@ -716,6 +989,17 @@ export function PosOrderWorkspace({
     notes: line.notes ?? "",
     removed_components: line.removed_components ?? [],
     base_override: line.base_override ?? null,
+    combo_instance_id: line.combo_instance_id ?? null,
+    combo_config_id: line.combo_config_id ?? null,
+    combo_name: line.combo_name ?? null,
+    combo_sku: line.combo_sku ?? null,
+    combo_choices: line.combo_choices ?? [],
+    combo_normal_price_cop: line.combo_normal_price_cop ?? 0,
+    combo_savings_cop: line.combo_savings_cop ?? 0,
+    combo_unit_price_cop: line.combo_unit_price_cop ?? 0,
+    combo_component_normal_price_cop: line.combo_component_normal_price_cop ?? 0,
+    combo_component_label: line.combo_component_label ?? null,
+    combo_is_primary: Boolean(line.combo_is_primary),
     additions: line.additions.map((addition) => ({
       id: addition.id,
       quantity: addition.quantity,
@@ -728,6 +1012,19 @@ export function PosOrderWorkspace({
   const baseLineDefault = baseLine ? defaultBaseForLine(baseLine) : null;
   const baseLineOptions = baseLine ? baseOptionsForLine(baseLine) : [];
   const hasInvalidSaleProductPrice = cart.some((line) => line.kind === "sale_product" && (!Number.isFinite(line.unit_price_cop) || line.unit_price_cop <= 0));
+  const cartEntries: Array<{ kind: "combo"; id: string; primary: CartLine; lines: CartLine[] } | { kind: "line"; line: CartLine }> = [];
+  const renderedComboInstances = new Set<string>();
+  for (const line of cart) {
+    if (line.combo_instance_id) {
+      if (renderedComboInstances.has(line.combo_instance_id)) continue;
+      const lines = cart.filter((item) => item.combo_instance_id === line.combo_instance_id);
+      const primary = lines.find((item) => item.combo_is_primary) ?? lines[0];
+      cartEntries.push({ kind: "combo", id: line.combo_instance_id, primary, lines });
+      renderedComboInstances.add(line.combo_instance_id);
+    } else {
+      cartEntries.push({ kind: "line", line });
+    }
+  }
 
   function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
     if (paymentMethod !== "cash" || cashConfirmed) return;
@@ -794,6 +1091,7 @@ export function PosOrderWorkspace({
             <div className="pos-tabs">
               <button className={tab === "pizzas" ? "active" : ""} onClick={() => setTab("pizzas")} type="button">Pizzas</button>
               <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
+              <button className={tab === "combos" ? "active" : ""} onClick={() => setTab("combos")} type="button">Combos</button>
               <button
                 aria-label="Configurar vista de productos"
                 className="pos-products-settings-button"
@@ -807,7 +1105,7 @@ export function PosOrderWorkspace({
             <label className="pos-search">
               <Search size={18} />
               <input
-                list={tab === "pizzas" ? "pos-pizza-suggestions" : "pos-product-suggestions"}
+                list={tab === "pizzas" ? "pos-pizza-suggestions" : tab === "products" ? "pos-product-suggestions" : "pos-combo-suggestions"}
                 onChange={(event) => setQuery(uppercaseMasterName(event.target.value))}
                 placeholder="Buscar rapido"
                 value={query}
@@ -818,6 +1116,9 @@ export function PosOrderWorkspace({
             </datalist>
             <datalist id="pos-product-suggestions">
               {productSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+            </datalist>
+            <datalist id="pos-combo-suggestions">
+              {comboSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
             </datalist>
             {tab === "pizzas" ? (
               <select className="pos-category-filter" onChange={(event) => setCategoryFilter(event.target.value)} value={categoryFilter}>
@@ -843,7 +1144,7 @@ export function PosOrderWorkspace({
                     <strong>{pizza.min_price_cop === null ? "Sin precio configurado" : `Desde ${formatCop(pizza.min_price_cop)}`}</strong>
                   </button>
                 ))
-              : filteredProducts.map((product) => (
+              : tab === "products" ? filteredProducts.map((product) => (
                   <button
                     className="pos-product-card pos-sale-product-card"
                     disabled={product.sale_price_cop <= 0 || saleProductCartQuantity(product.id) >= saleProductStock(product.id)}
@@ -860,11 +1161,26 @@ export function PosOrderWorkspace({
                     {productViewSettings.showCost ? <small>{formatPosUnitCost(product.unit_cost_cop)}</small> : null}
                     {productViewSettings.showStock ? <small className="pos-product-stock">Stock: {formatStockQuantity(product.stock_base, product.unit)}</small> : null}
                   </button>
+                ))
+              : filteredCombos.map((combo) => (
+                  <button
+                    className="pos-product-card pos-combo-card"
+                    disabled={combo.groups.length === 0 || combo.sale_price_cop <= 0}
+                    key={combo.id}
+                    onClick={() => openComboWizard(combo)}
+                    type="button"
+                  >
+                    <ProductImage alt={combo.name} src={combo.image_src} />
+                    <span className="pos-product-title">{combo.name}</span>
+                    <span className="pos-product-meta">{combo.description ?? "Combo configurable"}</span>
+                    <strong>{formatCop(combo.sale_price_cop)}</strong>
+                    {combo.normal_price_cop > combo.sale_price_cop ? <small>Ahorras {formatCop(combo.normal_price_cop - combo.sale_price_cop)}</small> : null}
+                  </button>
                 ))}
-            {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
+            {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : filteredCombos.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
           </div>
           {stockNotice ? <p className="form-status error">{stockNotice}</p> : null}
-          {(tab === "pizzas" ? filteredPizzas.length : filteredProducts.length) > 0 ? (
+          {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : filteredCombos.length) > 0 ? (
             <div className="pos-card-size-controls" aria-label={`Tamano de tarjetas de ${tab === "pizzas" ? "pizzas" : "productos"}`}>
               <button disabled={activeCardScale === minCardScale} onClick={() => updateActiveCardScale(-1)} type="button"><Minus size={18} /></button>
               <span>Tarjetas</span>
@@ -889,7 +1205,43 @@ export function PosOrderWorkspace({
           </div>
 
           <div className="pos-cart-lines">
-            {cart.map((line) => (
+            {cartEntries.map((entry) => {
+              if (entry.kind === "combo") {
+                const { primary, lines } = entry;
+                return (
+                  <article className="pos-cart-line pos-combo-cart-group" key={entry.id}>
+                    <div>
+                      <span className="pos-cart-line-title">
+                        <strong>{primary.combo_name ?? primary.name}</strong>
+                        <button aria-label={`Editar combo ${primary.combo_name ?? primary.name}`} className="icon-button" onClick={() => openEditComboWizard(primary)} title="Editar combo" type="button"><Pencil size={14} /></button>
+                      </span>
+                      <small>{primary.combo_sku ?? "Sin SKU"} · combo</small>
+                      <small>Precio normal: {formatCop(primary.combo_normal_price_cop ?? 0)}</small>
+                      {primary.combo_savings_cop && primary.combo_savings_cop > 0 ? <small>Descuento combo: -{formatCop(primary.combo_savings_cop)}</small> : null}
+                      <small>Precio combo: {formatCop(primary.combo_unit_price_cop ?? lines.reduce((sum, item) => sum + item.unit_price_cop, 0))}</small>
+                      {lines.map((component) => (
+                        <small className="pos-combo-component-row" key={component.key}>
+                          <span>Incluye: {component.name}{component.combo_component_normal_price_cop && component.combo_component_normal_price_cop !== component.unit_price_cop ? ` (${formatCop(component.combo_component_normal_price_cop)})` : ""}</span>
+                          {component.kind === "pizza" ? (
+                            <button aria-label={`Personalizar ${component.name}`} className="icon-button" onClick={() => openEditPizzaWizard(component)} title="Personalizar pizza del combo" type="button"><Pencil size={13} /></button>
+                          ) : null}
+                        </small>
+                      ))}
+                      {lines.flatMap((component) => component.additions.map((addition) => (
+                        <small key={`${component.key}-${addition.key}`}>{component.name}: {additionLabel(addition)} +{formatCop(addition.quantity * addition.unit_price_cop)}</small>
+                      )))}
+                    </div>
+                    <div className="pos-qty-controls">
+                      <button onClick={() => updateQuantity(primary.key, -1)} title="Disminuir" type="button"><Minus size={16} /></button>
+                      <strong>{primary.quantity}</strong>
+                      <button onClick={() => updateQuantity(primary.key, 1)} title="Aumentar" type="button"><Plus size={16} /></button>
+                      <button className="danger-button" onClick={() => setCart((current) => current.filter((item) => item.combo_instance_id !== entry.id))} title="Quitar combo" type="button"><Trash2 size={16} /></button>
+                    </div>
+                  </article>
+                );
+              }
+              const line = entry.line;
+              return (
               <article className="pos-cart-line" key={line.key}>
                 <div>
                   <span className="pos-cart-line-title">
@@ -904,9 +1256,28 @@ export function PosOrderWorkspace({
                       >
                         <Pencil size={14} />
                       </button>
+                    ) : line.kind === "combo" ? (
+                      <button
+                        aria-label={`Editar combo ${line.name}`}
+                        className="icon-button"
+                        onClick={() => openEditComboWizard(line)}
+                        title="Editar combo"
+                        type="button"
+                      >
+                        <Pencil size={14} />
+                      </button>
                     ) : null}
                   </span>
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
+                  {line.kind === "combo" ? (
+                    <>
+                      <small>{line.sku ?? "Sin SKU"} · combo</small>
+                      {(line.combo_choices ?? []).map((choice) => (
+                        <small key={`${choice.group_id}-${choice.option_id}`}>Incluye: {choice.name}{choice.supplement_cop > 0 ? ` +${formatCop(choice.supplement_cop)}` : ""}</small>
+                      ))}
+                      {line.combo_savings_cop && line.combo_savings_cop > 0 ? <small>Ahorras {formatCop(line.combo_savings_cop)}</small> : null}
+                    </>
+                  ) : null}
                   {line.kind === "pizza" ? (() => {
                     const defaultBase = defaultBaseForLine(line);
                     const selectedBase = selectedBaseForLine(line);
@@ -936,7 +1307,8 @@ export function PosOrderWorkspace({
                   <button className="danger-button" onClick={() => setCart((current) => current.filter((item) => item.key !== line.key))} title="Quitar" type="button"><Trash2 size={16} /></button>
                 </div>
               </article>
-            ))}
+              );
+            })}
             {cart.length === 0 ? <p className="empty-state">Toca una pizza o producto para empezar.</p> : null}
           </div>
 
@@ -982,6 +1354,8 @@ export function PosOrderWorkspace({
             <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}
           </button>
           <div className="pos-total-box">
+            {comboDiscountCop > 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
+            {comboDiscountCop > 0 ? <span className="pos-discount-line">Descuento combo <strong>-{formatCop(comboDiscountCop)}</strong></span> : null}
             {discount ? <span className="pos-subtotal-line">Subtotal <strong>{formatCop(subtotal)}</strong></span> : null}
             {discount ? <span className="pos-discount-line">{discountLabel} <strong>-{formatCop(discountCop)}</strong></span> : null}
             <span>Total <strong>{formatCop(total)}</strong></span>
@@ -1039,6 +1413,20 @@ export function PosOrderWorkspace({
           options={baseLineOptions}
           selectedBase={selectedBaseForLine(baseLine)}
           sizeName={baseLineSize.size_name}
+        />
+      ) : null}
+
+      {comboWizard ? (
+        <ComboSelectorModal
+          combo={comboWizard}
+          onAdd={addConfiguredCombo}
+          onClose={() => {
+            setComboWizard(null);
+            setComboSelections({});
+            setEditingComboLineKey(null);
+          }}
+          onToggle={toggleComboOption}
+          selections={comboSelections}
         />
       ) : null}
 
@@ -1954,6 +2342,69 @@ function StockShortageTable({ title, entries, onChooseAlternativeBase }: { title
         </div>
       ))}
     </section>
+  );
+}
+
+function ComboSelectorModal({
+  combo,
+  selections,
+  onToggle,
+  onAdd,
+  onClose
+}: {
+  combo: PosComboOption;
+  selections: Record<string, string[]>;
+  onToggle: (groupId: string, optionId: string, limit: number) => void;
+  onAdd: () => void;
+  onClose: () => void;
+}) {
+  const selectedOptions = combo.groups.flatMap((group) => (selections[group.id] ?? []).map((optionId) => group.options.find((option) => option.id === optionId)).filter(Boolean) as PosComboOption["groups"][number]["options"]);
+  const supplement = selectedOptions.reduce((sum, option) => sum + Number(option.supplement_cop ?? 0), 0);
+  const complete = combo.groups.every((group) => !group.is_required || (selections[group.id] ?? []).length === group.quantity_to_choose);
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-label="Configurar combo" aria-modal="true" className="modal-panel pos-pizza-modal" role="dialog">
+        <header className="modal-header">
+          <div>
+            <strong>{combo.name}</strong>
+            <span>{combo.description ?? "Elige las opciones del combo."}</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="pos-wizard-body">
+          {combo.groups.map((group, index) => {
+            const selected = new Set(selections[group.id] ?? []);
+            return (
+              <WizardStep key={group.id} title={`Paso ${index + 1}: ${group.name}`}>
+                <p className="field-hint">Elige {group.quantity_to_choose}. {group.is_required ? "Obligatorio." : "Opcional."}</p>
+                <div className="pos-half-grid">
+                  {group.options.map((option) => (
+                    <button
+                      className={selected.has(option.id) ? "pos-product-card pos-second-flavor-card active" : "pos-product-card pos-second-flavor-card"}
+                      key={option.id}
+                      onClick={() => onToggle(group.id, option.id, group.quantity_to_choose)}
+                      type="button"
+                    >
+                      <ProductImage alt={option.name} src={option.image_src} />
+                      <span className="pos-product-title">{option.name}</span>
+                      <strong>{option.supplement_cop > 0 ? `+${formatCop(option.supplement_cop)}` : "Incluido"}</strong>
+                    </button>
+                  ))}
+                </div>
+              </WizardStep>
+            );
+          })}
+          <div className="pos-summary-card">
+            <strong>Total combo: {formatCop(combo.sale_price_cop + supplement)}</strong>
+            {supplement > 0 ? <small>Suplementos: {formatCop(supplement)}</small> : null}
+          </div>
+        </div>
+        <footer className="pos-wizard-footer">
+          <button className="ghost-button" onClick={onClose} type="button">Cancelar</button>
+          <button className="primary-button" disabled={!complete} onClick={onAdd} type="button">Agregar combo</button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
