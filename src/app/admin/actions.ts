@@ -48,6 +48,63 @@ export type PosOrderTestDeletionPreviewState = {
   preview?: PosOrderTestDeletionPreview;
 };
 
+export type PosInventoryConsumptionPreview = {
+  status: "ok" | "insufficient";
+  shortages: PosStockShortage[];
+  consolidated: Array<{
+    source_kind: "inventory_item" | "preparation";
+    source_id: string;
+    source_name: string;
+    unit: StockUnit;
+    stock_before: number;
+    consumption_quantity: number;
+    stock_after: number;
+    origins: Array<{
+      origin_label: string;
+      purchase_item_id: string | null;
+      production_batch_id: string | null;
+      purchased_at: string | null;
+      purchase_expiration_date: string | null;
+      elaborated_at: string | null;
+      production_expiration_date: string | null;
+      stock_before: number;
+      consumption_quantity: number;
+      stock_after: number;
+    }>;
+  }>;
+  lines: Array<{
+    order_item_id: string;
+    item_kind: "pizza" | "sale_product";
+    name: string;
+    quantity: number;
+    cart_line_key: string | null;
+    notes: string | null;
+    consumptions: Array<{
+      source_name: string;
+      source_kind: "inventory_item" | "preparation";
+      source_id: string;
+      quantity_base: number;
+      base_unit: StockUnit;
+      origin_label: string;
+      purchase_item_id: string | null;
+      production_batch_id: string | null;
+      purchased_at: string | null;
+      purchase_expiration_date: string | null;
+      elaborated_at: string | null;
+      production_expiration_date: string | null;
+      origin_stock_before: number;
+      origin_consumption: number;
+      origin_stock_after: number;
+    }>;
+  }>;
+};
+
+export type PosInventoryConsumptionPreviewState = {
+  status: "success" | "error";
+  message: string;
+  preview?: PosInventoryConsumptionPreview;
+};
+
 export type ConservationProfileActionState = FormActionState & {
   profile?: {
     id: string;
@@ -1783,6 +1840,105 @@ async function expandComboItemsForPos(
   }
 
   return { expandedItems, snapshots };
+}
+
+function parsePreviewStockUnit(value: unknown): StockUnit {
+  return value === "g" || value === "kg" || value === "ml" || value === "l" || value === "unit" ? value : "unit";
+}
+
+function parsePosInventoryConsumptionPreview(value: unknown): PosInventoryConsumptionPreview | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const status = raw.status === "insufficient" ? "insufficient" : raw.status === "ok" ? "ok" : null;
+  if (!status) return null;
+  const shortages = Array.isArray(raw.shortages) ? raw.shortages as PosStockShortage[] : [];
+  const consolidated = (Array.isArray(raw.consolidated) ? raw.consolidated : []).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.source_id !== "string" || typeof item.source_name !== "string") return [];
+    return [{
+      source_kind: item.source_kind === "preparation" ? "preparation" as const : "inventory_item" as const,
+      source_id: item.source_id,
+      source_name: item.source_name,
+      unit: parsePreviewStockUnit(item.unit),
+      stock_before: Number(item.stock_before ?? 0),
+      consumption_quantity: Number(item.consumption_quantity ?? 0),
+      stock_after: Number(item.stock_after ?? 0),
+      origins: (Array.isArray(item.origins) ? item.origins : []).flatMap((origin) => {
+        if (!origin || typeof origin !== "object") return [];
+        const source = origin as Record<string, unknown>;
+        return [{
+          origin_label: String(source.origin_label ?? "Origen sin registro"),
+          purchase_item_id: typeof source.purchase_item_id === "string" ? source.purchase_item_id : null,
+          production_batch_id: typeof source.production_batch_id === "string" ? source.production_batch_id : null,
+          purchased_at: typeof source.purchased_at === "string" ? source.purchased_at : null,
+          purchase_expiration_date: typeof source.purchase_expiration_date === "string" ? source.purchase_expiration_date : null,
+          elaborated_at: typeof source.elaborated_at === "string" ? source.elaborated_at : null,
+          production_expiration_date: typeof source.production_expiration_date === "string" ? source.production_expiration_date : null,
+          stock_before: Number(source.stock_before ?? 0),
+          consumption_quantity: Number(source.consumption_quantity ?? 0),
+          stock_after: Number(source.stock_after ?? 0)
+        }];
+      })
+    }];
+  });
+  const lines = (Array.isArray(raw.lines) ? raw.lines : []).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.order_item_id !== "string" || typeof item.name !== "string") return [];
+    return [{
+      order_item_id: item.order_item_id,
+      item_kind: item.item_kind === "sale_product" ? "sale_product" as const : "pizza" as const,
+      name: item.name,
+      quantity: Number(item.quantity ?? 0),
+      cart_line_key: typeof item.cart_line_key === "string" ? item.cart_line_key : null,
+      notes: typeof item.notes === "string" ? item.notes : null,
+      consumptions: (Array.isArray(item.consumptions) ? item.consumptions : []).flatMap((consumption) => {
+        if (!consumption || typeof consumption !== "object") return [];
+        const source = consumption as Record<string, unknown>;
+        return [{
+          source_name: String(source.source_name ?? "Fuente sin registro"),
+          source_kind: source.source_kind === "preparation" ? "preparation" as const : "inventory_item" as const,
+          source_id: String(source.source_id ?? ""),
+          quantity_base: Number(source.quantity_base ?? 0),
+          base_unit: parsePreviewStockUnit(source.base_unit),
+          origin_label: String(source.origin_label ?? "Origen sin registro"),
+          purchase_item_id: typeof source.purchase_item_id === "string" ? source.purchase_item_id : null,
+          production_batch_id: typeof source.production_batch_id === "string" ? source.production_batch_id : null,
+          purchased_at: typeof source.purchased_at === "string" ? source.purchased_at : null,
+          purchase_expiration_date: typeof source.purchase_expiration_date === "string" ? source.purchase_expiration_date : null,
+          elaborated_at: typeof source.elaborated_at === "string" ? source.elaborated_at : null,
+          production_expiration_date: typeof source.production_expiration_date === "string" ? source.production_expiration_date : null,
+          origin_stock_before: Number(source.origin_stock_before ?? 0),
+          origin_consumption: Number(source.origin_consumption ?? 0),
+          origin_stock_after: Number(source.origin_stock_after ?? 0)
+        }];
+      })
+    }];
+  });
+  return { status, shortages, consolidated, lines };
+}
+
+export async function getPosInventoryConsumptionPreview(itemsRaw: string): Promise<PosInventoryConsumptionPreviewState> {
+  const supabase = await createServerSupabaseClient();
+  let items: unknown;
+  try {
+    items = JSON.parse(itemsRaw);
+  } catch {
+    return { status: "error", message: "El pedido no tiene productos válidos." };
+  }
+  if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
+
+  try {
+    const expanded = await expandComboItemsForPos(supabase, items);
+    const { data, error } = await supabase.rpc("get_pos_inventory_consumption_preview", { p_items: expanded.expandedItems });
+    if (error) return { status: "error", message: error.message };
+    const preview = parsePosInventoryConsumptionPreview(data);
+    if (!preview) return { status: "error", message: "La vista previa de inventario no devolvió datos válidos." };
+    return { status: "success", message: preview.status === "insufficient" ? "El pedido tiene faltantes de inventario." : "Consumo de inventario calculado.", preview };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo calcular el consumo de inventario." };
+  }
 }
 
 export async function moveMenuPizzaItem(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

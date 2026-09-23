@@ -1,12 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, Pencil, Plus, ReceiptText, Repeat2, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
-import { createPosOrder, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { createPosOrder, getPosInventoryConsumptionPreview, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -409,6 +409,10 @@ export function PosOrderWorkspace({
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [stockNotice, setStockNotice] = useState("");
   const [stockShortageModalOpen, setStockShortageModalOpen] = useState(false);
+  const [inventoryPreviewOpen, setInventoryPreviewOpen] = useState(false);
+  const [inventoryPreviewLoading, setInventoryPreviewLoading] = useState(false);
+  const [inventoryPreviewError, setInventoryPreviewError] = useState("");
+  const [inventoryPreview, setInventoryPreview] = useState<PosInventoryConsumptionPreview | null>(null);
   const [baseLineKey, setBaseLineKey] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const cashSubmitLockRef = useRef(false);
@@ -1094,6 +1098,21 @@ export function PosOrderWorkspace({
       scope_label: addition.scope_label ?? null
     }))
   }));
+
+  async function openInventoryPreview() {
+    if (payload.length === 0) return;
+    setInventoryPreviewOpen(true);
+    setInventoryPreviewLoading(true);
+    setInventoryPreviewError("");
+    setInventoryPreview(null);
+    const result = await getPosInventoryConsumptionPreview(JSON.stringify(payload));
+    setInventoryPreviewLoading(false);
+    if (result.status === "error" || !result.preview) {
+      setInventoryPreviewError(result.message);
+      return;
+    }
+    setInventoryPreview(result.preview);
+  }
   const baseLine = baseLineKey ? cart.find((line) => line.key === baseLineKey && line.kind === "pizza") ?? null : null;
   const baseLineSize = baseLine ? pizzaPriceById.get(baseLine.id) ?? null : null;
   const baseLineDefault = baseLine ? defaultBaseForLine(baseLine) : null;
@@ -1467,6 +1486,9 @@ export function PosOrderWorkspace({
             </button>
             <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice} />
           </div>
+          <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">
+            <PackageSearch size={16} /> Ver consumo de inventario
+          </button>
         </aside>
       </form>
 
@@ -1483,6 +1505,15 @@ export function PosOrderWorkspace({
           onOpenProduction={() => window.open("/panel/produccion", "_blank", "noopener,noreferrer")}
           onOpenPurchases={() => window.open("/panel/compras", "_blank", "noopener,noreferrer")}
           shortages={state.stockShortages}
+        />
+      ) : null}
+
+      {inventoryPreviewOpen ? (
+        <InventoryConsumptionPreviewModal
+          error={inventoryPreviewError}
+          loading={inventoryPreviewLoading}
+          onClose={() => setInventoryPreviewOpen(false)}
+          preview={inventoryPreview}
         />
       ) : null}
 
@@ -2359,6 +2390,115 @@ function ProductViewSettingsModal({
       </section>
     </div>
   );
+}
+
+function previewDate(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("es-CO", { dateStyle: "short" }).format(date);
+}
+
+function InventoryConsumptionPreviewModal({
+  error,
+  loading,
+  onClose,
+  preview
+}: {
+  error: string;
+  loading: boolean;
+  onClose: () => void;
+  preview: PosInventoryConsumptionPreview | null;
+}) {
+  const [view, setView] = useState<"consolidated" | "detailed">("consolidated");
+  const [openOrigins, setOpenOrigins] = useState<string[]>([]);
+  const affectedCount = preview?.consolidated.length ?? 0;
+  const plannedCount = preview?.lines.reduce((sum, line) => sum + line.consumptions.length, 0) ?? 0;
+  const shortages = preview?.shortages ?? [];
+  const lineGroups = useMemo(() => {
+    const groups = new Map<string, PosInventoryConsumptionPreview["lines"]>();
+    for (const line of preview?.lines ?? []) {
+      const key = line.notes?.startsWith("COMBO ") ? line.notes : "Pedido actual";
+      groups.set(key, [...(groups.get(key) ?? []), line]);
+    }
+    return [...groups.entries()];
+  }, [preview?.lines]);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-label="Vista previa de consumo" aria-modal="true" className="modal-panel pos-inventory-preview-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header">
+          <div>
+            <strong>Vista previa de inventario</strong>
+            <span>Este cálculo es informativo. El inventario no será modificado hasta confirmar el pedido.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="pos-inventory-preview-body">
+          {loading ? <p className="form-status">Calculando consumos y orígenes previstos…</p> : null}
+          {error ? <p className="form-status error">{error}</p> : null}
+          {preview?.status === "insufficient" ? (
+            <section className="pos-inventory-preview-alert" role="alert">
+              <strong>Este pedido no puede completarse con el inventario actual.</strong>
+              <span>Los faltantes coinciden con la validación que bloquearía la confirmación.</span>
+            </section>
+          ) : null}
+          {preview ? (
+            <>
+              <div className="pos-inventory-preview-stats">
+                <span>Productos/ingredientes afectados <strong>{affectedCount}</strong></span>
+                <span>Consumos previstos <strong>{plannedCount}</strong></span>
+                <span>Alertas de stock <strong>{shortages.length}</strong></span>
+              </div>
+              <div className="pos-inventory-preview-tabs" role="tablist" aria-label="Vista de auditoría">
+                <button aria-selected={view === "consolidated"} className={view === "consolidated" ? "active" : ""} onClick={() => setView("consolidated")} role="tab" type="button">Consolidado</button>
+                <button aria-selected={view === "detailed"} className={view === "detailed" ? "active" : ""} onClick={() => setView("detailed")} role="tab" type="button">Desglosado</button>
+              </div>
+              {view === "consolidated" ? (
+                <div className="pos-inventory-preview-table-wrap">
+                  {preview.status === "insufficient" ? <PreviewShortages shortages={shortages} /> : (
+                    <table className="pos-inventory-preview-table">
+                      <thead><tr><th>Producto / ingrediente</th><th>Stock actual</th><th>Consumirá</th><th>Quedará</th><th /></tr></thead>
+                      <tbody>{preview.consolidated.map((item) => {
+                        const key = `${item.source_kind}:${item.source_id}`;
+                        const expanded = openOrigins.includes(key);
+                        return <Fragment key={key}>
+                          <tr><td><strong>{item.source_name}</strong><small>{item.source_kind === "preparation" ? "Preparación producida" : "Inventario"}</small></td><td>{formatStockQuantity(item.stock_before, item.unit)}</td><td>{formatStockQuantity(item.consumption_quantity, item.unit)}</td><td>{formatStockQuantity(item.stock_after, item.unit)}</td><td><button className="ghost-button compact-button" onClick={() => setOpenOrigins((current) => expanded ? current.filter((id) => id !== key) : [...current, key])} type="button">{expanded ? "Ocultar origen" : "Ver origen"}</button></td></tr>
+                          {expanded ? <tr className="pos-inventory-preview-origins"><td colSpan={5}>{item.origins.map((origin, index) => <OriginPreview key={`${origin.origin_label}:${index}`} origin={origin} unit={item.unit} />)}</td></tr> : null}
+                        </Fragment>;
+                      })}</tbody>
+                    </table>
+                  )}
+                </div>
+              ) : (
+                <div className="pos-inventory-preview-lines">
+                  {preview.status === "insufficient" ? <PreviewShortages shortages={shortages} /> : lineGroups.map(([groupName, lines]) => (
+                    <section className="pos-inventory-preview-line-group" key={groupName}>
+                      <h3>{groupName === "Pedido actual" ? "Pedido actual" : groupName.replace(/^COMBO\s+/, "Combo: ")}</h3>
+                      {lines.map((line, lineIndex) => <article className="pos-inventory-preview-line" key={line.order_item_id}>
+                        <header><span>{line.item_kind === "pizza" ? `Pizza ${lineIndex + 1}` : "Producto"}</span><strong>{line.quantity}× {line.name}</strong></header>
+                        <div>{line.consumptions.map((consumption, consumptionIndex) => <div className="pos-inventory-preview-consumption" key={`${consumption.source_id}:${consumptionIndex}`}><span><strong>{consumption.source_name}</strong><small>{formatStockQuantity(consumption.quantity_base, consumption.base_unit)} · {consumption.origin_label}</small></span><span>{formatStockQuantity(consumption.origin_stock_before, consumption.base_unit)} → {formatStockQuantity(consumption.origin_stock_after, consumption.base_unit)}</span></div>)}</div>
+                      </article>)}
+                    </section>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
+        <footer className="modal-footer"><button className="secondary-button" onClick={onClose} type="button">Cerrar</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function PreviewShortages({ shortages }: { shortages: PosStockShortage[] }) {
+  return <div className="pos-inventory-preview-shortages">{shortages.map((shortage) => <article key={`${shortage.source_kind}:${shortage.source_id}`}><strong>{shortage.source_name}</strong><span>Stock actual: {formatStockQuantity(shortage.available_quantity, shortage.unit)}</span><span>Pedido requiere: {formatStockQuantity(shortage.requested_quantity, shortage.unit)}</span><b>Faltan: {formatStockQuantity(shortage.missing_quantity, shortage.unit)}</b></article>)}</div>;
+}
+
+function OriginPreview({ origin, unit }: { origin: PosInventoryConsumptionPreview["consolidated"][number]["origins"][number]; unit: StockUnit }) {
+  const dates = [origin.purchased_at ? `Compra: ${previewDate(origin.purchased_at)}` : null, origin.elaborated_at ? `Elaboración: ${previewDate(origin.elaborated_at)}` : null, origin.purchase_expiration_date || origin.production_expiration_date ? `Vence: ${previewDate(origin.purchase_expiration_date ?? origin.production_expiration_date)}` : null].filter(Boolean);
+  return <div className="pos-inventory-preview-origin"><strong>{origin.origin_label}</strong><span>{dates.join(" · ")}</span><span>Saldo: {formatStockQuantity(origin.stock_before, unit)} · Consumirá: {formatStockQuantity(origin.consumption_quantity, unit)} · Quedará: {formatStockQuantity(origin.stock_after, unit)}</span></div>;
 }
 
 function SubmitOrderButton({ disabled }: { disabled: boolean }) {
