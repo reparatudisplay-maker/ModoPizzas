@@ -20,6 +20,34 @@ export type FormActionState = {
   message: string;
 };
 
+export type PosOrderTestDeletionPreview = {
+  order_id: string;
+  order_code: string;
+  consumptions: Array<{
+    allocation_id: string;
+    consumption_id: string;
+    order_item_id: string | null;
+    order_item_addition_id: string | null;
+    item_name: string;
+    item_kind: "pizza" | "sale_product" | null;
+    quantity_base: number;
+    base_unit: StockUnit;
+    cost_cop: number;
+    source_kind: "inventory_item" | "preparation";
+    source_name: string;
+    purchase_item_id: string | null;
+    production_batch_id: string | null;
+    origin_label: string;
+    combo_name: string | null;
+  }>;
+};
+
+export type PosOrderTestDeletionPreviewState = {
+  status: "success" | "error";
+  message: string;
+  preview?: PosOrderTestDeletionPreview;
+};
+
 export type ConservationProfileActionState = FormActionState & {
   profile?: {
     id: string;
@@ -133,13 +161,15 @@ type FlavorIngredientInput = {
 };
 
 type PosComboCartChoice = {
+  variant_id?: string;
+  applied_variant_id?: string;
+  applied_variant_name?: string;
   group_id: string;
   option_id: string;
   kind: "pizza" | "sale_product";
   id: string;
   name: string;
   unit_price_cop: number;
-  supplement_cop: number;
   line_key?: string;
 };
 
@@ -213,6 +243,10 @@ function upperText(value: string | null) {
 function getStockUnit(formData: FormData, key = "unit") {
   const value = getString(formData, key);
   return ["g", "kg", "ml", "l", "unit"].includes(value) ? value : "unit";
+}
+
+function getStockUnitFromValue(value: unknown): StockUnit {
+  return value === "g" || value === "kg" || value === "ml" || value === "l" || value === "unit" ? value : "unit";
 }
 
 function getInventoryItemKind(formData: FormData, key = "item_kind") {
@@ -1332,10 +1366,18 @@ type ComboGroupInput = {
     id?: string | null;
     pizza_flavor_id?: string | null;
     inventory_item_id?: string | null;
-    supplement_cop?: number;
     is_active?: boolean;
     sort_order?: number;
   }>;
+};
+
+type ComboVariantInput = {
+  id?: string | null;
+  name?: string;
+  sale_price_cop?: number;
+  sort_order?: number;
+  is_active?: boolean;
+  groups?: ComboGroupInput[];
 };
 
 function parseComboGroups(rawValue: string) {
@@ -1356,11 +1398,27 @@ function parseComboGroups(rawValue: string) {
             id: option.id || null,
             pizza_flavor_id: option.pizza_flavor_id || null,
             inventory_item_id: option.inventory_item_id || null,
-            supplement_cop: Math.max(0, Math.round(Number(option.supplement_cop ?? 0))),
             is_active: option.is_active !== false,
             sort_order: Number.isFinite(Number(option.sort_order)) ? Number(option.sort_order) : optionIndex
           }))
         : []
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function parseComboVariants(rawValue: string) {
+  try {
+    const parsed = JSON.parse(rawValue) as ComboVariantInput[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((variant, variantIndex) => ({
+      id: variant.id || null,
+      name: upperText(String(variant.name ?? `GRUPO ${variantIndex + 1}`).trim()),
+      sale_price_cop: Math.max(0, Math.round(Number(variant.sale_price_cop ?? 0))),
+      sort_order: Number.isFinite(Number(variant.sort_order)) ? Number(variant.sort_order) : variantIndex,
+      is_active: variant.is_active !== false,
+      groups: parseComboGroups(JSON.stringify(variant.groups ?? []))
     }));
   } catch {
     return [];
@@ -1377,20 +1435,22 @@ export async function saveComboConfig(_previousState: FormActionState, formData:
   const id = getString(formData, "id");
   const name = upperText(getString(formData, "name"));
   const description = upperText(getOptionalString(formData, "description"));
-  const salePrice = getDecimal(formData, "sale_price_cop", 0);
   const sortOrder = getInteger(formData, "sort_order", 0);
   const isActive = getBoolean(formData, "is_active");
-  const groups = parseComboGroups(getString(formData, "groups_payload"));
+  const variants = parseComboVariants(getString(formData, "variants_payload"));
   const imageFile = getFormFile(formData, "image");
 
   if (!name) return { status: "error", message: "Ingresa el nombre del combo." };
-  if (salePrice <= 0) return { status: "error", message: "Ingresa el precio de venta del combo." };
-  if (groups.length === 0) return { status: "error", message: "Configura al menos un grupo del combo." };
-  for (const group of groups) {
-    if (!group.name) return { status: "error", message: "Cada grupo debe tener nombre." };
-    if (group.group_kind === "pizza" && !group.pizza_size_id) return { status: "error", message: `Selecciona el tamano para ${group.name}.` };
-    if (!group.allow_all_flavors && group.options.length < group.quantity_to_choose) return { status: "error", message: `${group.name} no tiene suficientes opciones.` };
-    if (group.group_kind === "sale_product" && group.options.length < group.quantity_to_choose) return { status: "error", message: `${group.name} no tiene suficientes productos.` };
+  if (variants.length === 0) return { status: "error", message: "Configura al menos un grupo de precio." };
+  if (variants.some((variant) => !variant.name || variant.sale_price_cop <= 0)) return { status: "error", message: "Cada grupo de sabores necesita nombre y precio fijo." };
+  for (const variant of variants) {
+    if (variant.groups.length === 0) return { status: "error", message: `${variant.name} no tiene componentes.` };
+    for (const group of variant.groups) {
+      if (!group.name) return { status: "error", message: "Cada componente debe tener nombre." };
+      if (group.group_kind === "pizza" && !group.pizza_size_id) return { status: "error", message: `Selecciona el tamano para ${group.name}.` };
+      if (!group.allow_all_flavors && group.options.length < group.quantity_to_choose) return { status: "error", message: `${group.name} no tiene suficientes opciones.` };
+      if (group.group_kind === "sale_product" && group.options.length < group.quantity_to_choose) return { status: "error", message: `${group.name} no tiene suficientes productos.` };
+    }
   }
 
   try {
@@ -1412,66 +1472,32 @@ export async function saveComboConfig(_previousState: FormActionState, formData:
     const comboResult = id
       ? await supabase
           .from("combo_configs")
-          .update({ sku, name, description, image_url: imageUrl, sale_price_cop: salePrice, is_active: isActive, sort_order: sortOrder })
+          .update({ sku, name, description, image_url: imageUrl, sale_price_cop: Math.min(...variants.map((variant) => variant.sale_price_cop)), is_active: isActive, sort_order: sortOrder })
           .eq("id", id)
           .select("id")
           .single()
       : await supabase
           .from("combo_configs")
-          .insert({ sku, name, description, image_url: imageUrl, sale_price_cop: salePrice, is_active: isActive, sort_order: sortOrder, created_by: user.id })
+          .insert({ sku, name, description, image_url: imageUrl, sale_price_cop: Math.min(...variants.map((variant) => variant.sale_price_cop)), is_active: isActive, sort_order: sortOrder, created_by: user.id })
           .select("id")
           .single();
     if (comboResult.error) return { status: "error", message: comboResult.error.message };
     const comboId = comboResult.data.id;
 
-    const { data: savedGroups, error: savedGroupsError } = await supabase.from("combo_groups").select("id").eq("combo_id", comboId);
-    if (savedGroupsError) return { status: "error", message: savedGroupsError.message };
-    const keepGroupIds = new Set(groups.map((group) => group.id).filter(Boolean) as string[]);
-    const removeGroupIds = (savedGroups ?? []).map((group) => group.id).filter((groupId) => !keepGroupIds.has(groupId));
-    if (removeGroupIds.length > 0) {
-      const { error } = await supabase.from("combo_groups").delete().in("id", removeGroupIds);
-      if (error) return { status: "error", message: error.message };
-    }
-
-    for (const group of groups) {
-      const groupPayload = {
-        combo_id: comboId,
-        name: group.name,
-        group_kind: group.group_kind,
-        quantity_to_choose: group.quantity_to_choose,
-        is_required: group.is_required,
-        pizza_size_id: group.pizza_size_id,
-        allow_all_flavors: group.allow_all_flavors,
-        sort_order: group.sort_order
-      };
-      const groupResult = group.id
-        ? await supabase.from("combo_groups").update(groupPayload).eq("id", group.id).select("id").single()
-        : await supabase.from("combo_groups").insert(groupPayload).select("id").single();
-      if (groupResult.error) return { status: "error", message: groupResult.error.message };
-      const groupId = groupResult.data.id;
-
-      const { data: savedOptions, error: optionsLoadError } = await supabase.from("combo_group_options").select("id").eq("group_id", groupId);
-      if (optionsLoadError) return { status: "error", message: optionsLoadError.message };
-      const keepOptionIds = new Set(group.options.map((option) => option.id).filter(Boolean) as string[]);
-      const removeOptionIds = (savedOptions ?? []).map((option) => option.id).filter((optionId) => !keepOptionIds.has(optionId));
-      if (removeOptionIds.length > 0) {
-        const { error } = await supabase.from("combo_group_options").delete().in("id", removeOptionIds);
-        if (error) return { status: "error", message: error.message };
-      }
-
-      for (const option of group.options) {
-        const optionPayload = {
-          group_id: groupId,
-          pizza_flavor_id: group.group_kind === "pizza" ? option.pizza_flavor_id : null,
-          inventory_item_id: group.group_kind === "sale_product" ? option.inventory_item_id : null,
-          supplement_cop: option.supplement_cop,
-          is_active: option.is_active,
-          sort_order: option.sort_order
-        };
-        const result = option.id
-          ? await supabase.from("combo_group_options").update(optionPayload).eq("id", option.id)
-          : await supabase.from("combo_group_options").insert(optionPayload);
-        if (result.error) return { status: "error", message: result.error.message };
+    const { error: deleteGroupsError } = await supabase.from("combo_groups").delete().eq("combo_id", comboId);
+    if (deleteGroupsError) return { status: "error", message: deleteGroupsError.message };
+    const { error: deleteVariantsError } = await supabase.from("combo_variants").delete().eq("combo_config_id", comboId);
+    if (deleteVariantsError) return { status: "error", message: deleteVariantsError.message };
+    for (const variant of variants) {
+      const variantResult = await supabase.from("combo_variants").insert({ combo_config_id: comboId, name: variant.name, sale_price_cop: variant.sale_price_cop, sort_order: variant.sort_order, is_active: variant.is_active }).select("id").single();
+      if (variantResult.error) return { status: "error", message: variantResult.error.message };
+      for (const group of variant.groups) {
+        const groupResult = await supabase.from("combo_groups").insert({ combo_id: comboId, variant_id: variantResult.data.id, name: group.name, group_kind: group.group_kind, quantity_to_choose: group.quantity_to_choose, is_required: group.is_required, pizza_size_id: group.pizza_size_id, allow_all_flavors: group.allow_all_flavors, sort_order: group.sort_order }).select("id").single();
+        if (groupResult.error) return { status: "error", message: groupResult.error.message };
+        if (group.options.length > 0) {
+          const optionResult = await supabase.from("combo_group_options").insert(group.options.map((option) => ({ group_id: groupResult.data.id, pizza_flavor_id: group.group_kind === "pizza" ? option.pizza_flavor_id : null, inventory_item_id: group.group_kind === "sale_product" ? option.inventory_item_id : null, is_active: option.is_active, sort_order: option.sort_order })));
+          if (optionResult.error) return { status: "error", message: optionResult.error.message };
+        }
       }
     }
 
@@ -1529,7 +1555,6 @@ async function expandComboItemsForPos(
     name: string;
     quantity: number;
     unit_price_cop: number;
-    supplement_cop: number;
     normal_price_cop: number;
     savings_cop: number;
     choices: PosComboCartChoice[];
@@ -1546,22 +1571,33 @@ async function expandComboItemsForPos(
 
     const { data: combo, error: comboError } = await supabase
       .from("combo_configs")
-      .select("id, sku, name, sale_price_cop, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, combo_group_options(id, pizza_flavor_id, inventory_item_id, supplement_cop, is_active))")
+      .select("id, sku, name, sale_price_cop, is_active, combo_variants(id, name, sale_price_cop, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active)))")
       .eq("id", item.combo_config_id)
       .maybeSingle();
     if (comboError) throw new Error(comboError.message);
     if (!combo || !combo.is_active) throw new Error("El combo ya no esta activo.");
 
-    const groups = Array.isArray(combo.combo_groups) ? combo.combo_groups : [];
+    const allGroups = (combo.combo_variants ?? []).flatMap((candidate) =>
+      (candidate.combo_groups ?? []).map((group) => ({ candidate, group }))
+    );
+    const selectedPizzaSources = choices.flatMap((choice) => {
+      const found = allGroups.find(({ group }) => group.id === choice.group_id && group.group_kind === "pizza");
+      return found ? [found] : [];
+    });
+    const variant = selectedPizzaSources.sort((left, right) => Number(right.candidate.sale_price_cop ?? 0) - Number(left.candidate.sale_price_cop ?? 0))[0]?.candidate;
+    if (!variant) throw new Error("Selecciona las pizzas del combo.");
+    const groups = Array.isArray(variant.combo_groups) ? variant.combo_groups : [];
     const expectedChoices: PosComboCartChoice[] = [];
     for (const group of groups) {
-      const selected = choices.filter((choice) => choice.group_id === group.id);
+      const selected = group.group_kind === "pizza"
+        ? choices.filter((choice) => allGroups.some(({ group: sourceGroup }) => sourceGroup.id === choice.group_id && sourceGroup.group_kind === "pizza" && Number(sourceGroup.sort_order ?? 0) === Number(group.sort_order ?? 0)))
+        : choices.filter((choice) => choice.group_id === group.id);
       if (group.is_required && selected.length !== Number(group.quantity_to_choose ?? 1)) throw new Error(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
       if (selected.length > Number(group.quantity_to_choose ?? 1)) throw new Error(`Hay demasiadas opciones en ${group.name}.`);
       for (const choice of selected) {
-        const option = (group.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
+        const sourceGroup = allGroups.find(({ group: candidate }) => candidate.id === choice.group_id)?.group ?? group;
+        const option = (sourceGroup.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
         if (!option) throw new Error(`Una opcion de ${group.name} ya no esta disponible.`);
-        const supplement = Math.max(0, Math.round(Number(option.supplement_cop ?? 0)));
         if (group.group_kind === "pizza") {
           const { data: price, error: priceError } = await supabase
             .from("pizza_price_configs")
@@ -1572,7 +1608,8 @@ async function expandComboItemsForPos(
             .maybeSingle();
           if (priceError) throw new Error(priceError.message);
           if (!price) throw new Error(`La pizza seleccionada en ${group.name} no tiene precio activo.`);
-          expectedChoices.push({ ...choice, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), supplement_cop: supplement, line_key: choice.line_key });
+          const sourceVariant = allGroups.find(({ group: candidate }) => candidate.id === sourceGroup.id)?.candidate;
+          expectedChoices.push({ ...choice, variant_id: sourceVariant?.id ?? variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), line_key: choice.line_key });
         } else {
           const { data: product, error: productError } = await supabase
             .from("pos_sale_product_references")
@@ -1581,28 +1618,29 @@ async function expandComboItemsForPos(
             .maybeSingle();
           if (productError) throw new Error(productError.message);
           if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
-          expectedChoices.push({ ...choice, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0), supplement_cop: supplement, line_key: choice.line_key });
+          expectedChoices.push({ ...choice, variant_id: variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0), line_key: choice.line_key });
         }
       }
     }
 
-    const normalPriceCop = expectedChoices.reduce((sum, choice) => sum + choice.unit_price_cop + choice.supplement_cop, 0);
-    const comboUnitPrice = Number(combo.sale_price_cop ?? 0) + expectedChoices.reduce((sum, choice) => sum + choice.supplement_cop, 0);
+    const normalPriceCop = expectedChoices.reduce((sum, choice) => sum + choice.unit_price_cop, 0);
+    const comboUnitPrice = Number(variant.sale_price_cop ?? combo.sale_price_cop ?? 0);
+    const comboSavingsCop = Math.max(0, normalPriceCop - comboUnitPrice);
     const comboQuantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
     if (components.some((component) => Math.max(1, Math.round(Number(component.quantity ?? 1))) !== comboQuantity)) {
       throw new Error("Los componentes del combo deben conservar la misma cantidad.");
     }
-    const weightedTotal = expectedChoices.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop + choice.supplement_cop), 0);
+    const weightedTotal = expectedChoices.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop), 0);
     let allocated = 0;
     const expectedByLineKey = new Map<string, number>();
     expectedChoices.forEach((choice, index) => {
       const isLast = index === expectedChoices.length - 1;
-      const netPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, choice.unit_price_cop + choice.supplement_cop)) / Math.max(1, weightedTotal));
+      const netPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, choice.unit_price_cop)) / Math.max(1, weightedTotal));
       allocated += netPrice;
       if (choice.line_key) expectedByLineKey.set(choice.line_key, netPrice);
     });
 
-    for (const component of components) {
+    for (const [componentIndex, component] of components.entries()) {
       const expected = expectedChoices.find((choice) => choice.line_key === component.line_key) ?? expectedChoices.find((choice) => choice.kind === component.kind && choice.id === component.id);
       if (!expected) throw new Error("Los componentes del combo no coinciden con la configuracion vigente.");
       if (component.kind !== expected.kind || component.id !== expected.id) throw new Error("Los componentes del combo no coinciden con la configuracion vigente.");
@@ -1611,6 +1649,12 @@ async function expandComboItemsForPos(
       const componentNotes = typeof componentRecord.notes === "string" && componentRecord.notes ? componentRecord.notes : `COMBO ${combo.sku}`;
       expandedItems.push({
         ...componentRecord,
+        combo_config_id: combo.id,
+        combo_variant_id: variant.id,
+        combo_normal_price_cop: normalPriceCop,
+        combo_unit_price_cop: comboUnitPrice,
+        combo_savings_cop: comboSavingsCop,
+        combo_is_primary: componentIndex === 0,
         unit_price_cop: netPrice,
         notes: componentNotes
       });
@@ -1623,9 +1667,8 @@ async function expandComboItemsForPos(
       name: combo.name,
       quantity: comboQuantity,
       unit_price_cop: comboUnitPrice,
-      supplement_cop: expectedChoices.reduce((sum, choice) => sum + choice.supplement_cop, 0),
       normal_price_cop: normalPriceCop,
-      savings_cop: Math.max(0, normalPriceCop - comboUnitPrice),
+      savings_cop: comboSavingsCop,
       choices: expectedChoices.map((choice) => ({
         ...choice,
         combo_instance_id: item.combo_instance_id,
@@ -1647,16 +1690,17 @@ async function expandComboItemsForPos(
 
     const { data: combo, error: comboError } = await supabase
       .from("combo_configs")
-      .select("id, sku, name, sale_price_cop, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, combo_group_options(id, pizza_flavor_id, inventory_item_id, supplement_cop, is_active))")
+      .select("id, sku, name, sale_price_cop, is_active, combo_variants(id, sale_price_cop, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active)))")
       .eq("id", item.id)
       .maybeSingle();
     if (comboError) throw new Error(comboError.message);
     if (!combo || !combo.is_active) throw new Error("El combo ya no esta activo.");
 
-    const groups = Array.isArray(combo.combo_groups) ? combo.combo_groups : [];
+    const variant = (combo.combo_variants ?? []).find((candidate: { id: string }) => candidate.id === choices[0]?.variant_id) ?? combo.combo_variants?.[0];
+    if (!variant) throw new Error("Selecciona un grupo de precio del combo.");
+    const groups = Array.isArray(variant.combo_groups) ? variant.combo_groups : [];
     const expandedForCombo: Array<Record<string, unknown>> = [];
     const snapshotChoices: PosComboCartChoice[] = [];
-    let supplementCop = 0;
     let normalPriceCop = 0;
 
     for (const group of groups) {
@@ -1667,7 +1711,6 @@ async function expandComboItemsForPos(
       for (const choice of selected) {
         const option = (group.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
         if (!option) throw new Error(`Una opcion de ${group.name} ya no esta disponible.`);
-        const supplement = Math.max(0, Math.round(Number(option.supplement_cop ?? 0)));
         if (group.group_kind === "pizza") {
           const { data: price, error: priceError } = await supabase
             .from("pizza_price_configs")
@@ -1678,9 +1721,8 @@ async function expandComboItemsForPos(
             .maybeSingle();
           if (priceError) throw new Error(priceError.message);
           if (!price) throw new Error(`La pizza seleccionada en ${group.name} no tiene precio activo.`);
-          normalPriceCop += Number(price.sale_price_cop ?? 0) + supplement;
-          supplementCop += supplement;
-          snapshotChoices.push({ ...choice, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), supplement_cop: supplement });
+          normalPriceCop += Number(price.sale_price_cop ?? 0);
+          snapshotChoices.push({ ...choice, variant_id: variant.id, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0) });
           expandedForCombo.push({
             line_key: `${item.line_key ?? crypto.randomUUID()}:${group.id}:${choice.option_id}`,
             kind: "pizza",
@@ -1701,9 +1743,8 @@ async function expandComboItemsForPos(
             .maybeSingle();
           if (productError) throw new Error(productError.message);
           if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
-          normalPriceCop += Number(product.sale_price_cop ?? 0) + supplement;
-          supplementCop += supplement;
-          snapshotChoices.push({ ...choice, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0), supplement_cop: supplement });
+          normalPriceCop += Number(product.sale_price_cop ?? 0);
+          snapshotChoices.push({ ...choice, variant_id: variant.id, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0) });
           expandedForCombo.push({
             line_key: `${item.line_key ?? crypto.randomUUID()}:${group.id}:${choice.option_id}`,
             kind: "sale_product",
@@ -1717,7 +1758,7 @@ async function expandComboItemsForPos(
       }
     }
 
-    const comboUnitPrice = Number(combo.sale_price_cop ?? 0) + supplementCop;
+    const comboUnitPrice = Number(variant.sale_price_cop ?? combo.sale_price_cop ?? 0);
     const weightedTotal = expandedForCombo.reduce((sum, expanded, index) => sum + Math.max(1, snapshotChoices[index]?.unit_price_cop ?? 0), 0);
     let allocated = 0;
     const pricedItems = expandedForCombo.map((expanded, index) => {
@@ -1735,7 +1776,6 @@ async function expandComboItemsForPos(
       name: combo.name,
       quantity,
       unit_price_cop: comboUnitPrice,
-      supplement_cop: supplementCop,
       normal_price_cop: normalPriceCop,
       savings_cop: Math.max(0, normalPriceCop - comboUnitPrice),
       choices: snapshotChoices
@@ -2856,7 +2896,6 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
         name: snapshot.name,
         quantity: snapshot.quantity,
         unit_price_cop: snapshot.unit_price_cop,
-        supplement_cop: snapshot.supplement_cop,
         normal_price_cop: snapshot.normal_price_cop,
         savings_cop: snapshot.savings_cop,
         choices: snapshot.choices
@@ -2887,6 +2926,85 @@ export async function cancelPosOrder(_previousState: FormActionState, formData: 
   if (error) return { status: "error", message: error.message };
   revalidateInventory();
   return { status: "success", message: "Pedido cancelado correctamente." };
+}
+
+export async function getPosOrderTestDeletionPreview(orderId: string): Promise<PosOrderTestDeletionPreviewState> {
+  if (!orderId) return { status: "error", message: "Pedido no válido." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_pos_order_test_deletion_preview", { p_order_id: orderId });
+  if (error || !data) return { status: "error", message: error?.message ?? "No se pudieron cargar los consumos reales del pedido." };
+
+  const raw = data as Record<string, unknown>;
+  const rawConsumptions = Array.isArray(raw.consumptions) ? raw.consumptions : [];
+  const consumptions = rawConsumptions
+    .map((entry) => entry as Record<string, unknown>)
+    .filter((entry) => typeof entry.allocation_id === "string")
+    .map((entry) => {
+      const itemKind: "pizza" | "sale_product" | null = entry.item_kind === "pizza" || entry.item_kind === "sale_product" ? entry.item_kind : null;
+      const sourceKind: "inventory_item" | "preparation" = entry.source_kind === "preparation" ? "preparation" : "inventory_item";
+      return {
+        allocation_id: String(entry.allocation_id),
+        consumption_id: String(entry.consumption_id ?? ""),
+        order_item_id: typeof entry.order_item_id === "string" ? entry.order_item_id : null,
+        order_item_addition_id: typeof entry.order_item_addition_id === "string" ? entry.order_item_addition_id : null,
+        item_name: String(entry.item_name ?? "Consumo sin línea"),
+        item_kind: itemKind,
+        quantity_base: Number(entry.quantity_base ?? 0),
+        base_unit: getStockUnitFromValue(entry.base_unit),
+        cost_cop: Number(entry.cost_cop ?? 0),
+        source_kind: sourceKind,
+        source_name: String(entry.source_name ?? "Fuente sin registro"),
+        purchase_item_id: typeof entry.purchase_item_id === "string" ? entry.purchase_item_id : null,
+        production_batch_id: typeof entry.production_batch_id === "string" ? entry.production_batch_id : null,
+        origin_label: String(entry.origin_label ?? "Origen sin registro"),
+        combo_name: typeof entry.combo_name === "string" ? entry.combo_name : null
+      };
+    });
+
+  return {
+    status: "success",
+    message: "Consumos reales cargados.",
+    preview: {
+      order_id: String(raw.order_id ?? orderId),
+      order_code: String(raw.order_code ?? ""),
+      consumptions
+    }
+  };
+}
+
+export async function deletePosOrderForTesting(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const orderId = getString(formData, "order_id");
+  if (!orderId) return { status: "error", message: "Pedido no válido." };
+
+  let reintegratedAllocationIds: string[] = [];
+  try {
+    const parsed = JSON.parse(getString(formData, "reintegrated_allocation_ids") || "[]");
+    if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+      return { status: "error", message: "La selección de consumos no es válida." };
+    }
+    reintegratedAllocationIds = [...new Set(parsed)];
+  } catch {
+    return { status: "error", message: "La selección de consumos no es válida." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("delete_pos_order_for_testing", {
+    p_order_id: orderId,
+    p_reintegrated_allocation_ids: reintegratedAllocationIds,
+    p_reason_code: getOptionalString(formData, "loss_reason"),
+    p_reason_detail: getOptionalString(formData, "loss_reason_detail")
+  });
+  if (error) return { status: "error", message: error.message };
+
+  const result = (data ?? {}) as { reintegrated_allocation_count?: number; retained_allocation_count?: number };
+  revalidateInventory();
+  revalidatePath("/panel/caja");
+  revalidatePath("/panel/cocina");
+  revalidatePath("/panel/reportes");
+  return {
+    status: "success",
+    message: `Pedido eliminado. ${Number(result.reintegrated_allocation_count ?? 0)} consumo(s) reintegrado(s) y ${Number(result.retained_allocation_count ?? 0)} conservado(s) como salida.`
+  };
 }
 
 export async function updatePosOrderOperationalDate(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

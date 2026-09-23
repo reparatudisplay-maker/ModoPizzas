@@ -12,7 +12,7 @@ export type ComboPizzaFlavorOption = {
   id: string;
   name: string;
   image_src: string | null;
-  prices: Array<{ price_config_id: string; size_id: string; sale_price_cop: number }>;
+  prices: Array<{ price_config_id: string; size_id: string; sale_price_cop: number; estimated_cost_cop: number | null }>;
 };
 
 export type ComboSaleProductOption = {
@@ -24,6 +24,7 @@ export type ComboSaleProductOption = {
   sale_price_cop: number;
   sale_is_enabled: boolean;
   stock_base: number;
+  unit_cost_cop: number | null;
 };
 
 export type ComboSizeOption = {
@@ -44,10 +45,22 @@ export type ComboGroupDraft = {
     id?: string | null;
     pizza_flavor_id: string | null;
     inventory_item_id: string | null;
-    supplement_cop: number;
     is_active: boolean;
     sort_order: number;
   }>;
+};
+
+export type ComboVariantDraft = {
+  id?: string | null;
+  name: string;
+  sale_price_cop: number;
+  sort_order: number;
+  is_active: boolean;
+  groups: ComboGroupDraft[];
+  normal_price_min_cop?: number | null;
+  normal_price_max_cop?: number | null;
+  estimated_cost_min_cop?: number | null;
+  estimated_cost_max_cop?: number | null;
 };
 
 export type ComboPriceRecord = {
@@ -62,7 +75,9 @@ export type ComboPriceRecord = {
   sort_order: number;
   normal_price_cop: number;
   estimated_cost_cop: number | null;
-  groups: ComboGroupDraft[];
+  estimated_cost_min_cop: number | null;
+  estimated_cost_max_cop: number | null;
+  variants: ComboVariantDraft[];
 };
 
 const initialState: FormActionState = { status: "idle", message: "" };
@@ -93,14 +108,75 @@ function emptyProductGroup(sortOrder: number): ComboGroupDraft {
   };
 }
 
-function comboMetrics(combo: Pick<ComboPriceRecord, "normal_price_cop" | "sale_price_cop" | "estimated_cost_cop">) {
+function emptyVariant(sortOrder: number): ComboVariantDraft {
+  return {
+    name: `GRUPO ${sortOrder + 1}`,
+    sale_price_cop: 0,
+    sort_order: sortOrder,
+    is_active: true,
+    groups: [emptyPizzaGroup(0), emptyProductGroup(1)]
+  };
+}
+
+function comboMetrics(combo: Pick<ComboPriceRecord, "normal_price_cop" | "sale_price_cop" | "estimated_cost_min_cop" | "estimated_cost_max_cop">) {
   const normal = Number(combo.normal_price_cop ?? 0);
   const price = Number(combo.sale_price_cop ?? 0);
-  const cost = combo.estimated_cost_cop && combo.estimated_cost_cop > 0 ? combo.estimated_cost_cop : null;
+  const maxCost = combo.estimated_cost_max_cop && combo.estimated_cost_max_cop > 0 ? combo.estimated_cost_max_cop : null;
   return {
     savings: Math.max(0, normal - price),
-    profit: cost === null || price <= 0 ? null : price - cost,
-    margin: cost === null || price <= 0 ? null : ((price - cost) / price) * 100
+    profit: maxCost === null || price <= 0 ? null : price - maxCost,
+    margin: maxCost === null || price <= 0 ? null : ((price - maxCost) / price) * 100
+  };
+}
+
+function formatCostRange(min: number | null, max: number | null) {
+  if (min === null || max === null || max <= 0) return "Sin costo disponible";
+  return min === max ? formatCop(max) : `${formatCop(min)} - ${formatCop(max)}`;
+}
+
+function formatMoneyRange(min: number | null | undefined, max: number | null | undefined) {
+  if (min === null || min === undefined || max === null || max === undefined || min <= 0 || max <= 0) return "Sin calculo";
+  return min === max ? formatCop(min) : `${formatCop(min)} - ${formatCop(max)}`;
+}
+
+function formatSavings(normalMin: number | null, normalMax: number | null, price: number) {
+  if (normalMin === null || normalMax === null) return "Sin calculo";
+  const min = Math.max(0, normalMin - price);
+  const max = Math.max(0, normalMax - price);
+  if (max <= 0) return "Sin ahorro";
+  if (min <= 0) return `Hasta ${formatCop(max)}`;
+  return formatMoneyRange(min, max);
+}
+
+function variantContent(variant: ComboVariantDraft, flavors: ComboPizzaFlavorOption[], products: ComboSaleProductOption[]) {
+  const pizzaNames = new Set<string>();
+  const productNames = new Set<string>();
+  for (const group of variant.groups) {
+    for (const option of group.options.filter((item) => item.is_active)) {
+      if (group.group_kind === "pizza") {
+        const name = flavors.find((flavor) => flavor.id === option.pizza_flavor_id)?.name;
+        if (name) pizzaNames.add(name);
+      } else {
+        const name = products.find((product) => product.id === option.inventory_item_id)?.name;
+        if (name) productNames.add(name);
+      }
+    }
+  }
+  return `${variant.name}: ${[...pizzaNames].join(" / ")}${productNames.size ? ` + ${[...productNames].join(" / ")}` : ""}`;
+}
+
+function variantMetrics(variant: ComboVariantDraft) {
+  const normalMin = variant.normal_price_min_cop ?? null;
+  const normalMax = variant.normal_price_max_cop ?? null;
+  const costMin = variant.estimated_cost_min_cop ?? null;
+  const costMax = variant.estimated_cost_max_cop ?? null;
+  const price = Number(variant.sale_price_cop ?? 0);
+  return {
+    normal: formatMoneyRange(normalMin, normalMax),
+    savings: formatSavings(normalMin, normalMax, price),
+    cost: formatCostRange(costMin, costMax),
+    profit: costMax === null || price <= 0 ? "Sin utilidad" : formatMoneyRange(price - costMax, price - costMin!),
+    margin: costMax === null || price <= 0 ? "Sin margen" : formatPercent(((price - costMax) / price) * 100)
   };
 }
 
@@ -162,19 +238,18 @@ export function ComboPricesWorkspace({
             </thead>
             <tbody>
               {filtered.map((combo) => {
-                const metrics = comboMetrics(combo);
                 return (
                   <tr key={combo.id}>
                     <td><ComboThumb alt={combo.name} src={combo.image_src} /></td>
                     <td>{combo.sku}</td>
                     <td><strong>{combo.name}</strong><br /><small>{combo.description ?? "Sin descripcion"}</small></td>
-                    <td>{combo.groups.map((group) => `${group.quantity_to_choose} ${group.name}`).join(" + ") || "Sin grupos"}</td>
-                    <td>{combo.normal_price_cop > 0 ? formatCop(combo.normal_price_cop) : "Sin calculo"}</td>
-                    <td>{formatCop(combo.sale_price_cop)}</td>
-                    <td>{metrics.savings > 0 ? formatCop(metrics.savings) : "$0"}</td>
-                    <td>{combo.estimated_cost_cop ? formatCop(combo.estimated_cost_cop, { decimals: !Number.isInteger(combo.estimated_cost_cop) }) : "Sin costo"}</td>
-                    <td>{metrics.profit === null ? "Sin utilidad" : formatCop(metrics.profit, { decimals: !Number.isInteger(metrics.profit) })}</td>
-                    <td>{formatPercent(metrics.margin)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantContent(variant, pizzaFlavors, saleProducts)}</div>) || "Sin grupos"}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).normal}</div>)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{formatCop(variant.sale_price_cop)}</div>)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).savings}</div>)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).cost}</div>)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).profit}</div>)}</td>
+                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).margin}</div>)}</td>
                     <td><span className={`stock-pill ${combo.is_active ? "ok" : "muted"}`}>{combo.is_active ? "Activo" : "Inactivo"}</span></td>
                     <td>
                       <span className="row-actions center-actions">
@@ -220,12 +295,12 @@ function ComboModal({
   const [state, action] = useActionState(saveComboConfig, initialState);
   const [name, setName] = useState(combo?.name ?? "");
   const [description, setDescription] = useState(combo?.description ?? "");
-  const [salePrice, setSalePrice] = useState(combo?.sale_price_cop ? String(Math.round(combo.sale_price_cop)) : "");
   const [sortOrder, setSortOrder] = useState(String(combo?.sort_order ?? 0));
   const [isActive, setIsActive] = useState(combo?.is_active ?? true);
-  const [groups, setGroups] = useState<ComboGroupDraft[]>(combo?.groups.length ? combo.groups : [emptyPizzaGroup(0), emptyProductGroup(1)]);
+  const [variants, setVariants] = useState<ComboVariantDraft[]>(combo?.variants.length ? combo.variants : [emptyVariant(0), emptyVariant(1), emptyVariant(2)]);
   const [preview, setPreview] = useState(combo?.image_src ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
+  const costRange = estimateCostRange(variants, pizzaFlavors, saleProducts);
   const draft: ComboPriceRecord = {
     id: combo?.id ?? "",
     sku: combo?.sku ?? "AUTO",
@@ -233,12 +308,14 @@ function ComboModal({
     description,
     image_src: preview,
     image_url: combo?.image_url ?? null,
-    sale_price_cop: Number(salePrice || 0),
+    sale_price_cop: variants.length ? Math.min(...variants.map((variant) => variant.sale_price_cop)) : 0,
     is_active: isActive,
     sort_order: Number(sortOrder || 0),
-    normal_price_cop: combo?.normal_price_cop ?? estimateNormalPrice(groups, pizzaFlavors, saleProducts),
+    normal_price_cop: combo?.normal_price_cop ?? estimateNormalPrice(variants, pizzaFlavors, saleProducts),
     estimated_cost_cop: combo?.estimated_cost_cop ?? null,
-    groups
+    estimated_cost_min_cop: combo?.estimated_cost_min_cop ?? costRange.min,
+    estimated_cost_max_cop: combo?.estimated_cost_max_cop ?? costRange.max,
+    variants
   };
   const metrics = comboMetrics(draft);
 
@@ -250,14 +327,22 @@ function ComboModal({
     return undefined;
   }, [onClose, state.status]);
 
-  function patchGroup(index: number, update: Partial<ComboGroupDraft>) {
-    setGroups((current) => current.map((group, currentIndex) => currentIndex === index ? { ...group, ...update } : group));
+  function patchVariant(index: number, update: Partial<ComboVariantDraft>) {
+    setVariants((current) => current.map((variant, currentIndex) => currentIndex === index ? { ...variant, ...update } : variant));
   }
 
-  function toggleOption(groupIndex: number, sourceId: string, kind: "pizza" | "sale_product") {
-    setGroups((current) =>
-      current.map((group, index) => {
-        if (index !== groupIndex) return group;
+  function patchGroup(variantIndex: number, groupIndex: number, update: Partial<ComboGroupDraft>) {
+    setVariants((current) => current.map((variant, index) => index === variantIndex ? { ...variant, groups: variant.groups.map((group, position) => position === groupIndex ? { ...group, ...update } : group) } : variant));
+  }
+
+  function toggleOption(variantIndex: number, groupIndex: number, sourceId: string, kind: "pizza" | "sale_product") {
+    setVariants((current) =>
+      current.map((variant, variantPosition) => {
+        if (variantPosition !== variantIndex) return variant;
+        return {
+          ...variant,
+          groups: variant.groups.map((group, index) => {
+            if (index !== groupIndex) return group;
         const exists = group.options.some((option) => (kind === "pizza" ? option.pizza_flavor_id : option.inventory_item_id) === sourceId);
         const options = exists
           ? group.options.filter((option) => (kind === "pizza" ? option.pizza_flavor_id : option.inventory_item_id) !== sourceId)
@@ -266,26 +351,12 @@ function ComboModal({
               {
                 pizza_flavor_id: kind === "pizza" ? sourceId : null,
                 inventory_item_id: kind === "sale_product" ? sourceId : null,
-                supplement_cop: 0,
                 is_active: true,
                 sort_order: group.options.length
               }
             ];
-        return { ...group, options };
-      })
-    );
-  }
-
-  function updateSupplement(groupIndex: number, sourceId: string, value: string) {
-    const supplement = Math.max(0, Math.round(Number(value || 0)));
-    setGroups((current) =>
-      current.map((group, index) => {
-        if (index !== groupIndex) return group;
-        return {
-          ...group,
-          options: group.options.map((option) =>
-            (option.pizza_flavor_id ?? option.inventory_item_id) === sourceId ? { ...option, supplement_cop: supplement } : option
-          )
+            return { ...group, options };
+          })
         };
       })
     );
@@ -300,11 +371,10 @@ function ComboModal({
         </header>
         <form action={action} className="compact-card">
           <input name="id" type="hidden" value={combo?.id ?? ""} />
-          <input name="groups_payload" type="hidden" value={JSON.stringify(groups)} />
+          <input name="variants_payload" type="hidden" value={JSON.stringify(variants)} />
           <div className="combo-editor-grid">
             <div className="field"><label>Nombre</label><input name="name" onChange={(event) => setName(uppercaseMasterName(event.target.value))} required value={name} /></div>
-            <div className="field"><label>Precio combo</label><input inputMode="numeric" name="sale_price_cop" onChange={(event) => setSalePrice(event.target.value.replace(/\D/g, ""))} required value={salePrice} /></div>
-            <div className="field"><label>Orden</label><input inputMode="numeric" name="sort_order" onChange={(event) => setSortOrder(event.target.value.replace(/\D/g, ""))} value={sortOrder} /></div>
+            <div className="field"><label>Orden de listado</label><input inputMode="numeric" name="sort_order" onChange={(event) => setSortOrder(event.target.value.replace(/\D/g, ""))} value={sortOrder} /></div>
             <label className="check-option"><input checked={isActive} name="is_active" onChange={(event) => setIsActive(event.target.checked)} type="checkbox" /> <span>Activo</span></label>
             <div className="field full"><label>Descripcion comercial</label><textarea name="description" onChange={(event) => setDescription(uppercaseMasterName(event.target.value))} value={description} /></div>
             <div className="field full">
@@ -325,67 +395,78 @@ function ComboModal({
             </div>
           </div>
 
-          <div className="section-title-row">
-            <h3>Grupos del combo</h3>
-            <span className="row-actions">
-              <button className="ghost-button" onClick={() => setGroups((current) => [...current, emptyPizzaGroup(current.length)])} type="button">+ Pizza</button>
-              <button className="ghost-button" onClick={() => setGroups((current) => [...current, emptyProductGroup(current.length)])} type="button">+ Producto</button>
-            </span>
+          <div className="section-title-row combo-groups-title-row">
+            <div>
+              <h3>Grupos de precio</h3>
+              <p>Cada grupo define un precio fijo y los ítems que incluye el combo.</p>
+            </div>
+            <button className="ghost-button" onClick={() => setVariants((current) => [...current, emptyVariant(current.length)])} type="button">+ Agregar grupo de precio</button>
           </div>
           <div className="combo-groups-editor">
-            {groups.map((group, groupIndex) => {
-              const selectedIds = new Set(group.options.map((option) => option.pizza_flavor_id ?? option.inventory_item_id).filter(Boolean) as string[]);
-              const options = group.group_kind === "pizza" ? pizzaFlavors : saleProducts;
+            {variants.map((variant, variantIndex) => {
               return (
-                <article className="compact-card" key={`${group.id ?? "group"}-${groupIndex}`}>
-                  <div className="combo-group-header">
-                    <input onChange={(event) => patchGroup(groupIndex, { name: uppercaseMasterName(event.target.value) })} value={group.name} />
-                    <select
-                      onChange={(event) => patchGroup(groupIndex, { group_kind: event.target.value as ComboGroupDraft["group_kind"], options: [], pizza_size_id: event.target.value === "pizza" ? group.pizza_size_id : null, allow_all_flavors: false })}
-                      value={group.group_kind}
-                    >
-                      <option value="pizza">Pizza</option>
-                      <option value="sale_product">Producto para venta</option>
-                    </select>
-                    <input inputMode="numeric" onChange={(event) => patchGroup(groupIndex, { quantity_to_choose: Math.max(1, Number(event.target.value || 1)) })} title="Cantidad a elegir" value={group.quantity_to_choose} />
-                    <button className="danger-button" onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))} title="Eliminar grupo" type="button"><Trash2 size={16} /></button>
-                  </div>
-                  {group.group_kind === "pizza" ? (
-                    <div className="field">
-                      <label>Tamano obligatorio</label>
-                      <select onChange={(event) => patchGroup(groupIndex, { pizza_size_id: event.target.value })} value={group.pizza_size_id ?? ""}>
-                        <option value="">Seleccionar</option>
-                        {sizes.map((size) => <option key={size.id} value={size.id}>{size.name}</option>)}
-                      </select>
+                <article className="combo-variant-editor" key={`${variant.id ?? "variant"}-${variantIndex}`}>
+                  <header className="combo-variant-header">
+                    <div className="combo-variant-heading">
+                      <span>Grupo de precio {variantIndex + 1}</span>
+                      <input aria-label="Nombre del grupo de sabores" onChange={(event) => patchVariant(variantIndex, { name: uppercaseMasterName(event.target.value) })} value={variant.name} />
                     </div>
-                  ) : null}
-                  <div className="combo-options-grid">
-                    {options.map((option) => {
-                      const optionId = option.id;
-                      const selected = selectedIds.has(optionId);
-                      const supplement = group.options.find((item) => (item.pizza_flavor_id ?? item.inventory_item_id) === optionId)?.supplement_cop ?? 0;
-                      return (
-                        <label className={`check-option combo-option-card ${selected ? "selected" : ""}`} key={optionId}>
-                          <input checked={selected} onChange={() => toggleOption(groupIndex, optionId, group.group_kind)} type="checkbox" />
+                    <label className="combo-fixed-price">Precio fijo <input inputMode="numeric" onChange={(event) => patchVariant(variantIndex, { sale_price_cop: Math.max(0, Math.round(Number(event.target.value.replace(/\D/g, "") || 0))) })} value={variant.sale_price_cop || ""} /></label>
+                    <button className="icon-button danger-button" onClick={() => setVariants((current) => current.filter((_, index) => index !== variantIndex))} title="Eliminar grupo de precio" type="button"><Trash2 size={16} /></button>
+                  </header>
+                  <div className="combo-variant-context">
+                    <strong>Ítems incluidos en este grupo</strong>
+                    <span>Configura cada pizza y producto dentro de este precio fijo.</span>
+                  </div>
+                  <div className="combo-component-stack">
+                  {variant.groups.map((group, groupIndex) => {
+                    const selectedIds = new Set(group.options.map((option) => option.pizza_flavor_id ?? option.inventory_item_id).filter(Boolean) as string[]);
+                    const options = group.group_kind === "pizza" ? pizzaFlavors : saleProducts;
+                    const componentLabel = group.group_kind === "pizza" ? `Pizza ${groupIndex + 1}` : group.name || "Bebida incluida";
+                    return <section className="combo-component-group" key={`${group.id ?? "group"}-${groupIndex}`}>
+                      <header className="combo-component-header">
+                        <div>
+                          <span>Ítem {groupIndex + 1}</span>
+                          <strong>{componentLabel}</strong>
+                        </div>
+                        <div className="combo-component-controls">
+                          <label className="combo-component-name">Nombre<input aria-label="Nombre del componente" onChange={(event) => patchGroup(variantIndex, groupIndex, { name: uppercaseMasterName(event.target.value) })} value={group.name} /></label>
+                          <label>Tipo<select onChange={(event) => patchGroup(variantIndex, groupIndex, { group_kind: event.target.value as ComboGroupDraft["group_kind"], options: [], pizza_size_id: event.target.value === "pizza" ? group.pizza_size_id : null, allow_all_flavors: false })} value={group.group_kind}>
+                            <option value="pizza">Pizza</option>
+                            <option value="sale_product">Producto para venta</option>
+                          </select></label>
+                          <label>Cantidad<input inputMode="numeric" onChange={(event) => patchGroup(variantIndex, groupIndex, { quantity_to_choose: Math.max(1, Number(event.target.value || 1)) })} value={group.quantity_to_choose} /></label>
+                          <button className="icon-button danger-button" onClick={() => patchVariant(variantIndex, { groups: variant.groups.filter((_, index) => index !== groupIndex) })} title={`Eliminar ${componentLabel}`} type="button"><Trash2 size={16} /></button>
+                        </div>
+                      </header>
+                      <div className="combo-component-body">
+                        {group.group_kind === "pizza" ? <div className="field combo-size-field"><label>Tamaño obligatorio</label><select onChange={(event) => patchGroup(variantIndex, groupIndex, { pizza_size_id: event.target.value })} value={group.pizza_size_id ?? ""}><option value="">Seleccionar</option>{sizes.map((size) => <option key={size.id} value={size.id}>{size.name}</option>)}</select></div> : null}
+                        <div className="combo-options-heading"><strong>Opciones disponibles</strong><span>{selectedIds.size} seleccionada{selectedIds.size === 1 ? "" : "s"}</span></div>
+                        <div className="combo-options-grid">{options.map((option) => {
+                        const selected = selectedIds.has(option.id);
+                        return <label className={`check-option combo-option-card ${selected ? "selected" : ""}`} key={option.id}>
+                          <input checked={selected} onChange={() => toggleOption(variantIndex, groupIndex, option.id, group.group_kind)} type="checkbox" />
                           <ComboThumb alt={option.name} src={option.image_src} />
                           <span><strong>{option.name}</strong><small>{"presentation" in option ? option.presentation : ""}</small></span>
-                          {selected ? <input inputMode="numeric" onChange={(event) => updateSupplement(groupIndex, optionId, event.target.value)} placeholder="Suplemento" value={supplement ? String(supplement) : ""} /> : null}
-                        </label>
-                      );
-                    })}
+                        </label>;
+                        })}</div>
+                      </div>
+                    </section>;
+                  })}
                   </div>
+                  <div className="combo-group-add-actions"><span>Agregar ítem a este grupo</span><div><button className="ghost-button" onClick={() => patchVariant(variantIndex, { groups: [...variant.groups, emptyPizzaGroup(variant.groups.length)] })} type="button">+ Pizza</button><button className="ghost-button" onClick={() => patchVariant(variantIndex, { groups: [...variant.groups, emptyProductGroup(variant.groups.length)] })} type="button">+ Producto</button></div></div>
                 </article>
               );
             })}
           </div>
 
-          <div className="compact-card">
+          <div className="compact-card combo-profitability-summary">
             <h3>Rentabilidad estimada</h3>
             <div className="summary-grid">
               <span>Precio normal <strong>{draft.normal_price_cop > 0 ? formatCop(draft.normal_price_cop) : "Sin calculo"}</strong></span>
               <span>Precio combo <strong>{formatCop(draft.sale_price_cop)}</strong></span>
               <span>Ahorro <strong>{formatCop(metrics.savings)}</strong></span>
-              <span>Costo <strong>{draft.estimated_cost_cop ? formatCop(draft.estimated_cost_cop) : "Sin costo"}</strong></span>
+              <span>Costo estimado <strong>{formatCostRange(draft.estimated_cost_min_cop, draft.estimated_cost_max_cop)}</strong></span>
               <span>Utilidad <strong>{metrics.profit === null ? "Sin utilidad" : formatCop(metrics.profit)}</strong></span>
               <span>Margen <strong>{formatPercent(metrics.margin)}</strong></span>
             </div>
@@ -402,19 +483,34 @@ function ComboModal({
   );
 }
 
-function estimateNormalPrice(groups: ComboGroupDraft[], flavors: ComboPizzaFlavorOption[], products: ComboSaleProductOption[]) {
-  let total = 0;
-  for (const group of groups) {
-    const optionPrices = group.options.map((option) => {
-      if (group.group_kind === "pizza") {
-        const flavor = flavors.find((item) => item.id === option.pizza_flavor_id);
-        return flavor?.prices.find((price) => price.size_id === group.pizza_size_id)?.sale_price_cop ?? 0;
-      }
-      return products.find((item) => item.id === option.inventory_item_id)?.sale_price_cop ?? 0;
-    }).filter((price) => price > 0);
-    if (optionPrices.length > 0) total += Math.min(...optionPrices) * group.quantity_to_choose;
-  }
-  return total;
+function estimateNormalPrice(variants: ComboVariantDraft[], flavors: ComboPizzaFlavorOption[], products: ComboSaleProductOption[]) {
+  return Math.min(...variants.map((variant) => variant.groups.reduce((total, group) => {
+    const optionPrices = group.options.map((option) => group.group_kind === "pizza"
+      ? flavors.find((item) => item.id === option.pizza_flavor_id)?.prices.find((price) => price.size_id === group.pizza_size_id)?.sale_price_cop ?? 0
+      : products.find((item) => item.id === option.inventory_item_id)?.sale_price_cop ?? 0
+    ).filter((price) => price > 0);
+    return total + (optionPrices.length > 0 ? Math.min(...optionPrices) * group.quantity_to_choose : 0);
+  }, 0)));
+}
+
+function estimateCostRange(variants: ComboVariantDraft[], flavors: ComboPizzaFlavorOption[], products: ComboSaleProductOption[]) {
+  const ranges = variants.map((variant) => {
+    let min = 0;
+    let max = 0;
+    let known = true;
+    for (const group of variant.groups) {
+      const costs = group.options.map((option) => group.group_kind === "pizza"
+        ? flavors.find((item) => item.id === option.pizza_flavor_id)?.prices.find((price) => price.size_id === group.pizza_size_id)?.estimated_cost_cop ?? null
+        : products.find((item) => item.id === option.inventory_item_id)?.unit_cost_cop ?? null
+      ).filter((value): value is number => value !== null && value > 0);
+      if (costs.length === 0) { known = false; continue; }
+      min += Math.min(...costs) * group.quantity_to_choose;
+      max += Math.max(...costs) * group.quantity_to_choose;
+    }
+    return known ? { min, max } : null;
+  }).filter((value): value is { min: number; max: number } => value !== null);
+  if (ranges.length === 0) return { min: null, max: null };
+  return { min: Math.min(...ranges.map((value) => value.min)), max: Math.max(...ranges.map((value) => value.max)) };
 }
 
 function SubmitComboButton() {

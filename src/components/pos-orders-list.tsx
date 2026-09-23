@@ -3,8 +3,16 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Ban, CalendarClock, Eye, Search, Settings, WalletCards, X } from "lucide-react";
-import { cancelPosOrder, updatePosOrderOperationalDate, updatePosOrderPaymentMethod, type FormActionState } from "@/app/admin/actions";
+import { Ban, CalendarClock, CheckSquare, Eye, Search, Settings, Trash2, WalletCards, X } from "lucide-react";
+import {
+  cancelPosOrder,
+  deletePosOrderForTesting,
+  getPosOrderTestDeletionPreview,
+  updatePosOrderOperationalDate,
+  updatePosOrderPaymentMethod,
+  type FormActionState,
+  type PosOrderTestDeletionPreview
+} from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -126,7 +134,7 @@ function operationalDateParts(value: string) {
   return { date: `${part("year")}-${part("month")}-${part("day")}`, time: `${part("hour")}:${part("minute")}` };
 }
 
-export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }: { canEditOperationalDate: boolean; canEditPayment: boolean; orders: PosOrderListRow[] }) {
+export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEditPayment, orders }: { canDeleteForTests: boolean; canEditOperationalDate: boolean; canEditPayment: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [columns, setColumns] = useState<OrderColumn[]>(defaultOrderColumns);
@@ -135,6 +143,10 @@ export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }
   const [detailOrder, setDetailOrder] = useState<PosOrderListRow | null>(null);
   const [dateOrder, setDateOrder] = useState<PosOrderListRow | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<PosOrderListRow | null>(null);
+  const [deletionOrder, setDeletionOrder] = useState<PosOrderListRow | null>(null);
+  const [deletionPreview, setDeletionPreview] = useState<PosOrderTestDeletionPreview | null>(null);
+  const [deletionPreviewError, setDeletionPreviewError] = useState("");
+  const [deletionPreviewLoading, setDeletionPreviewLoading] = useState(false);
   const normalizedQuery = normalizeMasterText(query);
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -165,6 +177,26 @@ export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }
       if (current.length <= 1) return current;
       return current.filter((item) => item !== column);
     });
+
+  const openDeletion = async (order: PosOrderListRow) => {
+    setDeletionOrder(order);
+    setDeletionPreview(null);
+    setDeletionPreviewError("");
+    setDeletionPreviewLoading(true);
+    const result = await getPosOrderTestDeletionPreview(order.id);
+    setDeletionPreviewLoading(false);
+    if (result.status === "error" || !result.preview) {
+      setDeletionPreviewError(result.message);
+      return;
+    }
+    setDeletionPreview(result.preview);
+  };
+
+  const closeDeletion = () => {
+    setDeletionOrder(null);
+    setDeletionPreview(null);
+    setDeletionPreviewError("");
+  };
 
   return (
     <section className="form-panel">
@@ -231,6 +263,7 @@ export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }
                   {canEditOperationalDate ? <button className="icon-button" onClick={() => setDateOrder(order)} title={`Editar fecha de ${order.code}`} type="button"><CalendarClock size={16} /></button> : null}
                   {canEditPayment && order.status !== "cancelled" ? <button className="icon-button" onClick={() => setPaymentOrder(order)} title={`Editar pago de ${order.code}`} type="button"><WalletCards size={16} /></button> : null}
                   {order.status !== "cancelled" && order.status !== "delivered" ? <CancelOrderButton id={order.id} /> : null}
+                  {canDeleteForTests && order.status !== "cancelled" ? <button className="icon-button danger-button" onClick={() => void openDeletion(order)} title={`Eliminar ${order.code} en modo pruebas`} type="button"><Trash2 size={16} /></button> : null}
                 </td> : null}
               </tr>
             ))}
@@ -263,6 +296,7 @@ export function PosOrdersList({ canEditOperationalDate, canEditPayment, orders }
       {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
       {dateOrder ? <OperationalDateModal order={dateOrder} onClose={() => setDateOrder(null)} /> : null}
       {paymentOrder ? <PaymentMethodModal order={paymentOrder} onClose={() => setPaymentOrder(null)} /> : null}
+      {deletionOrder ? <DeletePosOrderTestModal key={`${deletionOrder.id}:${deletionPreview ? "loaded" : "loading"}`} error={deletionPreviewError} loading={deletionPreviewLoading} order={deletionOrder} preview={deletionPreview} onClose={closeDeletion} /> : null}
     </section>
   );
 }
@@ -298,6 +332,183 @@ function CancelOrderButton({ id }: { id: string }) {
 function SubmitCancelButton() {
   const { pending } = useFormStatus();
   return <button className="ghost-button danger-button compact-confirm-button" disabled={pending} type="submit">{pending ? "Cancelando..." : "Confirmar"}</button>;
+}
+
+function DeletePosOrderTestModal({
+  error,
+  loading,
+  onClose,
+  order,
+  preview
+}: {
+  error: string;
+  loading: boolean;
+  onClose: () => void;
+  order: PosOrderListRow;
+  preview: PosOrderTestDeletionPreview | null;
+}) {
+  const [state, action] = useActionState(deletePosOrderForTesting, initialState);
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => preview?.consumptions.map((allocation) => allocation.allocation_id) ?? []);
+  const [reason, setReason] = useState("system_test");
+  const [reasonDetail, setReasonDetail] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const router = useRouter();
+  const allocations = useMemo(() => preview?.consumptions ?? [], [preview]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const retainedCount = allocations.length - selectedIds.length;
+  const groupedAllocations = useMemo(() => {
+    const groups = new Map<string, typeof allocations>();
+    for (const allocation of allocations) {
+      const key = `${allocation.combo_name ?? ""}::${allocation.order_item_id ?? allocation.item_name}`;
+      const group = groups.get(key) ?? [];
+      group.push(allocation);
+      groups.set(key, group);
+    }
+    return [...groups.values()];
+  }, [allocations]);
+
+  useEffect(() => {
+    if (state.status !== "success") return;
+    const timeout = window.setTimeout(() => {
+      onClose();
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [onClose, router, state.status]);
+
+  const setSelection = (allocationId: string, selected: boolean) => {
+    setConfirming(false);
+    setLocalError("");
+    setSelectedIds((current) => selected ? [...new Set([...current, allocationId])] : current.filter((id) => id !== allocationId));
+  };
+
+  const selectAll = () => {
+    setSelectedIds(allocations.map((allocation) => allocation.allocation_id));
+    setConfirming(false);
+    setLocalError("");
+  };
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setConfirming(false);
+    setLocalError("");
+  };
+  const openFinalConfirmation = () => {
+    if (retainedCount > 0 && (!reason || (reason === "other" && !reasonDetail.trim()))) {
+      setLocalError(reason === "other" ? "Describe el otro motivo de la salida de inventario." : "Selecciona el motivo de los consumos que permanecerán como salida.");
+      return;
+    }
+    setLocalError("");
+    setConfirming(true);
+  };
+
+  const selectedSummary = selectedIds.length === allocations.length
+    ? "Se reintegrará todo el inventario a sus fuentes originales."
+    : selectedIds.length === 0
+      ? "Los consumos permanecerán descontados como salida de inventario."
+      : "Reintegro parcial: solo volverán los consumos seleccionados.";
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <form action={action} aria-label={`Eliminar pedido ${order.code} en modo pruebas`} aria-modal="true" className="modal-panel order-test-delete-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <input name="order_id" type="hidden" value={order.id} />
+        <input name="reintegrated_allocation_ids" type="hidden" value={JSON.stringify(selectedIds)} />
+        <input name="loss_reason" type="hidden" value={retainedCount > 0 ? reason : ""} />
+        <input name="loss_reason_detail" type="hidden" value={retainedCount > 0 ? reasonDetail : ""} />
+        <header className="modal-header">
+          <div>
+            <strong>Eliminar pedido {order.code}</strong>
+            <span>Función disponible únicamente durante pruebas del sistema.</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+        </header>
+        <div className="order-test-delete-body">
+          <section className="order-test-delete-meta" aria-label="Resumen del pedido">
+            <div><span>Fecha/hora</span><strong>{formatDateTime(order.ordered_at)}</strong></div>
+            <div><span>Usuario</span><strong>{order.created_by_name}</strong></div>
+            <div><span>Tipo</span><strong>{kindLabel(order.kind)}</strong></div>
+            <div><span>Total</span><strong>{formatCop(order.total_cop)}</strong></div>
+            <div><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
+            <div><span>Estado</span><strong>{statusLabel(order.status)}</strong></div>
+          </section>
+
+          <section className="order-test-delete-section" aria-label="Productos del pedido">
+            <h3>Pedido</h3>
+            <div className="order-test-delete-products">{order.items.map((item) => <span key={item.id}>{item.quantity}× {item.product_name_snapshot}</span>)}</div>
+          </section>
+
+          <section className="order-test-delete-section" aria-label="Consumos de inventario">
+            <div className="order-test-delete-section-heading">
+              <div>
+                <h3>Consumos reales de inventario</h3>
+                <p>Se muestran las asignaciones que el pedido ya consumió, sin recalcular recetas.</p>
+              </div>
+              {preview ? <CheckSquare aria-hidden="true" size={19} /> : null}
+            </div>
+            {loading ? <p className="form-status">Cargando consumos reales…</p> : null}
+            {error ? <p className="form-status error">{error}</p> : null}
+            {preview && allocations.length === 0 ? <p className="empty-state">Este pedido no tiene asignaciones de inventario registradas.</p> : null}
+            {preview && allocations.length > 0 ? (
+              <>
+                <div className="inline-actions">
+                  <button className="ghost-button" onClick={selectAll} type="button">Seleccionar todo</button>
+                  <button className="ghost-button" onClick={clearSelection} type="button">Quitar selección</button>
+                </div>
+                <p className="order-test-delete-selection-summary">{selectedSummary}</p>
+                <div className="order-test-delete-consumption-list">
+                  {groupedAllocations.map((group) => (
+                    <section className="order-test-delete-consumption-group" key={group[0].allocation_id}>
+                      {group[0].combo_name ? <small className="order-test-delete-combo">{group[0].combo_name}</small> : null}
+                      <h4>{group[0].item_name}</h4>
+                      {group.map((allocation) => (
+                        <label className={`order-test-delete-consumption ${selectedSet.has(allocation.allocation_id) ? "selected" : ""}`} key={allocation.allocation_id}>
+                          <input checked={selectedSet.has(allocation.allocation_id)} onChange={(event) => setSelection(allocation.allocation_id, event.target.checked)} type="checkbox" />
+                          <span className="order-test-delete-consumption-main"><strong>{allocation.source_name}</strong><small>{formatStockQuantity(allocation.quantity_base, allocation.base_unit)} · {allocation.origin_label}</small></span>
+                          <span className="order-test-delete-consumption-state">{selectedSet.has(allocation.allocation_id) ? "Reintegrar" : "Conservar salida"}</span>
+                        </label>
+                      ))}
+                    </section>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </section>
+
+          {preview && retainedCount > 0 ? (
+            <section className="order-test-delete-section order-test-delete-reason" aria-label="Motivo de la salida">
+              <h3>Motivo de los consumos no reintegrados</h3>
+              <div className="form-grid">
+                <div className="field">
+                  <label>Motivo</label>
+                  <select onChange={(event) => { setReason(event.target.value); setConfirming(false); }} value={reason}>
+                    <option value="loss_total">Pérdida total</option>
+                    <option value="prepared_product">Producto preparado</option>
+                    <option value="damaged_product">Producto dañado</option>
+                    <option value="system_test">Prueba de sistema</option>
+                    <option value="other">Otro</option>
+                  </select>
+                </div>
+                {reason === "other" ? <div className="field"><label>Descripción</label><input onChange={(event) => { setReasonDetail(event.target.value); setConfirming(false); }} value={reasonDetail} /></div> : null}
+              </div>
+            </section>
+          ) : null}
+
+          {confirming ? <section className="order-test-delete-confirmation"><strong>Esta acción eliminará {order.code} del sistema de pruebas.</strong><span>Se reintegrarán {selectedIds.length} consumo(s) y {retainedCount} permanecerán como salida.</span></section> : null}
+          {localError ? <p className="form-status error">{localError}</p> : null}
+          {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+        </div>
+        <footer className="modal-footer">
+          {confirming ? <button className="secondary-button" onClick={() => setConfirming(false)} type="button">Volver</button> : <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>}
+          {confirming ? <DeleteTestOrderSubmitButton disabled={loading || Boolean(error)} /> : <button className="primary-button danger-button" disabled={loading || Boolean(error) || !preview} onClick={openFinalConfirmation} type="button">Eliminar pedido</button>}
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function DeleteTestOrderSubmitButton({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return <button className="primary-button danger-button" disabled={disabled || pending} type="submit">{pending ? "Eliminando..." : "Eliminar definitivamente"}</button>;
 }
 
 function formatDateTime(value: string | null) {

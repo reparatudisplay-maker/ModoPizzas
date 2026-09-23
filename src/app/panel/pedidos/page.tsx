@@ -165,6 +165,7 @@ export default async function PedidosPage() {
     <PanelShell active="pedidos-listado" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Pedidos" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       <PosOrdersList
+        canDeleteForTests={roleNames.includes("gerente") || roleNames.includes("admin_sistema")}
         canEditOperationalDate={roleNames.includes("gerente") || roleNames.includes("admin_sistema")}
         canEditPayment={roleNames.includes("gerente") || roleNames.includes("admin_sistema")}
         orders={orders}

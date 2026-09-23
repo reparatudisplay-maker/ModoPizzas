@@ -3259,6 +3259,194 @@ a {
   color: var(--muted);
 }
 
+.order-test-delete-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(860px, calc(100vw - 24px));
+  max-height: min(900px, calc(100dvh - 24px));
+  overflow: hidden;
+}
+
+.order-test-delete-body {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.order-test-delete-modal .modal-header,
+.order-test-delete-modal .modal-footer {
+  position: relative;
+  z-index: 1;
+  background: var(--panel);
+}
+
+.order-test-delete-modal .modal-footer {
+  border-top: 1px solid var(--border);
+}
+
+.order-test-delete-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--border);
+}
+
+.order-test-delete-meta > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  background: var(--panel);
+}
+
+.order-test-delete-meta span,
+.order-test-delete-section p,
+.order-test-delete-products,
+.order-test-delete-consumption small,
+.order-test-delete-confirmation span {
+  color: var(--muted);
+}
+
+.order-test-delete-section {
+  display: grid;
+  gap: 9px;
+}
+
+.order-test-delete-section h3,
+.order-test-delete-section h4 {
+  margin: 0;
+}
+
+.order-test-delete-section p {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+}
+
+.order-test-delete-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.order-test-delete-products {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.order-test-delete-products span,
+.order-test-delete-combo {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.order-test-delete-selection-summary {
+  border-left: 3px solid var(--accent);
+  margin: 0;
+  padding: 7px 10px;
+  background: var(--surface-muted);
+}
+
+.order-test-delete-consumption-list {
+  display: grid;
+  gap: 10px;
+}
+
+.order-test-delete-consumption-group {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.order-test-delete-consumption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.order-test-delete-consumption.selected {
+  border-color: color-mix(in srgb, var(--success) 52%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--panel));
+}
+
+.order-test-delete-consumption input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.order-test-delete-consumption-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.order-test-delete-consumption-main small {
+  overflow-wrap: anywhere;
+}
+
+.order-test-delete-consumption-state {
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.order-test-delete-consumption.selected .order-test-delete-consumption-state {
+  color: var(--success);
+}
+
+.order-test-delete-reason {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.order-test-delete-confirmation {
+  display: grid;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+  padding: 10px;
+}
+
+@media (max-width: 620px) {
+  .order-test-delete-modal {
+    width: calc(100vw - 12px);
+    max-height: calc(100dvh - 12px);
+  }
+
+  .order-test-delete-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .order-test-delete-consumption {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .order-test-delete-consumption-state {
+    grid-column: 2;
+    text-align: left;
+  }
+}
+
 .production-modal {
   width: min(1040px, 100%);
 }
@@ -4650,15 +4838,30 @@ a {
 }
 
 .pos-combo-cart-group {
+  align-items: start;
   background: color-mix(in srgb, var(--accent) 5%, var(--panel));
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
 }
 
+.pos-combo-cart-content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pos-combo-component-list {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+}
+
 .pos-combo-component-row {
   align-items: center;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   display: flex;
   gap: 6px;
   justify-content: space-between;
+  padding-top: 5px;
 }
 
 .pos-combo-component-row .icon-button {
@@ -4779,6 +4982,12 @@ a {
   align-items: center;
   display: flex;
   gap: 6px;
+}
+
+.pos-combo-cart-actions {
+  align-self: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .pos-qty-controls button {
@@ -6053,6 +6262,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .pos-combo-cart-actions {
+    justify-content: flex-start;
+  }
+
   .pos-catalog-toolbar,
   .pos-cart-header {
     flex-direction: column;
@@ -6156,6 +6369,17 @@ a {
 .xwide-modal {
   max-width: min(1120px, calc(100vw - 28px));
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.xwide-modal > .compact-card {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  scrollbar-gutter: stable;
 }
 
 .combo-editor-grid {
@@ -6170,17 +6394,186 @@ a {
 
 .combo-groups-editor {
   display: grid;
-  gap: 12px;
-  max-height: min(52vh, 560px);
-  overflow-y: auto;
-  padding-right: 4px;
+  gap: 18px;
 }
 
-.combo-group-header {
+.combo-groups-title-row {
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.combo-groups-title-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.combo-variant-editor {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 150px 92px auto;
-  gap: 10px;
+  gap: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+  padding: 16px;
+}
+
+.combo-variant-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(165px, 210px) auto;
+  gap: 12px;
   align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+
+.combo-variant-heading,
+.combo-component-header > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.combo-variant-heading > span,
+.combo-component-header > div:first-child > span,
+.combo-component-controls label,
+.combo-component-name,
+.combo-fixed-price {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.combo-variant-heading input {
+  min-height: 38px;
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+
+.combo-fixed-price {
+  display: grid;
+  gap: 5px;
+  color: var(--accent-strong);
+}
+
+.combo-fixed-price input {
+  min-height: 38px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.combo-variant-context {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.combo-variant-context strong {
+  color: var(--foreground);
+}
+
+.combo-component-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.combo-component-group {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.combo-component-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--foreground) 3%, var(--panel));
+}
+
+.combo-component-header > div:first-child strong {
+  color: var(--foreground);
+  font-size: 1rem;
+}
+
+.combo-component-controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 116px 76px auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.combo-component-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.combo-component-controls input,
+.combo-component-controls select {
+  min-height: 34px;
+  color: var(--foreground);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.combo-component-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.combo-size-field {
+  max-width: 280px;
+}
+
+.combo-options-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.combo-options-heading strong {
+  font-size: 0.9rem;
+}
+
+.combo-options-heading span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.combo-group-add-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.combo-group-add-actions > span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.combo-group-add-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .combo-options-grid {
@@ -6197,12 +6590,35 @@ a {
   display: grid;
   gap: 8px;
   grid-template-columns: auto 52px minmax(0, 1fr);
-  padding: 8px;
+  min-height: 68px;
+  padding: 9px;
 }
 
 .combo-option-card.selected {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.combo-option-card:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.combo-profitability-summary {
+  margin-top: 4px;
+  border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border));
+  background: color-mix(in srgb, var(--success) 4%, var(--panel));
+}
+
+.xwide-modal .form-actions {
+  position: sticky;
+  bottom: -18px;
+  z-index: 2;
+  margin: 2px -18px -18px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
 }
 
 .combo-option-card input[type="text"],
@@ -6215,6 +6631,204 @@ a {
   font-weight: 800;
 }
 
+.pos-combo-card {
+  align-content: start;
+  min-height: 250px;
+}
+
+.pos-combo-card .pos-product-meta {
+  min-height: 42px;
+  white-space: pre-line;
+}
+
+.pos-combo-image-fallback {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  height: 96px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.pos-combo-image-fallback img {
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+}
+
+.pos-combo-image-fallback img:only-child {
+  grid-column: 1 / -1;
+}
+
+.pos-combo-card-cta {
+  align-self: stretch;
+  margin-top: auto;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  color: var(--accent-strong);
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.pos-combo-card:hover .pos-combo-card-cta,
+.pos-combo-card:focus-visible .pos-combo-card-cta {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.pos-combo-wizard-body {
+  align-content: start;
+}
+
+.pos-combo-selection-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.pos-combo-selection-summary > div {
+  display: grid;
+  gap: 3px;
+}
+
+.pos-combo-selection-summary span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pos-combo-selection-summary strong {
+  font-size: 0.96rem;
+}
+
+.pos-combo-selection-summary > .field-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.pos-combo-selection-summary > div:nth-child(2) strong,
+.pos-combo-total-summary strong {
+  color: var(--accent-strong);
+  font-size: 1.08rem;
+}
+
+.pos-pizza-modal .modal-header small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.pos-combo-selection-progress {
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+.pos-combo-flavor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.pos-combo-choice-card {
+  min-height: 212px;
+  padding: 9px;
+  text-align: left;
+}
+
+.pos-combo-choice-card img,
+.pos-combo-choice-card .product-image-fallback {
+  width: 100%;
+  aspect-ratio: 1.42;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.pos-combo-choice-card small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.pos-combo-choice-card strong {
+  margin-top: auto;
+  color: var(--accent-strong);
+}
+
+.pos-combo-choice-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.pos-combo-review-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pos-combo-review-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+
+.pos-combo-review-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.pos-combo-review-row span,
+.pos-combo-total-summary span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.pos-combo-review-row strong {
+  overflow-wrap: anywhere;
+}
+
+.pos-combo-review-row .ghost-button,
+.pos-combo-review-action-placeholder {
+  width: 86px;
+  flex: 0 0 86px;
+}
+
+.pos-combo-total-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.pos-combo-total-summary > div {
+  display: grid;
+  gap: 4px;
+}
+
+.pos-combo-total-summary > div:last-of-type {
+  text-align: right;
+}
+
+.pos-combo-total-summary > .field-hint {
+  grid-column: 1 / -1;
+  margin: 5px 0 0;
+}
+
 .pos-summary-card {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -6225,7 +6839,41 @@ a {
 
 @media (max-width: 760px) {
   .combo-editor-grid,
-  .combo-group-header {
+  .combo-variant-header,
+  .combo-component-controls {
     grid-template-columns: 1fr;
+  }
+
+  .xwide-modal > .compact-card {
+    padding: 14px;
+  }
+
+  .combo-variant-editor,
+  .combo-component-body {
+    padding: 12px;
+  }
+
+  .combo-component-header,
+  .combo-group-add-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .combo-group-add-actions > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pos-combo-selection-summary,
+  .pos-combo-total-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-combo-flavor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pos-combo-choice-card {
+    min-height: 188px;
   }
 }

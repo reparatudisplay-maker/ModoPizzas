@@ -98,7 +98,13 @@ type ComboRow = {
   description: string | null;
   image_url: string | null;
   sale_price_cop: number;
-  combo_groups: Array<{
+  combo_variants: Array<{
+    id: string;
+    name: string;
+    sale_price_cop: number;
+    sort_order: number | null;
+    is_active: boolean;
+    combo_groups: Array<{
     id: string;
     name: string;
     group_kind: "pizza" | "sale_product";
@@ -110,11 +116,12 @@ type ComboRow = {
       id: string;
       pizza_flavor_id: string | null;
       inventory_item_id: string | null;
-      supplement_cop: number;
+      is_active: boolean;
       sort_order: number | null;
       pizza_flavors: { id: string; name: string; image_url: string | null } | null;
       inventory_items: { id: string; name: string; image_url: string | null; sale_price_cop: number | null; sale_is_enabled: boolean | null } | null;
     }>;
+  }>;
   }>;
 };
 
@@ -170,7 +177,7 @@ export default async function NuevoPedidoPage() {
     supabase.rpc("get_pos_sale_product_catalog"),
     supabase
       .from("combo_configs")
-      .select("id, sku, name, description, image_url, sale_price_cop, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, supplement_cop, sort_order, pizza_flavors(id, name, image_url), inventory_items(id, name, image_url, sale_price_cop, sale_is_enabled)))")
+      .select("id, sku, name, description, image_url, sale_price_cop, combo_variants(id, name, sale_price_cop, sort_order, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active, sort_order, pizza_flavors(id, name, image_url), inventory_items(id, name, image_url, sale_price_cop, sale_is_enabled))))")
       .eq("is_active", true)
       .order("sort_order", { ascending: true }),
     supabase.rpc("get_pos_pizza_base_options")
@@ -314,6 +321,8 @@ export default async function NuevoPedidoPage() {
   }));
 
   const priceByFlavorAndSize = new Map<string, { price_config_id: string; sale_price_cop: number }>();
+  const flavorImageById = new Map(pizzas.map((pizza) => [pizza.flavor_id, pizza.image_src]));
+  const sizeNameById = new Map(sizeRows.map((size) => [size.id, size.name]));
   for (const pizza of pizzas) {
     for (const price of pizza.prices) {
       if (!price.id || price.price_cop === null) continue;
@@ -323,7 +332,13 @@ export default async function NuevoPedidoPage() {
   const productById = new Map(saleProducts.map((product) => [product.id, product]));
   const combos: PosComboOption[] = await Promise.all(
     ((combosResult.data ?? []) as unknown as ComboRow[]).map(async (combo) => {
-      const groups = (combo.combo_groups ?? [])
+      const variants = (combo.combo_variants ?? [])
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+        .map((variant) => ({
+          id: variant.id,
+          name: variant.name,
+          sale_price_cop: Number(variant.sale_price_cop ?? 0),
+          groups: (variant.combo_groups ?? [])
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
         .map((group) => ({
           id: group.id,
@@ -332,7 +347,11 @@ export default async function NuevoPedidoPage() {
           quantity_to_choose: Number(group.quantity_to_choose ?? 1),
           is_required: group.is_required,
           pizza_size_id: group.pizza_size_id,
+          sort_order: Number(group.sort_order ?? 0),
           options: (group.combo_group_options ?? [])
+            // Options are references, not names. Keep the configured active reference
+            // so an inactive historical alternative cannot appear as a second beverage.
+            .filter((option) => option.is_active)
             .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
             .map((option) => {
               if (group.group_kind === "pizza") {
@@ -340,12 +359,12 @@ export default async function NuevoPedidoPage() {
                 return {
                   id: option.id,
                   name: option.pizza_flavors?.name ?? "Pizza",
-                  image_src: null,
+                  image_src: option.pizza_flavor_id ? flavorImageById.get(option.pizza_flavor_id) ?? null : null,
+                  presentation: group.pizza_size_id ? sizeNameById.get(group.pizza_size_id) ?? null : null,
                   pizza_flavor_id: option.pizza_flavor_id,
                   pizza_price_config_id: price?.price_config_id ?? null,
                   inventory_item_id: null,
                   unit_price_cop: Number(price?.sale_price_cop ?? 0),
-                  supplement_cop: Number(option.supplement_cop ?? 0)
                 };
               }
               const product = option.inventory_item_id ? productById.get(option.inventory_item_id) : null;
@@ -353,19 +372,24 @@ export default async function NuevoPedidoPage() {
                 id: option.id,
                 name: product?.name ?? option.inventory_items?.name ?? "Producto",
                 image_src: product?.image_src ?? null,
+                presentation: product?.presentation ?? null,
                 pizza_flavor_id: null,
                 pizza_price_config_id: null,
                 inventory_item_id: option.inventory_item_id,
                 unit_price_cop: Number(product?.sale_price_cop ?? option.inventory_items?.sale_price_cop ?? 0),
-                supplement_cop: Number(option.supplement_cop ?? 0)
               };
             })
             .filter((option) => option.unit_price_cop > 0 && (option.pizza_price_config_id || option.inventory_item_id))
         }))
-        .filter((group) => group.options.length >= group.quantity_to_choose);
-      const normalPrice = groups.reduce((sum, group) => {
+        .filter((group) => group.options.length >= group.quantity_to_choose)
+        }))
+        .filter((variant) => variant.groups.length > 0);
+      const normalPrice = variants.reduce((min, variant) => {
+        const value = variant.groups.reduce((sum, group) => {
         const prices = group.options.map((option) => option.unit_price_cop).filter((price) => price > 0);
-        return sum + (prices.length ? Math.min(...prices) * group.quantity_to_choose : 0);
+          return sum + (prices.length ? Math.min(...prices) * group.quantity_to_choose : 0);
+        }, 0);
+        return min === 0 ? value : Math.min(min, value);
       }, 0);
       return {
         id: combo.id,
@@ -373,9 +397,9 @@ export default async function NuevoPedidoPage() {
         name: combo.name,
         description: combo.description,
         image_src: await signedCachedImage(combo.image_url),
-        sale_price_cop: Number(combo.sale_price_cop ?? 0),
+        sale_price_cop: variants.length ? Math.min(...variants.map((variant) => variant.sale_price_cop)) : Number(combo.sale_price_cop ?? 0),
         normal_price_cop: normalPrice,
-        groups
+        variants
       };
     })
   );
