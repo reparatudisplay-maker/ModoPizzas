@@ -13,3 +13,4 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 tmp/
 outputs/
+supabase/.temp/

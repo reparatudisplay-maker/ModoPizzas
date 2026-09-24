@@ -209,7 +209,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       "id, supplier_id, brand_id, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, purchased_quantity, quantity, unit, line_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
-    .limit(60);
+    .limit(query ? 1000 : 60);
 
   if (supplierFilter) {
     purchasesQuery = purchasesQuery.eq("supplier_id", supplierFilter);

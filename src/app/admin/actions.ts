@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
 import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
+import { getAdjustedSourceStock } from "@/lib/inventory-stock";
 import type { StockUnit } from "@/lib/units";
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
@@ -488,12 +489,23 @@ async function physicalCountSourceStockBase(
     stock = (purchaseItems ?? []).reduce((sum, item) => sum + convertStockQuantity(Number(item.quantity ?? 0), item.unit, baseUnit), 0);
 
     if (itemIds.length > 0) {
-      const { data: allocations, error: allocationsError } = await supabase
-        .from("production_consumption_allocations")
-        .select("quantity_base, base_unit")
-        .in("purchase_item_id", itemIds);
-      if (allocationsError) throw new Error(allocationsError.message);
-      stock -= (allocations ?? []).reduce((sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit), 0);
+      const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
+        supabase
+          .from("production_consumption_allocations")
+          .select("quantity_base, base_unit")
+          .in("purchase_item_id", itemIds),
+        supabase
+          .from("pos_order_consumption_allocations")
+          .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+          .in("purchase_item_id", itemIds)
+          .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+      ]);
+      if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
+      if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
+      stock -= [...(productionAllocationsResult.data ?? []), ...(posAllocationsResult.data ?? [])].reduce(
+        (sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit),
+        0
+      );
     }
   } else {
     const { data: batches, error } = await supabase
@@ -506,12 +518,23 @@ async function physicalCountSourceStockBase(
     stock = (batches ?? []).reduce((sum, batch) => sum + convertStockQuantity(Number(batch.initial_quantity_base ?? 0), batch.base_unit, baseUnit), 0);
 
     if (batchIds.length > 0) {
-      const { data: allocations, error: allocationsError } = await supabase
-        .from("production_consumption_allocations")
-        .select("quantity_base, base_unit")
-        .in("production_batch_id", batchIds);
-      if (allocationsError) throw new Error(allocationsError.message);
-      stock -= (allocations ?? []).reduce((sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit), 0);
+      const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
+        supabase
+          .from("production_consumption_allocations")
+          .select("quantity_base, base_unit")
+          .in("production_batch_id", batchIds),
+        supabase
+          .from("pos_order_consumption_allocations")
+          .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+          .in("production_batch_id", batchIds)
+          .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+      ]);
+      if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
+      if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
+      stock -= [...(productionAllocationsResult.data ?? []), ...(posAllocationsResult.data ?? [])].reduce(
+        (sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit),
+        0
+      );
     }
   }
 
@@ -1935,6 +1958,20 @@ export async function getPosInventoryConsumptionPreview(itemsRaw: string): Promi
     if (error) return { status: "error", message: error.message };
     const preview = parsePosInventoryConsumptionPreview(data);
     if (!preview) return { status: "error", message: "La vista previa de inventario no devolvió datos válidos." };
+    if (preview.status === "ok") {
+      const stockClient = createSupabaseAdminClient() ?? supabase;
+      for (const row of preview.consolidated) {
+        const adjusted = await getAdjustedSourceStock(stockClient, row.source_kind, row.source_id, row.unit);
+        row.stock_before = adjusted.stock;
+        row.stock_after = Number((adjusted.stock - row.consumption_quantity).toFixed(3));
+        for (const origin of row.origins) {
+          const originId = origin.purchase_item_id ?? origin.production_batch_id;
+          if (!originId || !adjusted.originStock.has(originId)) continue;
+          origin.stock_before = adjusted.originStock.get(originId) ?? 0;
+          origin.stock_after = Number((origin.stock_before - origin.consumption_quantity).toFixed(3));
+        }
+      }
+    }
     return { status: "success", message: preview.status === "insufficient" ? "El pedido tiene faltantes de inventario." : "Consumo de inventario calculado.", preview };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo calcular el consumo de inventario." };

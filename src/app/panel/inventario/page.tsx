@@ -151,12 +151,9 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
   for (const count of inventoryCounts) {
     const itemId = count.inventory_item_id!;
     const baseUnit = count.base_unit;
-    const itemLines = adjustedLines.filter((line) => line.inventory_item_id === itemId);
+    const itemLines = adjustedLines.filter((line) => line.inventory_item_id === itemId && line.purchased_at <= count.created_at);
     if (itemLines.length === 0) continue;
-
-    const currentStockBase = itemLines.reduce((total, line) => total + toUnit(Number(line.quantity ?? 0), line.unit, baseUnit), 0);
-    const targetStockBase = Number(count.physical_quantity_base ?? 0);
-    const deltaBase = Number((targetStockBase - currentStockBase).toFixed(3));
+    const deltaBase = Number(count.difference_quantity_base ?? 0);
     if (deltaBase === 0) continue;
 
     if (deltaBase < 0) {
@@ -176,7 +173,7 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
       continue;
     }
 
-    const template = itemLines[0];
+    const template = [...itemLines].sort(sortInventoryLotsForAdjustment)[0];
     const quantity = toUnit(deltaBase, baseUnit, baseUnit);
     adjustedLines.push({
       ...template,
@@ -201,7 +198,7 @@ export default async function InventoryPage() {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "inventario");
 
-  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult] = await Promise.all([
+  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult] = await Promise.all([
     supabase
       .from("purchase_items")
       .select(
@@ -223,7 +220,8 @@ export default async function InventoryPage() {
     supabase.from("inventory_items").select("id, name, image_url, item_kind").is("presentation_quantity", null),
     supabase.from("brands").select("id, name").order("name"),
     supabase.from("suppliers").select("id, name").order("name"),
-    supabase.from("product_categories").select("id, name").order("name")
+    supabase.from("product_categories").select("id, name").order("name"),
+    supabase.from("profiles").select("id, full_name, email")
   ]);
 
   const error =
@@ -234,7 +232,8 @@ export default async function InventoryPage() {
     masterItemsResult.error ??
     brandsResult.error ??
     suppliersResult.error ??
-    categoriesResult.error;
+    categoriesResult.error ??
+    profilesResult.error;
   const purchaseLines = (purchaseLinesResult.data ?? []) as unknown as PurchaseLineRow[];
   const purchaseAllocations = [
     ...((purchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[]),
@@ -245,6 +244,7 @@ export default async function InventoryPage() {
   const brands = brandsResult.data ?? [];
   const suppliers = suppliersResult.data ?? [];
   const categories = categoriesResult.data ?? [];
+  const profileById = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile.full_name?.trim() || profile.email?.trim() || profile.id.slice(0, 8).toUpperCase()]));
   const brandById = new Map(brands.map((brand) => [brand.id, brand.name]));
   const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier.name]));
   const categoryById = new Map(categories.map((category) => [category.id, category.name]));
@@ -500,7 +500,7 @@ export default async function InventoryPage() {
     base_unit: count.base_unit,
     adjustment_kind: count.adjustment_kind,
     reason: count.reason,
-    user_label: count.created_by ? count.created_by.slice(0, 8).toUpperCase() : "Sistema"
+    user_label: count.created_by ? profileById.get(count.created_by) ?? count.created_by.slice(0, 8).toUpperCase() : "Sistema"
   }));
 
   return (
