@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, MapPin, MessageCircle, Minus, Phone, Plus, Search, ShoppingBag, Star, Trash2, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import type { PosComboOption } from "@/components/pos-order-workspace";
 
 type Ingredient = { source_kind: "inventory_item" | "preparation"; source_id: string; name: string };
 export type PublicPizzaPrice = { id: string; flavor_id: string; flavor_name: string; commercial_description: string | null; image_url: string | null; allows_half_and_half: boolean; category_id: string | null; category_name: string; size_id: string; size_name: string; diameter_cm: number | null; slices_count: number | null; sort_order: number; sale_price_cop: number; available: boolean; ingredients: Ingredient[] };
@@ -14,9 +15,9 @@ type Addition = { id: string; name: string; image_url: string | null; size_id: s
 type Promotion = { id: string; name: string; image_url: string | null; main_text: string; secondary_text: string | null; normal_price_cop: number | null; promo_price_cop: number | null };
 type OpeningHour = { day: string; is_open: boolean; opens_at: string; closes_at: string };
 export type PublicBusinessInfo = { business_name: string; phone: string; whatsapp_number: string; address: string | null; neighborhood: string | null; city: string | null; weekday_hours: string | null; weekend_hours: string | null; opening_hours: OpeningHour[]; maps_url: string | null; info_text: string | null; instagram_url: string | null; facebook_url: string | null; email?: string | null; legal_contact_email?: string | null };
-export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; promotions: Promotion[]; business: PublicBusinessInfo };
+export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; promotions: Promotion[]; combos: PosComboOption[]; business: PublicBusinessInfo };
 type CartAddition = Addition & { quantity: number; scope: "whole" | "left" | "right"; scope_label: string | null };
-type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secondary_id?: string | null; name: string; secondary_name?: string | null; size_name?: string | null; image_url: string | null; quantity: number; unit_price_cop: number; additions: CartAddition[]; removed_components: Ingredient[]; presentation?: string | null };
+type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secondary_id?: string | null; name: string; secondary_name?: string | null; size_name?: string | null; image_url: string | null; quantity: number; unit_price_cop: number; additions: CartAddition[]; removed_components: Ingredient[]; presentation?: string | null; combo_instance_id?: string | null; combo_name?: string | null; combo_variant_name?: string | null; combo_unit_price_cop?: number; combo_normal_price_cop?: number; combo_savings_cop?: number; combo_is_primary?: boolean };
 type PizzaGroup = { id: string; price: PublicPizzaPrice; prices: PublicPizzaPrice[] };
 type PizzaDraft = { line: CartLine; initial: PublicPizzaPrice };
 
@@ -36,18 +37,20 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
   const [editing, setEditing] = useState<PizzaDraft | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("Todas");
+  const [category, setCategory] = useState("PIZZAS");
   const [heroIndex, setHeroIndex] = useState(0);
+  const [selectedCombo, setSelectedCombo] = useState<PosComboOption | null>(null);
   const pizzaGroups = useMemo(() => groupPizzas(catalog.pizzas), [catalog.pizzas]);
   const heroGroups = useMemo(() => pizzaGroups.filter((group) => group.price.image_url).slice(0, 6), [pizzaGroups]);
   useEffect(() => { if (heroGroups.length < 2) return; const timer = window.setInterval(() => setHeroIndex((current) => (current + 1) % heroGroups.length), 5000); return () => window.clearInterval(timer); }, [heroGroups.length]);
   const activeHeroIndex = heroGroups.length ? heroIndex % heroGroups.length : 0;
   const hero = heroGroups[activeHeroIndex]?.price ?? pizzaGroups[0]?.price ?? null;
-  const categories = ["Todas", ...Array.from(new Set(pizzaGroups.map((group) => group.price.category_name))), "Bebidas"];
+  const categories = ["PIZZAS", "PROMOS", "BEBIDAS"];
   const search = query.trim().toLocaleLowerCase("es-CO");
   const matches = (value: string) => !search || value.toLocaleLowerCase("es-CO").includes(search);
-  const visiblePizzas = pizzaGroups.filter((group) => category !== "Bebidas" && (category === "Todas" || category === group.price.category_name) && matches(`${group.price.flavor_name} ${group.price.commercial_description ?? ""}`));
-  const visibleProducts = catalog.products.filter((product) => product.available && (category === "Todas" || category === "Bebidas") && matches(`${product.name} ${presentation(product)}`));
+  const visiblePizzas = pizzaGroups.filter((group) => category === "PIZZAS" && matches(`${group.price.flavor_name} ${group.price.category_name} ${group.price.commercial_description ?? ""}`));
+  const visibleProducts = catalog.products.filter((product) => product.available && category === "BEBIDAS" && matches(`${product.name} ${presentation(product)}`));
+  const visibleCombos = catalog.combos.filter((combo) => matches(`${combo.name} ${combo.description ?? ""}`));
   const total = cart.reduce((sum, line) => sum + lineTotal(line), 0);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const whatsapp = catalog.business.whatsapp_number.replace(/\D/g, "");
@@ -80,8 +83,25 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
     setEditing({ line, initial }); setSelectedPizza(initial); setCartOpen(false);
   }
 
+  function addCombo(lines: CartLine[]) {
+    setCart((current) => [...current, ...lines]);
+    setSelectedCombo(null);
+    setCartOpen(true);
+  }
+
+  useEffect(() => {
+    const handleHash = () => {
+      if (window.location.hash !== "#promos") return;
+      setCategory("PROMOS");
+      window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    };
+    handleHash();
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
+
   return <main className="public-site">
-    <header className="public-header"><a className="public-logo" href="#inicio"><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-real.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu">Menú</a><a href="#promos">Promociones</a><a href="#informacion">Información</a></nav><div><a className="public-login" href="/login">Ingresar</a><button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
+    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a className={category === "PROMOS" ? "active" : ""} href="#promos" onClick={() => { setCategory("PROMOS"); window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}>Promociones</a><a href="#informacion">Información</a></nav><div><a className="public-login" href="/login">Ingresar</a><button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
     <section className="public-hero" id="inicio">
       <div className="public-hero-copy">
         <span className="public-eyebrow">PIZZA HORNEADA AL MOMENTO</span>
@@ -102,15 +122,144 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
         {heroGroups.length > 1 ? <div className="public-hero-controls"><button aria-label="Sabor anterior" onClick={() => setHeroIndex((current) => (current - 1 + heroGroups.length) % heroGroups.length)} type="button"><ChevronLeft size={18}/></button><span>{heroGroups.map((group, index) => <i className={index === activeHeroIndex ? "active" : ""} key={group.id}/>)}</span><button aria-label="Siguiente sabor" onClick={() => setHeroIndex((current) => (current + 1) % heroGroups.length)} type="button"><ChevronRight size={18}/></button></div> : null}
       </div>
     </section>
-    {catalog.promotions.length ? <section className="public-promos" id="promos"><div className="public-section-heading"><span>SELECCION DEL DIA</span><h2>PROMOS ACTIVADAS</h2></div><div className="public-promo-grid">{catalog.promotions.map((promo) => <article className="public-promo-card" key={promo.id}>{promo.image_url ? <img alt={promo.name} src={promo.image_url}/> : <div className="public-promo-pattern"/>}<div><span>{promo.name}</span><h3>{promo.main_text}</h3>{promo.secondary_text ? <p>{promo.secondary_text}</p> : null}{promo.promo_price_cop ? <strong>{promo.normal_price_cop ? <del>{formatCop(promo.normal_price_cop)}</del> : null}{formatCop(promo.promo_price_cop)}</strong> : null}</div></article>)}</div></section> : null}
-    <section className="public-menu" id="menu"><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
+    {catalog.promotions.length ? <section className="public-promos" aria-label="Promociones destacadas"><div className="public-section-heading"><span>SELECCION DEL DIA</span><h2>PROMOS ACTIVADAS</h2></div><div className="public-promo-grid">{catalog.promotions.map((promo) => <article className="public-promo-card" key={promo.id}>{promo.image_url ? <img alt={promo.name} src={promo.image_url}/> : <div className="public-promo-pattern"/>}<div><span>{promo.name}</span><h3>{promo.main_text}</h3>{promo.secondary_text ? <p>{promo.secondary_text}</p> : null}{promo.promo_price_cop ? <strong>{promo.normal_price_cop ? <del>{formatCop(promo.normal_price_cop)}</del> : null}{formatCop(promo.promo_price_cop)}</strong> : null}</div></article>)}</div></section> : null}
+    <section className={`public-menu${category === "PROMOS" ? " public-promos-menu" : ""}`} id="menu"><span aria-hidden="true" className="public-promo-anchor" id="promos"/><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>{category === "PROMOS" ? "COMBOS PARA COMPARTIR" : "ELIGE TU FAVORITA"}</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => { setCategory(item); if (item === "PROMOS") window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PROMOS" ? <div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PROMOS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
     <BusinessSection business={catalog.business} />
     <PublicFooter business={catalog.business} />
     {whatsapp ? <a aria-label="Escribir por WhatsApp" className="public-whatsapp-float" href={`https://wa.me/${whatsapp}`} rel="noreferrer" target="_blank"><MessageCircle size={24}/><span>WhatsApp</span></a> : null}
     {cart.length ? <button className="public-mobile-cart" onClick={() => setCartOpen(true)} type="button"><span>{itemCount} {itemCount === 1 ? "producto" : "productos"} · {formatCop(total)}</span><strong>Ver pedido</strong></button> : null}
     {selectedPizza ? <PizzaConfigurator catalog={catalog} existing={editing?.line ?? null} initial={selectedPizza} onAdd={addLine} onClose={() => { setSelectedPizza(null); setEditing(null); }} /> : null}
+    {selectedCombo ? <PublicFlavorComboWizard catalog={catalog} combo={selectedCombo} onAdd={addCombo} onClose={() => setSelectedCombo(null)} /> : null}
     {cartOpen ? <CartDrawer business={catalog.business} cart={cart} onAddProduct={addProduct} onClose={() => setCartOpen(false)} onEditPizza={editPizza} onQuantity={setLineQuantity} products={catalog.products.filter((product) => product.available)} total={total} /> : null}
   </main>;
+}
+
+type PublicComboVariant = PosComboOption["variants"][number];
+type PublicComboGroup = PublicComboVariant["groups"][number];
+type PublicComboChoice = PublicComboGroup["options"][number];
+
+function publicComboImage(combo: PosComboOption) {
+  const images: Record<string, string> = {
+    CMBGRAN: "/promos/combo-grande.png",
+    CMBFAM: "/promos/combo-familiar.png",
+    CMB2MED: "/promos/combo-dos-medianas.png"
+  };
+  return images[combo.sku] ?? combo.image_src;
+}
+
+function PublicPromotionalComboCard({ combo, onChoose }: { combo: PosComboOption; onChoose: () => void }) {
+  const prices = combo.variants.map((variant) => variant.sale_price_cop).filter((price) => price > 0);
+  const from = prices.length ? Math.min(...prices) : combo.sale_price_cop;
+  const imageSrc = publicComboImage(combo);
+  return <article className="public-combo-card public-promotional-combo-card"><div className="public-combo-card-image"><div className="public-combo-badge"><Star size={14} /> PROMO ACTIVA</div>{imageSrc ? <img alt={combo.name} src={imageSrc} /> : <div className="public-pizza-art" />}</div><div className="public-combo-card-content"><span>PARA COMPARTIR</span><h3>{combo.name}</h3><p>{combo.description || "Pizza y bebida para disfrutar juntos."}</p><div><strong>Desde {formatCop(from)}</strong></div><button className="public-primary" onClick={onChoose} type="button">Elegir combo <ChevronRight size={17} /></button></div></article>;
+}
+
+function PublicFlavorComboWizard({ combo, catalog, onAdd, onClose }: { combo: PosComboOption; catalog: PublicCatalog; onAdd: (lines: CartLine[]) => void; onClose: () => void }) {
+  const activeVariants = combo.variants.filter((variant) => variant.groups.length > 0);
+  const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const allGroups = activeVariants.flatMap((variant) => variant.groups.map((group) => ({ variant, group })));
+  const templateVariant = activeVariants[0];
+  const pizzaSlots = (templateVariant?.groups ?? []).filter((group) => group.group_kind === "pizza" && group.is_required).sort((left, right) => left.sort_order - right.sort_order).map((slot) => {
+    const choices = allGroups.filter(({ group }) => group.group_kind === "pizza" && group.sort_order === slot.sort_order).flatMap(({ variant, group }) => group.options.map((option) => ({ variant, group, option })));
+    const seen = new Set<string>();
+    return { ...slot, choices: choices.filter((choice) => {
+      const key = choice.option.pizza_flavor_id ?? choice.option.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }) };
+  });
+  const selectedPizzaChoices = pizzaSlots.flatMap((slot) => {
+    const choice = slot.choices.find(({ group, option }) => (selections[group.id] ?? []).includes(option.id));
+    return choice ? [{ slot, ...choice }] : [];
+  });
+  const appliedVariant = activeVariants.filter((variant) => selectedPizzaChoices.some((choice) => choice.variant.id === variant.id)).sort((left, right) => right.sale_price_cop - left.sale_price_cop)[0] ?? null;
+  const includedProductGroups = (appliedVariant?.groups ?? []).filter((group) => group.group_kind === "sale_product" && group.is_required);
+  const selectedBeverages = includedProductGroups.flatMap((group) => (selections[group.id] ?? []).flatMap((optionId) => {
+    const option = group.options.find((candidate) => candidate.id === optionId);
+    return option ? [{ group, option }] : [];
+  }));
+  const pendingSlot = pizzaSlots.find((slot) => !selectedPizzaChoices.some((choice) => choice.slot.sort_order === slot.sort_order)) ?? null;
+  const currentStep = pendingSlot ? selectedPizzaChoices.length + 1 : pizzaSlots.length + 1;
+  const totalSteps = pizzaSlots.length + 1;
+  const minimumPrice = activeVariants.length ? Math.min(...activeVariants.map((variant) => variant.sale_price_cop)) : combo.sale_price_cop;
+  const price = appliedVariant?.sale_price_cop ?? minimumPrice;
+  const normalPrice = [...selectedPizzaChoices.map((choice) => choice.option), ...selectedBeverages.map((choice) => choice.option)].reduce((sum, option) => sum + option.unit_price_cop, 0);
+  const savings = Math.max(0, normalPrice - price);
+  const complete = selectedPizzaChoices.length === pizzaSlots.length && includedProductGroups.every((group) => (selections[group.id] ?? []).length === group.quantity_to_choose);
+
+  function slotTitle(slot: PublicComboGroup, index: number) {
+    const sizeName = catalog.pizzas.find((pizza) => pizza.size_id === slot.pizza_size_id)?.size_name?.replace(/-\d+CM/i, "") ?? "";
+    const order = pizzaSlots.length === 1 ? "" : index === 0 ? "PRIMERA " : index === 1 ? "SEGUNDA " : `${index + 1}. `;
+    return `ELIGE EL SABOR DE TU ${order}PIZZA${sizeName ? ` ${sizeName}` : ""}`;
+  }
+
+  function selectPizza(slotOrder: number, nextVariant: PublicComboVariant, group: PublicComboGroup, option: PublicComboChoice) {
+    setSelections((current) => {
+      const next = { ...current };
+      for (const candidate of allGroups) if (candidate.group.group_kind === "pizza" && candidate.group.sort_order === slotOrder) delete next[candidate.group.id];
+      next[group.id] = [option.id];
+      const nextVariants = activeVariants.filter((variant) => Object.entries(next).some(([groupId, optionIds]) => optionIds.length > 0 && variant.groups.some((candidate) => candidate.id === groupId && candidate.group_kind === "pizza"))).sort((left, right) => right.sale_price_cop - left.sale_price_cop);
+      const nextAppliedVariant = nextVariants[0] ?? nextVariant;
+      for (const candidate of allGroups) if (candidate.group.group_kind === "sale_product") delete next[candidate.group.id];
+      for (const includedGroup of nextAppliedVariant.groups.filter((candidate) => candidate.group_kind === "sale_product" && candidate.is_required)) {
+        if (includedGroup.options.length === includedGroup.quantity_to_choose) next[includedGroup.id] = includedGroup.options.map((candidate) => candidate.id);
+      }
+      return next;
+    });
+  }
+
+  function clearPizza(slotOrder: number) {
+    setSelections((current) => {
+      const next = { ...current };
+      for (const candidate of allGroups) if (candidate.group.group_kind === "pizza" && candidate.group.sort_order === slotOrder) delete next[candidate.group.id];
+      for (const candidate of allGroups) if (candidate.group.group_kind === "sale_product") delete next[candidate.group.id];
+      const remainingVariant = activeVariants.filter((variant) => Object.entries(next).some(([groupId, optionIds]) => optionIds.length > 0 && variant.groups.some((candidate) => candidate.id === groupId && candidate.group_kind === "pizza"))).sort((left, right) => right.sale_price_cop - left.sale_price_cop)[0];
+      for (const includedGroup of remainingVariant?.groups.filter((candidate) => candidate.group_kind === "sale_product" && candidate.is_required) ?? []) {
+        if (includedGroup.options.length === includedGroup.quantity_to_choose) next[includedGroup.id] = includedGroup.options.map((candidate) => candidate.id);
+      }
+      return next;
+    });
+  }
+
+  function finish() {
+    if (!appliedVariant || !complete) return;
+    const choices = [...selectedPizzaChoices.map((choice) => ({ group: choice.group, option: choice.option })), ...selectedBeverages];
+    const comboInstanceId = cartKey(`combo:${combo.id}`);
+    let allocated = 0;
+    const lines = choices.map(({ group, option }, index): CartLine | null => {
+      const pizza = option.pizza_flavor_id && group.pizza_size_id ? catalog.pizzas.find((candidate) => candidate.flavor_id === option.pizza_flavor_id && candidate.size_id === group.pizza_size_id && candidate.available) : null;
+      const product = option.inventory_item_id ? catalog.products.find((candidate) => candidate.id === option.inventory_item_id && candidate.available) : null;
+      const source = group.group_kind === "pizza" ? pizza : product;
+      if (!source) return null;
+      const isLast = index === choices.length - 1;
+      const unitPrice = isLast ? Math.max(0, price - allocated) : Math.round(price * option.unit_price_cop / Math.max(1, normalPrice));
+      allocated += unitPrice;
+      const label = group.group_kind === "pizza" ? `${(source as PublicPizzaPrice).flavor_name} ${(source as PublicPizzaPrice).size_name}` : (source as PublicProduct).name;
+      return { key: cartKey("combo-component"), kind: group.group_kind, id: source.id, name: index === 0 ? `${combo.name} · ${label}` : label, size_name: group.group_kind === "pizza" ? (source as PublicPizzaPrice).size_name : undefined, image_url: source.image_url, presentation: group.group_kind === "sale_product" ? presentation(source as PublicProduct) : undefined, quantity: 1, unit_price_cop: unitPrice, additions: [], removed_components: [], combo_instance_id: comboInstanceId, combo_name: combo.name, combo_variant_name: appliedVariant.name, combo_unit_price_cop: price, combo_normal_price_cop: normalPrice, combo_savings_cop: savings, combo_is_primary: index === 0 } satisfies CartLine;
+    }).filter((line): line is CartLine => Boolean(line));
+    if (lines.length === choices.length) onAdd(lines);
+  }
+
+  const currentSlotIndex = pendingSlot ? pizzaSlots.findIndex((slot) => slot.sort_order === pendingSlot.sort_order) : -1;
+  const stepHeading = pendingSlot ? slotTitle(pendingSlot, currentSlotIndex) : "REVISA TU COMBO";
+  return <div className="public-overlay">
+    <section aria-label={`Configura ${combo.name}`} aria-modal="true" className="public-configurator public-combo-wizard public-flavor-combo-wizard" role="dialog">
+      <header className="public-combo-modal-header">
+        <div className="public-combo-modal-title"><span>Paso {currentStep} de {totalSteps}</span><h2>{combo.name}</h2><small>{combo.description || "Elige tus sabores y arma tu combo."}</small></div>
+        <aside className="public-combo-step-card"><span>{pendingSlot ? "PROMOCION PARA COMPARTIR" : "TODO LISTO"}</span><strong>{stepHeading}</strong><p>{pendingSlot ? "El precio se actualiza automáticamente según los sabores elegidos." : "Confirma tus elecciones antes de agregarlo al pedido."}</p></aside>
+        <button aria-label="Cerrar" onClick={onClose} type="button"><X /></button>
+      </header>
+      <div className="public-step-progress">{Array.from({ length: totalSteps }, (_, index) => <i className={index < currentStep ? "active" : ""} key={index} />)}</div>
+      <div className="public-config-body">{pendingSlot ? <div className="public-combo-flavor-grid">{pendingSlot.choices.map(({ variant, group, option }) => {
+        const pizza = option.pizza_flavor_id && group.pizza_size_id ? catalog.pizzas.find((candidate) => candidate.flavor_id === option.pizza_flavor_id && candidate.size_id === group.pizza_size_id) : null;
+        const ingredients = pizza?.ingredients.slice(0, 3).map((ingredient) => ingredient.name).join(" · ");
+        const projectedPrice = Math.max(variant.sale_price_cop, ...selectedPizzaChoices.filter((choice) => choice.slot.sort_order !== pendingSlot.sort_order).map((choice) => choice.variant.sale_price_cop));
+        return <button className="public-combo-flavor-card" key={`${group.id}-${option.id}`} onClick={() => selectPizza(pendingSlot.sort_order, variant, group, option)} type="button">{option.image_src ? <img alt={option.name} src={option.image_src} /> : <span className="public-combo-choice-fallback">+</span>}<span>{option.name}</span><small>{ingredients || "Pizza horneada al momento"}</small><strong>Combo {formatCop(projectedPrice)}</strong></button>;
+      })}</div> : <div className="public-combo-review"><div className="public-combo-review-list">{selectedPizzaChoices.map((choice, index) => <article className="public-combo-review-row" key={`${choice.group.id}-${choice.option.id}`}><div><span>Pizza {index + 1}</span><strong>{choice.option.name}{choice.option.presentation ? ` · ${choice.option.presentation}` : ""}</strong></div><button className="public-combo-change" onClick={() => clearPizza(choice.slot.sort_order)} type="button">Cambiar</button></article>)}{selectedBeverages.map(({ option }) => <article className="public-combo-review-row" key={option.id}><div><span>Bebida incluida</span><strong>1x {option.name}{option.presentation ? ` · ${option.presentation}` : ""}</strong></div><span aria-hidden="true" /></article>)}</div></div>}</div>
+      <footer className={pendingSlot ? undefined : "public-combo-review-footer"}><button className="public-secondary public-back" onClick={onClose} type="button">Cancelar</button>{pendingSlot ? selectedPizzaChoices.length ? <button className="public-secondary public-back" onClick={() => clearPizza(selectedPizzaChoices[selectedPizzaChoices.length - 1].slot.sort_order)} type="button">Atrás</button> : <span /> : <button className="public-primary public-combo-add" disabled={!complete} onClick={finish} type="button"><span>Agregar combo</span><strong>· {formatCop(price)}</strong></button>}</footer>
+    </section>
+  </div>;
 }
 
 function PizzaCard({ group, onOrder }: { group: PizzaGroup; onOrder: () => void }) { const from = Math.min(...group.prices.map((item) => item.sale_price_cop)); return <article className="public-pizza-card"><div className="public-card-image">{group.price.image_url ? <img alt={group.price.flavor_name} src={group.price.image_url}/> : <div className="public-pizza-art"/>}</div><div className="public-card-content"><small>{group.price.category_name}</small><h3>{group.price.flavor_name}</h3><p>{group.price.commercial_description || "Una combinacion irresistible, horneada al momento."}</p><div><strong>Desde {formatCop(from)}</strong><button onClick={onOrder} type="button">Pedir <ChevronRight size={16}/></button></div></div></article>; }
