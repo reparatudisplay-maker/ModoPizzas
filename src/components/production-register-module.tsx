@@ -5,7 +5,7 @@ import { useActionState, useEffect, useMemo, useRef, useState, type CSSPropertie
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Edit3, Eye, Plus, Settings, Trash2, X } from "lucide-react";
-import { deleteProduction, registerProduction, type FormActionState, type ProductionActionState } from "@/app/admin/actions";
+import { deleteProduction, registerProduction, updateProduction, type FormActionState, type ProductionActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, unitLabel } from "@/lib/units";
@@ -57,9 +57,11 @@ export type ProductionPreparationOption = {
 export type ProductionHistoryRow = {
   id: string;
   code: string;
+  preparation_id: string;
   preparation_name: string;
   storage_method: StorageMethod;
   elaborated_at: string;
+  expected_quantity_base: number;
   actual_quantity_base: number;
   base_unit: StockUnit;
   stock_base: number;
@@ -67,6 +69,14 @@ export type ProductionHistoryRow = {
   total_cost_cop: number;
   unit_cost_cop: number;
   user_label: string;
+  edit_items: Array<{
+    source_kind: SourceKind;
+    source_id: string;
+    quantity_base: number;
+    base_unit: StockUnit;
+  }>;
+  can_edit: boolean;
+  edit_block_reason: string;
   ingredients_consumed: Array<{
     id: string;
     source_kind: SourceKind;
@@ -313,6 +323,7 @@ export function ProductionRegisterModule({
   history: ProductionHistoryRow[];
 }) {
   const [state, formAction] = useActionState(registerProduction, initialState);
+  const [editState, editFormAction] = useActionState(updateProduction, initialState);
   const router = useRouter();
   const [preparationQuery, setPreparationQuery] = useState("");
   const [selectedPreparation, setSelectedPreparation] = useState<ProductionPreparationOption | null>(null);
@@ -336,6 +347,7 @@ export function ProductionRegisterModule({
   const [visibleHistoryColumns, setVisibleHistoryColumns] = useState<HistoryColumnKey[]>(readHistoryColumns);
   const [showHistorySettings, setShowHistorySettings] = useState(false);
   const [detailProduction, setDetailProduction] = useState<ProductionHistoryRow | null>(null);
+  const [editingProduction, setEditingProduction] = useState<ProductionHistoryRow | null>(null);
   const [editBlockedProduction, setEditBlockedProduction] = useState<ProductionHistoryRow | null>(null);
   const preparationAutocompleteRef = useRef<HTMLDivElement>(null);
   const [preparationMenuStyle, setPreparationMenuStyle] = useState<CSSProperties>({});
@@ -357,7 +369,8 @@ export function ProductionRegisterModule({
   });
   const duplicateLine = new Set(lines.filter((line) => line.source).map((line) => lineKey(line.source!.source_kind, line.source!.id))).size !== lines.filter((line) => line.source).length;
   const hasInvalidLine = lineStates.some((line) => !line.isValid);
-  const hasMissingStock = lineStates.some((line) => line.missing > 0);
+  // An untouched production releases its original allocations inside the update transaction before revalidating stock.
+  const hasMissingStock = !editingProduction && lineStates.some((line) => line.missing > 0);
   const totalCost = lineStates.reduce((sum, line) => sum + line.cost, 0);
   const unitCost = actualBase > 0 ? totalCost / actualBase : 0;
   const hasPlannedQuantity = parseUiNumber(expectedQuantity) > 0;
@@ -393,6 +406,24 @@ export function ProductionRegisterModule({
       window.clearTimeout(messageTimeout);
     };
   }, [router, state]);
+
+  useEffect(() => {
+    if (editState.status !== "success" || !editState.production) return;
+    const message = `${editState.message} ${editState.production.code}: ${formatCop(Number(editState.production.total_cost_cop), { decimals: true })}, vence ${editState.production.expiration_date}.`;
+    const closeTimeout = window.setTimeout(() => {
+      setSuccessMessage(message);
+      resetForm();
+      setEditingProduction(null);
+      setShowRegisterModal(false);
+      setHideFormStatus(true);
+      router.refresh();
+    }, 0);
+    const messageTimeout = window.setTimeout(() => setSuccessMessage(""), 5000);
+    return () => {
+      window.clearTimeout(closeTimeout);
+      window.clearTimeout(messageTimeout);
+    };
+  }, [editState, router]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -488,12 +519,50 @@ export function ProductionRegisterModule({
     const hasChanges = Boolean(selectedPreparation || expectedQuantity || actualQuantity || lines.some((line) => line.quantity || line.source));
     if (hasChanges && !window.confirm("Cancelar y limpiar esta produccion sin registrar?")) return;
     resetForm();
+    setEditingProduction(null);
     setShowRegisterModal(false);
     setHideFormStatus(true);
   }
 
   function openRegisterModal() {
     resetForm();
+    setEditingProduction(null);
+    setSuccessMessage("");
+    setHideFormStatus(true);
+    setShowRegisterModal(true);
+  }
+
+  function openEditModal(production: ProductionHistoryRow) {
+    if (!production.can_edit) {
+      setEditBlockedProduction(production);
+      return;
+    }
+    const preparation = preparations.find((item) => item.id === production.preparation_id);
+    if (!preparation) {
+      setEditBlockedProduction({ ...production, edit_block_reason: "La preparación original ya no está disponible para editar esta producción." });
+      return;
+    }
+    resetForm();
+    setSelectedPreparation(preparation);
+    setPreparationQuery(preparation.name);
+    setElaboratedAt(production.elaborated_at);
+    setStorageMethod(production.storage_method);
+    setExpirationDate(production.expiration_date);
+    setExpirationTouched(true);
+    setExpectedQuantity(String(production.expected_quantity_base));
+    setExpectedUnit(production.base_unit);
+    setActualQuantity(String(production.actual_quantity_base));
+    setActualUnit(production.base_unit);
+    setLines(
+      production.edit_items.map((item) => ({
+        key: crypto.randomUUID(),
+        source: sourceByKey.get(lineKey(item.source_kind, item.source_id)) ?? null,
+        quantity: String(item.quantity_base),
+        unit: item.base_unit,
+        fromRecipe: false
+      }))
+    );
+    setEditingProduction(production);
     setSuccessMessage("");
     setHideFormStatus(true);
     setShowRegisterModal(true);
@@ -529,16 +598,16 @@ export function ProductionRegisterModule({
       {showRegisterModal ? (
         <div className="modal-backdrop" role="presentation">
           <section aria-label="Registrar produccion" aria-modal="true" className="modal-panel production-register-modal" role="dialog">
-            <header className="modal-header">
-              <div>
-                <strong>Registrar produccion</strong>
+              <header className="modal-header">
+                <div>
+                  <strong>{editingProduction ? `Editar ${editingProduction.code}` : "Registrar produccion"}</strong>
               </div>
               <button className="icon-button" onClick={cancelForm} title="Cerrar" type="button">
                 <X size={18} />
               </button>
             </header>
             <form
-              action={formAction}
+              action={editingProduction ? editFormAction : formAction}
               className="production-register-form-shell"
               onSubmit={() => {
                 setSubmitted(true);
@@ -590,7 +659,7 @@ export function ProductionRegisterModule({
                   aria-expanded={isPreparationOpen ? "true" : "false"}
                   value={selectedPreparation?.name ?? preparationQuery}
                 />
-                {selectedPreparation ? (
+                {selectedPreparation && !editingProduction ? (
                   <button
                     aria-label="Limpiar preparacion"
                     className="clear-selection-button"
@@ -808,11 +877,12 @@ export function ProductionRegisterModule({
           </>
         ) : null}
 
+        {editingProduction ? <input name="production_id" type="hidden" value={editingProduction.id} /> : null}
         <input name="preparation_id" type="hidden" value={selectedPreparation?.id ?? ""} />
         <input name="items" type="hidden" value={payloadItems()} />
-        {!hideFormStatus && state.status === "error" ? (
-          <p className={`form-status ${state.status}`}>
-            {state.message}
+        {!hideFormStatus && (editingProduction ? editState : state).status === "error" ? (
+          <p className={`form-status ${(editingProduction ? editState : state).status}`}>
+            {(editingProduction ? editState : state).message}
           </p>
         ) : null}
               </div>
@@ -888,7 +958,7 @@ export function ProductionRegisterModule({
                           <button className="icon-button" onClick={() => setDetailProduction(row)} title="Ver detalle" type="button">
                             <Eye size={16} />
                           </button>
-                          <button className="icon-button" onClick={() => setEditBlockedProduction(row)} title="Editar" type="button">
+                           <button className="icon-button" onClick={() => openEditModal(row)} title="Editar" type="button">
                             <Edit3 size={16} />
                           </button>
                           <ProductionDeleteButton production={row} />
@@ -956,9 +1026,7 @@ export function ProductionRegisterModule({
               </header>
               <div className="compact-card">
                 <p className="field-hint">
-                  Esta produccion ya fue confirmada y por ahora no se edita directamente para conservar trazabilidad de consumos,
-                  costos y lote producido. La correccion auditada de fecha, vencimiento o conservacion queda pendiente para una RPC
-                  especifica.
+                  {editBlockedProduction.edit_block_reason}
                 </p>
                 <div className="form-actions">
                   <button className="primary-button" onClick={() => setEditBlockedProduction(null)} type="button">

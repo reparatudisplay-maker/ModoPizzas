@@ -12,7 +12,7 @@ type Allocation = {
   base_unit: StockUnit;
 };
 
-type StockOrigin = {
+export type StockOrigin = {
   id: string;
   available: number;
   occurredAt: string;
@@ -20,9 +20,17 @@ type StockOrigin = {
   sequence: number;
 };
 
-function applyAdjustments(
+export type PhysicalStockAdjustment = {
+  difference_quantity_base: number;
+  base_unit: StockUnit;
+  created_at: string;
+};
+
+// Mirrors app_private.inventory_source_lots: adjustments are distributed only
+// across origins that already existed when the physical count was recorded.
+export function applyPhysicalStockAdjustments(
   origins: StockOrigin[],
-  counts: Array<{ difference_quantity_base: number; base_unit: StockUnit; created_at: string }>,
+  counts: PhysicalStockAdjustment[],
   unit: StockUnit
 ) {
   const stockByOrigin = new Map(origins.map((origin) => [origin.id, origin.available]));
@@ -50,7 +58,7 @@ function applyAdjustments(
   }
 
   const stock = [...stockByOrigin.values()].reduce((sum, value) => sum + value, 0);
-  return { stock: Number(stock.toFixed(3)), originStock: stockByOrigin };
+  return { stock: Number(stock.toFixed(6)), originStock: stockByOrigin };
 }
 
 export async function getAdjustedSourceStock(
@@ -117,9 +125,9 @@ export async function getAdjustedSourceStock(
         return a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id);
       });
 
-    return applyAdjustments(
+    return applyPhysicalStockAdjustments(
       origins,
-      (countsResult.data ?? []) as Array<{ difference_quantity_base: number; base_unit: StockUnit; created_at: string }>,
+      (countsResult.data ?? []) as PhysicalStockAdjustment[],
       unit
     );
   }
@@ -179,9 +187,9 @@ export async function getAdjustedSourceStock(
         a.sequence - b.sequence
     );
 
-  return applyAdjustments(
+  return applyPhysicalStockAdjustments(
     origins,
-    (countsResult.data ?? []) as Array<{ difference_quantity_base: number; base_unit: StockUnit; created_at: string }>,
+    (countsResult.data ?? []) as PhysicalStockAdjustment[],
     unit
   );
 }

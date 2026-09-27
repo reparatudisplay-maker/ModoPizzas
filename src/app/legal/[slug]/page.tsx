@@ -1,11 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { buildPublicLegalDocument, publicLegalSlugs, type PublicLegalBusiness } from "@/lib/public-legal";
+import { buildPublicLegalDocument, type PublicLegalBusiness } from "@/lib/public-legal";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
-
-export function generateStaticParams() { return publicLegalSlugs.map((slug) => ({ slug })); }
 
 export default async function LegalPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;

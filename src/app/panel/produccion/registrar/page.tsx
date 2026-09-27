@@ -9,6 +9,7 @@ import {
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { buildProductionInventory } from "@/lib/production-inventory";
+import { applyPhysicalStockAdjustments } from "@/lib/inventory-stock";
 import { canonicalStockUnit, convertStockQuantity } from "@/lib/units";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
@@ -108,14 +109,17 @@ type BatchRow = {
 type ProductionRow = {
   id: string;
   code: string;
+  preparation_id: string;
   storage_method: StorageMethod;
   elaborated_at: string;
+  expected_quantity_base: number;
   actual_quantity_base: number;
   base_unit: StockUnit;
   expiration_date: string;
   total_cost_cop: number;
   unit_cost_cop: number;
   created_by: string | null;
+  created_at: string;
   preparations: { name: string } | null;
 };
 
@@ -130,6 +134,14 @@ type ProductionConsumptionRow = {
   cost_cop: number;
 };
 
+type PhysicalInventoryCountRow = {
+  source_kind: SourceKind;
+  inventory_item_id: string | null;
+  source_preparation_id: string | null;
+  difference_quantity_base: number;
+  base_unit: StockUnit;
+  created_at: string;
+};
 
 export const dynamic = "force-dynamic";
 
@@ -168,7 +180,9 @@ export default async function RegisterProductionPage() {
     batchesResult,
     productionsResult,
     productionConsumptionsResult,
-    profilesResult
+    profilesResult,
+    posAllocationsResult,
+    physicalCountsResult
   ] =
     await Promise.all([
       supabase
@@ -193,14 +207,22 @@ export default async function RegisterProductionPage() {
         .select("id, production_id, preparation_id, initial_quantity_base, base_unit, unit_cost_cop, expiration_date, elaborated_at, production_number, productions(id, code, storage_method, total_cost_cop, unit_cost_cop, created_by), preparations(id, name, image_url, unit_kind, base_unit, is_active)"),
       supabase
         .from("productions")
-        .select("id, code, storage_method, elaborated_at, actual_quantity_base, base_unit, expiration_date, total_cost_cop, unit_cost_cop, created_by, preparations(name)")
+        .select("id, code, preparation_id, storage_method, elaborated_at, expected_quantity_base, actual_quantity_base, base_unit, expiration_date, total_cost_cop, unit_cost_cop, created_by, created_at, preparations(name)")
         .order("created_at", { ascending: false })
         .limit(50),
       supabase
         .from("production_consumptions")
         .select("id, production_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, cost_cop")
         .order("id"),
-      supabase.from("profiles").select("id, full_name")
+      supabase.from("profiles").select("id, full_name"),
+      supabase
+        .from("pos_order_consumption_allocations")
+        .select("purchase_item_id, production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+        .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
+      supabase
+        .from("physical_inventory_counts")
+        .select("source_kind, inventory_item_id, source_preparation_id, difference_quantity_base, base_unit, created_at")
+        .is("voided_at", null)
     ]);
 
   const error =
@@ -212,7 +234,9 @@ export default async function RegisterProductionPage() {
     batchesResult.error ??
     productionsResult.error ??
     productionConsumptionsResult.error ??
-    profilesResult.error;
+    profilesResult.error ??
+    posAllocationsResult.error ??
+    physicalCountsResult.error;
 
   const preparationRows = (preparationsResult.data ?? []) as unknown as PreparationRow[];
   const recipeRows = (recipeResult.data ?? []) as RecipeRow[];
@@ -223,6 +247,11 @@ export default async function RegisterProductionPage() {
   const productionRows = (productionsResult.data ?? []) as unknown as ProductionRow[];
   const productionConsumptionRows = (productionConsumptionsResult.data ?? []) as ProductionConsumptionRow[];
   const profileRows = (profilesResult.data ?? []) as Array<{ id: string; full_name: string | null }>;
+  const operationalAllocations = [
+    ...((allocationsResult.data ?? []) as AllocationRow[]),
+    ...((posAllocationsResult.data ?? []) as AllocationRow[])
+  ];
+  const physicalCounts = (physicalCountsResult.data ?? []) as PhysicalInventoryCountRow[];
   const profileById = new Map(profileRows.map((profile) => [profile.id, profile.full_name || profile.id]));
 
   const signedImageEntries = await Promise.all(
@@ -261,11 +290,35 @@ export default async function RegisterProductionPage() {
   const inventorySources: ProductionSourceOption[] = inventoryItems.map((item) => {
     const lines = purchaseLines.filter((line) => line.inventory_item_id === item.id);
     const baseUnit = canonicalStockUnit(item.unit);
-    const stock = lines.reduce((sum, line) => sum + Number(line.quantity ?? 0) - allocationSum(allocations, "purchase_item_id", line.id, line.unit), 0);
+    const stockByLine = applyPhysicalStockAdjustments(
+      lines.map((line) => ({
+        id: line.id,
+        available: Math.max(
+          0,
+          convertStockQuantity(
+            Math.max(0, Number(line.quantity ?? 0) - allocationSum(operationalAllocations, "purchase_item_id", line.id, line.unit)),
+            line.unit,
+            baseUnit
+          )
+        ),
+        occurredAt: line.purchases?.purchased_at ?? "",
+        expiration: line.expiration_date ?? "",
+        sequence: 0
+      })),
+      physicalCounts
+        .filter((count) => count.source_kind === "inventory_item" && count.inventory_item_id === item.id)
+        .map((count) => ({
+          difference_quantity_base: Number(count.difference_quantity_base ?? 0),
+          base_unit: count.base_unit,
+          created_at: count.created_at
+        })),
+      baseUnit
+    ).originStock;
+    const stock = [...stockByLine.values()].reduce((sum, quantity) => sum + quantity, 0);
     const cost = lines.reduce((sum, line) => {
-      const available = Number(line.quantity ?? 0) - allocationSum(allocations, "purchase_item_id", line.id, line.unit);
-      const unitCost = Number(line.quantity ?? 0) > 0 ? Number(line.line_total_cop ?? 0) / Number(line.quantity ?? 0) : 0;
-      return sum + available * unitCost;
+      const quantityBase = convertStockQuantity(Number(line.quantity ?? 0), line.unit, baseUnit);
+      const unitCost = quantityBase > 0 ? Number(line.line_total_cop ?? 0) / quantityBase : 0;
+      return sum + (stockByLine.get(line.id) ?? 0) * unitCost;
     }, 0);
     return {
       id: item.id,
@@ -274,25 +327,6 @@ export default async function RegisterProductionPage() {
       unit_kind: unitKindForStockUnit(baseUnit),
       base_unit: baseUnit,
       density: null,
-      stock_base: stock,
-      average_unit_cost_cop: stock > 0 ? cost / stock : 0
-    };
-  });
-
-  const preparationSources: ProductionSourceOption[] = preparationRows.map((preparation) => {
-    const sourceBatches = batches.filter((batch) => batch.preparation_id === preparation.id);
-    const stock = sourceBatches.reduce((sum, batch) => sum + Number(batch.initial_quantity_base ?? 0) - allocationSum(allocations, "production_batch_id", batch.id), 0);
-    const cost = sourceBatches.reduce((sum, batch) => {
-      const available = Number(batch.initial_quantity_base ?? 0) - allocationSum(allocations, "production_batch_id", batch.id);
-      return sum + available * Number(batch.unit_cost_cop ?? 0);
-    }, 0);
-    return {
-      id: preparation.id,
-      name: preparation.name,
-      source_kind: "preparation",
-      unit_kind: preparation.unit_kind,
-      base_unit: preparation.base_unit,
-      density: preparation.density ? Number(preparation.density) : null,
       stock_base: stock,
       average_unit_cost_cop: stock > 0 ? cost / stock : 0
     };
@@ -315,14 +349,37 @@ export default async function RegisterProductionPage() {
 
   const productionInventory = buildProductionInventory({
     batches,
-    allocations,
+    allocations: operationalAllocations,
     consumptions: productionConsumptionRows,
     traceAllocations: allocations
       .filter((allocation): allocation is AllocationRow & { consumption_id: string } => Boolean(allocation.consumption_id))
       .map((allocation) => ({ ...allocation, cost_cop: Number(allocation.cost_cop ?? 0) })),
     inventoryNames: new Map(inventoryItems.map((item) => [item.id, item.name])),
     preparationNames: new Map(preparationRows.map((preparation) => [preparation.id, preparation.name])),
-    imageSrcByPreparationId: imageSrcById
+    imageSrcByPreparationId: imageSrcById,
+    physicalAdjustments: physicalCounts
+      .filter((count) => count.source_kind === "preparation")
+      .map((count) => ({
+        source_preparation_id: count.source_preparation_id,
+        difference_quantity_base: Number(count.difference_quantity_base ?? 0),
+        base_unit: count.base_unit,
+        created_at: count.created_at
+      }))
+  });
+  const preparationSources: ProductionSourceOption[] = preparationRows.map((preparation) => {
+    const item = productionInventory.items.find((candidate) => candidate.id === preparation.id);
+    const stock = item?.stock_base ?? 0;
+    const cost = item?.inventory_value_cop ?? 0;
+    return {
+      id: preparation.id,
+      name: preparation.name,
+      source_kind: "preparation",
+      unit_kind: preparation.unit_kind,
+      base_unit: preparation.base_unit,
+      density: preparation.density ? Number(preparation.density) : null,
+      stock_base: stock,
+      average_unit_cost_cop: stock > 0 ? cost / stock : 0
+    };
   });
   const productionLotByProductionId = new Map(productionInventory.lots.map((lot) => [lot.production_id, lot]));
 
@@ -330,12 +387,27 @@ export default async function RegisterProductionPage() {
     const productionBatch = batches.find((item) => item.production_id === production.id);
     const productionLot = productionLotByProductionId.get(production.id);
     const stock = productionLot?.stock_base ?? (productionBatch ? Number(productionBatch.initial_quantity_base ?? 0) - allocationSum(allocations, "production_batch_id", productionBatch.id) : Number(production.actual_quantity_base ?? 0));
+    const hasLotConsumption = Boolean(productionBatch) && operationalAllocations.some((allocation) => allocation.production_batch_id === productionBatch!.id);
+    const hasLaterAdjustment = physicalCounts.some(
+      (count) => count.source_kind === "preparation" && count.source_preparation_id === production.preparation_id && count.created_at >= production.created_at
+    );
+    const editItems = productionConsumptionRows
+      .filter((consumption) => consumption.production_id === production.id)
+      .map((consumption) => ({
+        source_kind: consumption.source_kind,
+        source_id: consumption.source_kind === "preparation" ? consumption.source_preparation_id : consumption.inventory_item_id,
+        quantity_base: Number(consumption.quantity_base ?? 0),
+        base_unit: consumption.base_unit
+      }))
+      .filter((item): item is { source_kind: SourceKind; source_id: string; quantity_base: number; base_unit: StockUnit } => Boolean(item.source_id));
     return {
       id: production.id,
       code: production.code,
+      preparation_id: production.preparation_id,
       preparation_name: production.preparations?.name ?? "Sin preparacion",
       storage_method: production.storage_method,
       elaborated_at: production.elaborated_at,
+      expected_quantity_base: Number(production.expected_quantity_base ?? 0),
       actual_quantity_base: Number(production.actual_quantity_base ?? 0),
       base_unit: production.base_unit,
       stock_base: stock,
@@ -343,7 +415,14 @@ export default async function RegisterProductionPage() {
       total_cost_cop: Number(production.total_cost_cop ?? 0),
       unit_cost_cop: Number(production.unit_cost_cop ?? 0),
       user_label: production.created_by ? profileById.get(production.created_by) ?? production.created_by : "Sin usuario",
-      ingredients_consumed: productionLot?.ingredients_consumed ?? []
+      ingredients_consumed: productionLot?.ingredients_consumed ?? [],
+      edit_items: editItems,
+      can_edit: Boolean(productionBatch) && !hasLotConsumption && !hasLaterAdjustment,
+      edit_block_reason: hasLotConsumption
+        ? "Esta producción ya tiene consumos asociados y no puede editarse directamente para preservar la trazabilidad."
+        : hasLaterAdjustment
+          ? "Esta producción tiene ajustes o conteos posteriores y no puede editarse directamente para preservar la trazabilidad."
+          : "No se encontró un lote de producción editable."
     };
   });
 

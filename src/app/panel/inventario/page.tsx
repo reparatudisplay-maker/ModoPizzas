@@ -19,6 +19,7 @@ type PurchaseLineRow = {
   presentation_unit: StockUnit | null;
   unit_cost_cop: number;
   line_total_cop: number;
+  landed_total_cop: number | null;
   expiration_date: string | null;
   inventory_items: {
     id: string;
@@ -202,7 +203,7 @@ export default async function InventoryPage() {
     supabase
       .from("purchase_items")
       .select(
-        "id, purchase_id, inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, unit_cost_cop, line_total_cop, expiration_date, inventory_items(id, sku, name, image_url, unit, item_kind, purchase_mode, brand_id, category_id, presentation_quantity, presentation_unit, is_active), purchases(id, supplier_id, brand_id, purchased_at)"
+        "id, purchase_id, inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, unit_cost_cop, line_total_cop, landed_total_cop, expiration_date, inventory_items(id, sku, name, image_url, unit, item_kind, purchase_mode, brand_id, category_id, presentation_quantity, presentation_unit, is_active), purchases(id, supplier_id, brand_id, purchased_at)"
       )
       .order("expiration_date", { ascending: true, nullsFirst: false })
       .limit(1000),
@@ -322,6 +323,14 @@ export default async function InventoryPage() {
     ],
     consumptions: (productionConsumptionsResult.data ?? []) as ProductionConsumptionInput[],
     traceAllocations: (productionTraceAllocationsResult.data ?? []) as ProductionTraceAllocationInput[],
+    physicalAdjustments: physicalCounts
+      .filter((count) => count.source_kind === "preparation")
+      .map((count) => ({
+        source_preparation_id: count.source_preparation_id,
+        difference_quantity_base: Number(count.difference_quantity_base ?? 0),
+        base_unit: count.base_unit,
+        created_at: count.created_at
+      })),
     outboundConsumptions: [
       ...((posProductionOutboundResult.data ?? []) as unknown as PosProductionOutboundRow[]).map((allocation) => {
         const consumption = allocation.pos_order_consumptions;
@@ -355,18 +364,6 @@ export default async function InventoryPage() {
     imageSrcByPreparationId: new Map(signedPreparationImageEntries)
   });
 
-  const preparationAdjustmentsById = new Map<string, { quantity: number; unit: StockUnit; value: number }>();
-  for (const count of physicalCounts) {
-    const quantity = Number(count.difference_quantity_base ?? 0);
-    const value = quantity * Number(count.average_cost_cop ?? 0);
-    if (count.source_kind === "preparation" && count.source_preparation_id) {
-      const current = preparationAdjustmentsById.get(count.source_preparation_id) ?? { quantity: 0, unit: count.base_unit, value: 0 };
-      current.quantity += quantity;
-      current.value += value;
-      preparationAdjustmentsById.set(count.source_preparation_id, current);
-    }
-  }
-
   const purchaseAllocatedByLine = new Map<string, number>();
   for (const allocation of purchaseAllocations) {
     if (!allocation.purchase_item_id) continue;
@@ -399,7 +396,8 @@ export default async function InventoryPage() {
       }
       const originalQuantity = Number(line.quantity ?? 0);
       const availableQuantity = Math.max(0, originalQuantity - allocatedQuantity);
-      const unitCost = originalQuantity > 0 ? Number(line.line_total_cop ?? 0) / originalQuantity : 0;
+      const landedTotal = Number(line.landed_total_cop ?? line.line_total_cop ?? 0);
+      const unitCost = originalQuantity > 0 ? landedTotal / originalQuantity : 0;
       return {
         id: line.id,
         purchase_id: line.purchase_id,
@@ -414,8 +412,8 @@ export default async function InventoryPage() {
         quantity: availableQuantity,
         presentation_quantity: line.presentation_quantity,
         presentation_unit: line.presentation_unit,
-        unit_cost_cop: Number(line.unit_cost_cop ?? 0),
-        line_total_cop: availableQuantity * unitCost,
+        unit_cost_cop: unitCost,
+        line_total_cop: landedTotal,
         expiration_date: line.expiration_date,
         purchased_at: purchase.purchased_at,
         supplier_name: purchase.supplier_id ? supplierById.get(purchase.supplier_id) ?? null : null,
@@ -467,27 +465,6 @@ export default async function InventoryPage() {
     }
   }
 
-  const adjustedProductionItems = productionInventory.items.map((item) => {
-    const adjustment = preparationAdjustmentsById.get(item.id);
-    if (!adjustment) return item;
-    let adjustedQuantity = adjustment.quantity;
-    if (adjustment.unit !== item.base_unit) {
-      try {
-        adjustedQuantity = convertStockQuantity(adjustment.quantity, adjustment.unit, item.base_unit);
-      } catch {
-        adjustedQuantity = adjustment.quantity;
-      }
-    }
-    const stock = Math.max(0, item.stock_base + adjustedQuantity);
-    const value = Math.max(0, item.inventory_value_cop + adjustment.value);
-    return {
-      ...item,
-      stock_base: stock,
-      inventory_value_cop: value,
-      average_cost_cop: stock > 0 ? value / stock : 0
-    };
-  });
-
   const countHistory: InventoryCountHistoryRow[] = physicalCounts.map((count) => ({
     id: count.id,
     created_at: count.created_at,
@@ -507,7 +484,7 @@ export default async function InventoryPage() {
     <PanelShell active="inventario" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Inventario" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       {productionError ? <p className="alert">{productionError.message}</p> : null}
-      <InventoryWorkspace countHistory={countHistory} items={[...groupedItems.values()]} preparationItems={adjustedProductionItems} purchaseLines={lineItems} />
+      <InventoryWorkspace countHistory={countHistory} items={[...groupedItems.values()]} preparationItems={productionInventory.items} purchaseLines={lineItems} />
     </PanelShell>
   );
 }

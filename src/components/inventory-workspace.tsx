@@ -188,7 +188,7 @@ function columnLabel(column: ColumnKey, mode: ViewMode) {
     unit: "Unidad",
     cost: "Costo promedio",
     unitPrice: "Precio unitario",
-    inventoryValue: mode === "consolidated" ? "Valor inventario" : "Total pagado",
+    inventoryValue: mode === "consolidated" ? "Valor inventario" : "Costo del lote",
     status: "Estado",
     expiration: "Vencimiento mas proximo",
     lot: "Lote",
@@ -339,14 +339,14 @@ function productImage(src: string | null, name: string) {
 }
 
 function unitPriceForLine(line: InventoryPurchaseLine) {
-  if (line.item_kind === "ingredient" && line.purchase_mode !== "packages") {
-    if (line.unit === "g") return { value: line.quantity > 0 ? line.line_total_cop / (line.quantity / 1000) : 0, unit: "KG" };
-    if (line.unit === "ml") return { value: line.quantity > 0 ? line.line_total_cop / (line.quantity / 1000) : 0, unit: "L" };
-    return { value: line.quantity > 0 ? line.line_total_cop / line.quantity : 0, unit: unitLabel(line.unit) };
-  }
+  const purchasedQuantity = Number(line.purchased_quantity ?? line.quantity ?? 0);
+  const packagePurchase = Boolean(line.presentation_quantity && line.presentation_unit && Number(line.presentation_quantity) !== purchasedQuantity);
+  if (packagePurchase) return { value: purchasedQuantity > 0 ? line.line_total_cop / purchasedQuantity : 0, unit: "PAQUETE" };
 
-  const divisor = Number(line.purchased_quantity ?? line.quantity ?? 0);
-  return { value: divisor > 0 ? line.line_total_cop / divisor : 0, unit: line.item_kind === "ingredient" ? "PAQUETE" : "UND" };
+  const sourceUnit = line.presentation_unit ?? line.unit;
+  if (sourceUnit === "g") return { value: purchasedQuantity > 0 ? line.line_total_cop / (purchasedQuantity / 1000) : 0, unit: "KG" };
+  if (sourceUnit === "ml") return { value: purchasedQuantity > 0 ? line.line_total_cop / (purchasedQuantity / 1000) : 0, unit: "L" };
+  return { value: purchasedQuantity > 0 ? line.line_total_cop / purchasedQuantity : 0, unit: unitLabel(sourceUnit) };
 }
 
 function formatUnitPrice(value: number, unit: string) {
@@ -897,8 +897,8 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
             <option value="stock_asc">Menor stock</option>
             {viewMode === "consolidated" ? <option value="cost_desc">Costo promedio mayor a menor</option> : null}
             {viewMode === "consolidated" ? <option value="cost_asc">Costo promedio menor a mayor</option> : null}
-            <option value="value_desc">{viewMode === "consolidated" ? "Valor inventario mayor a menor" : "Total pagado mayor a menor"}</option>
-            <option value="value_asc">{viewMode === "consolidated" ? "Valor inventario menor a mayor" : "Total pagado menor a mayor"}</option>
+            <option value="value_desc">{viewMode === "consolidated" ? "Valor inventario mayor a menor" : "Costo de lote mayor a menor"}</option>
+            <option value="value_asc">{viewMode === "consolidated" ? "Valor inventario menor a mayor" : "Costo de lote menor a mayor"}</option>
             <option value="last_purchase">Ultima compra</option>
           </select>
           <select onChange={(event) => setBrand(event.target.value)} value={brand}>

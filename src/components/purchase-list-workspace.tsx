@@ -13,6 +13,7 @@ type PurchaseListRow = {
   image_src: string | null;
   sku: string;
   product: string;
+  product_lines: string[];
   presentation: string;
   quantity: string;
   supplier: string;
@@ -144,6 +145,13 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                 {showColumn("product") ? (
                   <td>
                     <strong>{purchase.product}</strong>
+                    {purchase.product_lines.length > 1 ? (
+                      <span className="purchase-line-summary">
+                        {purchase.product_lines.slice(1).map((line) => (
+                          <span key={line}>{line}</span>
+                        ))}
+                      </span>
+                    ) : null}
                   </td>
                 ) : null}
                 {showColumn("presentation") ? <td>{purchase.presentation}</td> : null}

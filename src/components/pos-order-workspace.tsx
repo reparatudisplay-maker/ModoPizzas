@@ -183,6 +183,7 @@ type CartLine = {
   combo_choices?: ComboChoice[];
   combo_normal_price_cop?: number;
   combo_savings_cop?: number;
+  combo_price_adjustment_cop?: number;
   combo_unit_price_cop?: number;
   combo_component_normal_price_cop?: number;
   combo_component_label?: string;
@@ -554,11 +555,11 @@ export function PosOrderWorkspace({
     const componentPrice = line.combo_instance_id ? line.combo_component_normal_price_cop ?? line.unit_price_cop : line.unit_price_cop;
     return sum + line.quantity * (componentPrice + additionsSubtotal);
   }, 0);
-  const comboDiscountCop = cart.reduce((sum, line) => {
+  const comboPriceAdjustmentCop = cart.reduce((sum, line) => {
     if (!line.combo_is_primary) return sum;
-    return sum + line.quantity * Math.max(0, line.combo_savings_cop ?? 0);
+    return sum + line.quantity * (line.combo_price_adjustment_cop ?? Math.max(0, line.combo_savings_cop ?? 0));
   }, 0);
-  const subtotal = Math.max(0, subtotalBeforeComboDiscount - comboDiscountCop);
+  const subtotal = Math.max(0, subtotalBeforeComboDiscount + comboPriceAdjustmentCop);
   const deliveryValue = orderKind === "delivery" ? Number(delivery || 0) : 0;
   const rawDiscountCop = discount?.type === "percentage" ? Math.round(subtotal * discount.value / 100) : discount?.amount_cop ?? 0;
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
@@ -752,6 +753,7 @@ export function PosOrderWorkspace({
           combo_choices: existingLine.combo_choices,
           combo_normal_price_cop: existingLine.combo_normal_price_cop,
           combo_savings_cop: existingLine.combo_savings_cop,
+          combo_price_adjustment_cop: existingLine.combo_price_adjustment_cop,
           combo_unit_price_cop: existingLine.combo_unit_price_cop,
           combo_component_normal_price_cop: existingLine.combo_component_normal_price_cop,
           combo_component_label: existingLine.combo_component_label,
@@ -911,6 +913,7 @@ export function PosOrderWorkspace({
     const normalPrice = choiceDrafts.reduce((sum, choice) => sum + choice.unit_price_cop, 0);
     const comboUnitPrice = variant.sale_price_cop;
     const comboSavings = Math.max(0, normalPrice - comboUnitPrice);
+    const comboPriceAdjustment = comboUnitPrice - normalPrice;
     const comboInstanceId = editingComboLineKey ?? cartLineKey();
     const weightTotal = choiceDrafts.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop), 0);
     let allocated = 0;
@@ -935,6 +938,7 @@ export function PosOrderWorkspace({
         combo_choices: choices,
         combo_normal_price_cop: normalPrice,
         combo_savings_cop: comboSavings,
+        combo_price_adjustment_cop: comboPriceAdjustment,
         combo_unit_price_cop: comboUnitPrice,
         combo_component_normal_price_cop: componentNormalPrice,
         combo_component_label: choice.name,
@@ -1087,6 +1091,7 @@ export function PosOrderWorkspace({
     combo_choices: line.combo_choices ?? [],
     combo_normal_price_cop: line.combo_normal_price_cop ?? 0,
     combo_savings_cop: line.combo_savings_cop ?? 0,
+    combo_price_adjustment_cop: line.combo_price_adjustment_cop ?? 0,
     combo_unit_price_cop: line.combo_unit_price_cop ?? 0,
     combo_component_normal_price_cop: line.combo_component_normal_price_cop ?? 0,
     combo_component_label: line.combo_component_label ?? null,
@@ -1323,7 +1328,9 @@ export function PosOrderWorkspace({
                       <small>{primary.combo_sku ?? "Sin SKU"} · combo</small>
                       {primary.combo_variant_name ? <small>Grupo aplicado: {primary.combo_variant_name}</small> : null}
                       <small>Precio normal: {formatCop(primary.combo_normal_price_cop ?? 0)}</small>
-                      {primary.combo_savings_cop && primary.combo_savings_cop > 0 ? <small>Descuento combo: -{formatCop(primary.combo_savings_cop)}</small> : null}
+                      {primary.combo_price_adjustment_cop && primary.combo_price_adjustment_cop !== 0 ? (
+                        <small>{primary.combo_price_adjustment_cop > 0 ? "Ajuste combo" : "Descuento combo"}: {primary.combo_price_adjustment_cop > 0 ? "+" : "-"}{formatCop(Math.abs(primary.combo_price_adjustment_cop))}</small>
+                      ) : null}
                       <small>Precio combo: {formatCop(primary.combo_unit_price_cop ?? lines.reduce((sum, item) => sum + item.unit_price_cop, 0))}</small>
                       <div className="pos-combo-component-list" aria-label="Componentes del combo">
                         {lines.map((component) => (
@@ -1462,8 +1469,8 @@ export function PosOrderWorkspace({
             <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}
           </button>
           <div className="pos-total-box">
-            {comboDiscountCop > 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
-            {comboDiscountCop > 0 ? <span className="pos-discount-line">Descuento combo <strong>-{formatCop(comboDiscountCop)}</strong></span> : null}
+            {comboPriceAdjustmentCop !== 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
+            {comboPriceAdjustmentCop !== 0 ? <span className={comboPriceAdjustmentCop > 0 ? "pos-subtotal-line" : "pos-discount-line"}>{comboPriceAdjustmentCop > 0 ? "Ajuste combo" : "Descuento combo"} <strong>{comboPriceAdjustmentCop > 0 ? "+" : "-"}{formatCop(Math.abs(comboPriceAdjustmentCop))}</strong></span> : null}
             {discount ? <span className="pos-subtotal-line">Subtotal <strong>{formatCop(subtotal)}</strong></span> : null}
             {discount ? <span className="pos-discount-line">{discountLabel} <strong>-{formatCop(discountCop)}</strong></span> : null}
             <span>Total <strong>{formatCop(total)}</strong></span>
@@ -2610,6 +2617,7 @@ function ComboSelectorModal({
   onAdd: () => void;
   onClose: () => void;
 }) {
+  const [stepTransitionLabel, setStepTransitionLabel] = useState<string | null>(null);
   const allGroups = combo.variants.flatMap((candidate) => candidate.groups.map((group) => ({ candidate, group })));
   const pizzaSlots = (combo.variants[0]?.groups ?? [])
     .filter((group) => group.group_kind === "pizza" && group.is_required)
@@ -2642,6 +2650,16 @@ function ComboSelectorModal({
       return option ? [comboOptionLabel(option)] : [];
     })
   );
+  const summaryProductGroups = includedProductGroups.length
+    ? includedProductGroups
+    : (combo.variants[0]?.groups ?? []).filter((group) => group.group_kind === "sale_product" && group.is_required);
+  const footerBeverages = summaryProductGroups.flatMap((group) => {
+    const selected = (selections[group.id] ?? [])
+      .map((optionId) => group.options.find((option) => option.id === optionId))
+      .filter((option): option is PosComboOption["variants"][number]["groups"][number]["options"][number] => Boolean(option))
+      .map(comboOptionLabel);
+    return selected.length ? selected : group.options.length === 1 ? [comboOptionLabel(group.options[0])] : [];
+  });
   const totalSteps = pizzaSlots.length + 2;
   const currentStep = pendingSlot ? selectedPizzaChoices.length + 2 : totalSteps;
   const stepLabel = pendingSlot
@@ -2650,42 +2668,48 @@ function ComboSelectorModal({
       : `Elige el sabor de ${pendingSlot.name}`
     : "Revisa tu combo";
 
+  useEffect(() => {
+    if (!stepTransitionLabel) return;
+    const timeoutId = window.setTimeout(() => setStepTransitionLabel(null), 700);
+    return () => window.clearTimeout(timeoutId);
+  }, [stepTransitionLabel]);
+
+  function handlePizzaSelect(slotOrder: number, candidateVariantId: string, groupId: string, optionId: string) {
+    const nextSlot = pizzaSlots.find((slot) => slot.sort_order > slotOrder);
+    if (nextSlot) setStepTransitionLabel(nextSlot.name || "la siguiente pizza");
+    onPizzaSelect(slotOrder, candidateVariantId, groupId, optionId);
+  }
+
   return (
     <div className="modal-backdrop" role="presentation">
-      <section aria-label="Configurar combo" aria-modal="true" className="modal-panel pos-pizza-modal" role="dialog">
+      <section aria-label="Configurar combo" aria-modal="true" className="modal-panel pos-pizza-modal pos-combo-selector-modal" role="dialog">
         <header className="modal-header">
           <div>
             <strong>{combo.name}</strong>
-            <span>Paso {currentStep} de {totalSteps} · {stepLabel}</span>
+            <span className={stepTransitionLabel ? "pos-combo-step-label is-advancing" : "pos-combo-step-label"}>Paso {currentStep} de {totalSteps} · {stepLabel}</span>
             <small>{combo.description ?? "Elige las opciones del combo."}</small>
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
         <div className="pos-wizard-body pos-combo-wizard-body">
-          {variant && pendingSlot ? <div className="pos-combo-selection-summary" aria-live="polite">
-            <div><span>{combo.name}</span><strong>{variant.name}</strong></div>
-            <div><span>Precio combo</span><strong>{formatCop(variant.sale_price_cop)}</strong></div>
-            <div className="pos-combo-selection-progress"><span>Pizzas</span><strong>{selectedPizzas.map((item) => `1x ${item.label} (${item.groupName})`).join(" · ") || "Pendiente"}</strong></div>
-            {selectedBeverages.length > 0 ? <div className="pos-combo-selection-progress"><span>Bebida incluida</span><strong>{selectedBeverages.map((item) => `1x ${item}`).join(" · ")}</strong></div> : null}
-            <small className="field-hint">Se aplica el grupo de mayor valor seleccionado.</small>
-          </div> : null}
-
-          {pendingSlot ? <WizardStep title={stepLabel}>
-            <p className="field-hint">Todos los sabores permitidos. Cada tarjeta muestra el precio final del combo si la eliges.</p>
-            <div className="pos-combo-flavor-grid">
-              {pendingSlot.choices.map(({ candidate, group, option }) => {
-                const projectedPrice = Math.max(candidate.sale_price_cop, ...selectedPizzaChoices.filter((choice) => choice.slot.sort_order !== pendingSlot.sort_order).map((choice) => choice.candidate.sale_price_cop));
-                return (
-                  <button className="pos-product-card pos-second-flavor-card pos-combo-choice-card" key={`${group.id}-${option.id}`} onClick={() => onPizzaSelect(pendingSlot.sort_order, candidate.id, group.id, option.id)} type="button">
-                    <ProductImage alt={option.name} src={option.image_src} />
-                    <span className="pos-product-title">{option.name}</span>
-                    <small>{candidate.name}</small>
-                    <strong>Combo {formatCop(projectedPrice)}</strong>
-                  </button>
-                );
-              })}
-            </div>
-          </WizardStep> : <WizardStep title="Revisa tu combo">
+          {pendingSlot ? <div className="pos-combo-catalog">
+            <WizardStep title={stepLabel}>
+              {stepTransitionLabel ? <p aria-live="polite" className="pos-combo-next-pizza-notice" role="status">Ahora elige <strong>{stepTransitionLabel}</strong></p> : null}
+              <p className="field-hint">Todos los sabores disponibles.</p>
+              <div className={stepTransitionLabel ? "pos-combo-flavor-grid is-advancing" : "pos-combo-flavor-grid"}>
+                {pendingSlot.choices.map(({ candidate, group, option }) => {
+                  const projectedPrice = Math.max(candidate.sale_price_cop, ...selectedPizzaChoices.filter((choice) => choice.slot.sort_order !== pendingSlot.sort_order).map((choice) => choice.candidate.sale_price_cop));
+                  return (
+                    <button className="pos-product-card pos-second-flavor-card pos-combo-choice-card" key={`${group.id}-${option.id}`} onClick={() => handlePizzaSelect(pendingSlot.sort_order, candidate.id, group.id, option.id)} type="button">
+                      <ProductImage alt={option.name} src={option.image_src} />
+                      <span className="pos-product-title">{option.name}</span>
+                      <strong>Combo {formatCop(projectedPrice)}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            </WizardStep>
+          </div> : <div className="pos-combo-catalog pos-combo-review-body"><WizardStep title="Revisa tu combo">
             <div className="pos-combo-review-list">
               {selectedPizzas.map((item) => {
                 const slot = pizzaSlots.find((candidate) => candidate.name === item.slotName);
@@ -2703,16 +2727,18 @@ function ComboSelectorModal({
                 </div>
               ))}
             </div>
-            {variant ? <div className="pos-summary-card pos-combo-total-summary">
-              <div><span>Grupo de precio aplicado</span><strong>{variant.name}</strong></div>
-              <div><span>Precio combo</span><strong>{formatCop(variant.sale_price_cop)}</strong></div>
-              <small className="field-hint">Se aplica el grupo de mayor valor seleccionado.</small>
-            </div> : null}
-          </WizardStep>}
+          </WizardStep></div>}
         </div>
-        <footer className="pos-wizard-footer">
-          <button className="ghost-button" onClick={onClose} type="button">Cancelar</button>
-          <button className="primary-button" disabled={!complete} onClick={onAdd} type="button">Agregar combo al pedido</button>
+        <footer className="pos-wizard-footer pos-combo-selector-footer">
+          <div className="pos-combo-footer-summary" aria-live="polite">
+            {pizzaSlots.map((slot, index) => <div key={slot.id}><span>{slot.name || `Pizza ${index + 1}`}</span><strong>{selectedPizzas[index]?.label ?? "Selecciona un sabor"}</strong></div>)}
+            <div><span>Bebida</span><strong>{footerBeverages.length ? footerBeverages.join(" · ") : "Incluida"}</strong></div>
+            <div className="pos-combo-footer-price"><span>Precio combo</span><strong>{variant ? formatCop(variant.sale_price_cop) : "Por definir"}</strong></div>
+          </div>
+          <div className="pos-combo-footer-actions">
+            <button className="ghost-button" onClick={onClose} type="button">Cancelar</button>
+            <button className="primary-button" disabled={!complete} onClick={onAdd} type="button">Agregar combo al pedido</button>
+          </div>
         </footer>
       </section>
     </div>

@@ -1,4 +1,5 @@
 import { convertStockQuantity, type StockUnit } from "@/lib/units";
+import { applyPhysicalStockAdjustments, type PhysicalStockAdjustment } from "@/lib/inventory-stock";
 
 export type ProductionStorageMethod = "ambient" | "refrigerated" | "frozen";
 export type ProductionUnitKind = "weight" | "volume" | "unit";
@@ -167,6 +168,7 @@ export function buildProductionInventory({
   consumptions,
   traceAllocations,
   outboundConsumptions = [],
+  physicalAdjustments = [],
   inventoryNames,
   preparationNames,
   imageSrcByPreparationId = new Map()
@@ -176,10 +178,35 @@ export function buildProductionInventory({
   consumptions: ProductionConsumptionInput[];
   traceAllocations: ProductionTraceAllocationInput[];
   outboundConsumptions?: ProductionLotOutboundInput[];
+  physicalAdjustments?: Array<PhysicalStockAdjustment & { source_preparation_id: string | null }>;
   inventoryNames: Map<string, string>;
   preparationNames: Map<string, string>;
   imageSrcByPreparationId?: Map<string, string | null>;
 }) {
+  const adjustedStockByBatch = new Map<string, number>();
+  const batchesByPreparation = new Map<string, ProductionBatchInput[]>();
+  for (const batch of batches) {
+    batchesByPreparation.set(batch.preparation_id, [...(batchesByPreparation.get(batch.preparation_id) ?? []), batch]);
+  }
+  for (const [preparationId, preparationBatches] of batchesByPreparation) {
+    const unit = preparationBatches[0]?.base_unit;
+    if (!unit) continue;
+    const { originStock } = applyPhysicalStockAdjustments(
+      preparationBatches
+        .map((batch) => ({
+          id: batch.id,
+          available: Math.max(0, Number(batch.initial_quantity_base ?? 0) - productionAllocationSum(allocations, batch.id)),
+          occurredAt: batch.elaborated_at,
+          expiration: batch.expiration_date,
+          sequence: Number(batch.production_number ?? 0)
+        }))
+        .sort((a, b) => a.expiration.localeCompare(b.expiration) || a.occurredAt.localeCompare(b.occurredAt) || a.sequence - b.sequence),
+      physicalAdjustments.filter((adjustment) => adjustment.source_preparation_id === preparationId),
+      unit
+    );
+    for (const [batchId, stock] of originStock) adjustedStockByBatch.set(batchId, stock);
+  }
+
   const traceAllocationsByConsumption = new Map<string, ProductionTraceAllocationInput[]>();
   for (const allocation of traceAllocations) {
     traceAllocationsByConsumption.set(allocation.consumption_id, [
@@ -230,7 +257,7 @@ export function buildProductionInventory({
     .map((batch) => {
       const initialQuantity = Number(batch.initial_quantity_base ?? 0);
       const consumedQuantity = productionAllocationSum(allocations, batch.id);
-      const stock = Math.max(0, initialQuantity - consumedQuantity);
+      const stock = adjustedStockByBatch.get(batch.id) ?? Math.max(0, initialQuantity - consumedQuantity);
       const unitCost = Number(batch.unit_cost_cop ?? 0);
       let runningBalance = initialQuantity;
       const normalizedLotOutbounds = (outboundByBatch.get(batch.id) ?? [])
