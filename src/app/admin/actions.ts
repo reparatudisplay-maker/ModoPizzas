@@ -228,6 +228,8 @@ type PosComboCartChoice = {
   id: string;
   name: string;
   unit_price_cop: number;
+  pizza_slot_order?: number;
+  is_half?: boolean;
   line_key?: string;
 };
 
@@ -258,6 +260,33 @@ type PosComboComponentCartItem = {
   combo_price_adjustment_cop?: number;
   combo_component_normal_price_cop?: number;
 };
+
+type PosExpandedComboComponent = {
+  primary: PosComboCartChoice;
+  secondary_id: string | null;
+  normal_price_cop: number;
+};
+
+function collapseComboPizzaHalfChoices(choices: PosComboCartChoice[]): PosExpandedComboComponent[] {
+  const handledSlots = new Set<number>();
+  const components: PosExpandedComboComponent[] = [];
+  for (const choice of choices) {
+    if (choice.kind !== "pizza" || !choice.is_half || choice.pizza_slot_order === undefined) {
+      components.push({ primary: choice, secondary_id: null, normal_price_cop: Number(choice.unit_price_cop ?? 0) });
+      continue;
+    }
+    if (handledSlots.has(choice.pizza_slot_order)) continue;
+    const pair = choices.filter((candidate) => candidate.kind === "pizza" && candidate.is_half && candidate.pizza_slot_order === choice.pizza_slot_order);
+    if (pair.length !== 2 || pair[0].id === pair[1].id) throw new Error("Selecciona dos sabores distintos para la pizza mitad y mitad.");
+    handledSlots.add(choice.pizza_slot_order);
+    components.push({
+      primary: pair[0],
+      secondary_id: pair[1].id,
+      normal_price_cop: Math.max(Number(pair[0].unit_price_cop ?? 0), Number(pair[1].unit_price_cop ?? 0))
+    });
+  }
+  return components;
+}
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -1671,13 +1700,29 @@ async function expandComboItemsForPos(
     const variant = selectedPizzaSources.sort((left, right) => Number(right.candidate.sale_price_cop ?? 0) - Number(left.candidate.sale_price_cop ?? 0))[0]?.candidate;
     if (!variant) throw new Error("Selecciona las pizzas del combo.");
     const groups = Array.isArray(variant.combo_groups) ? variant.combo_groups : [];
+    const hasSinglePizzaSlot = groups.filter((group) => group.group_kind === "pizza" && group.is_required).length === 1;
     const expectedChoices: PosComboCartChoice[] = [];
     for (const group of groups) {
       const selected = group.group_kind === "pizza"
         ? choices.filter((choice) => allGroups.some(({ group: sourceGroup }) => sourceGroup.id === choice.group_id && sourceGroup.group_kind === "pizza" && Number(sourceGroup.sort_order ?? 0) === Number(group.sort_order ?? 0)))
         : choices.filter((choice) => choice.group_id === group.id);
-      if (group.is_required && selected.length !== Number(group.quantity_to_choose ?? 1)) throw new Error(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
-      if (selected.length > Number(group.quantity_to_choose ?? 1)) throw new Error(`Hay demasiadas opciones en ${group.name}.`);
+      const isHalfSelection = hasSinglePizzaSlot && group.group_kind === "pizza" && Number(group.quantity_to_choose ?? 1) === 1 && selected.length === 2 && selected.every((choice) => choice.is_half === true);
+      const effectiveSelectedCount = isHalfSelection ? 1 : selected.length;
+      if (group.is_required && effectiveSelectedCount !== Number(group.quantity_to_choose ?? 1)) throw new Error(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
+      if (!isHalfSelection && selected.length > Number(group.quantity_to_choose ?? 1)) throw new Error(`Hay demasiadas opciones en ${group.name}.`);
+      if (isHalfSelection) {
+        const flavorIds = selected.map((choice) => choice.id).filter(Boolean);
+        const { data: halfFlavors, error: halfFlavorsError } = await supabase
+          .from("pizza_price_configs")
+          .select("id, pizza_flavors(allows_half_and_half)")
+          .in("id", flavorIds);
+        if (halfFlavorsError) throw new Error(halfFlavorsError.message);
+        const allAllowHalf = (halfFlavors ?? []).length === 2 && (halfFlavors ?? []).every((price) => {
+          const flavor = Array.isArray(price.pizza_flavors) ? price.pizza_flavors[0] : price.pizza_flavors;
+          return flavor?.allows_half_and_half === true;
+        });
+        if (!allAllowHalf) throw new Error("Los sabores seleccionados no permiten mitad y mitad.");
+      }
       for (const choice of selected) {
         const sourceGroup = allGroups.find(({ group: candidate }) => candidate.id === choice.group_id)?.group ?? group;
         const option = (sourceGroup.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
@@ -1693,7 +1738,7 @@ async function expandComboItemsForPos(
           if (priceError) throw new Error(priceError.message);
           if (!price) throw new Error(`La pizza seleccionada en ${group.name} no tiene precio activo.`);
           const sourceVariant = allGroups.find(({ group: candidate }) => candidate.id === sourceGroup.id)?.candidate;
-          expectedChoices.push({ ...choice, variant_id: sourceVariant?.id ?? variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), line_key: choice.line_key });
+          expectedChoices.push({ ...choice, variant_id: sourceVariant?.id ?? variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), pizza_slot_order: Number(sourceGroup.sort_order ?? 0), is_half: isHalfSelection, line_key: choice.line_key });
         } else {
           const { data: product, error: productError } = await supabase
             .from("pos_sale_product_references")
@@ -1707,7 +1752,8 @@ async function expandComboItemsForPos(
       }
     }
 
-    const normalPriceCop = expectedChoices.reduce((sum, choice) => sum + choice.unit_price_cop, 0);
+    const expectedComponents = collapseComboPizzaHalfChoices(expectedChoices);
+    const normalPriceCop = expectedComponents.reduce((sum, component) => sum + component.normal_price_cop, 0);
     const comboUnitPrice = Number(variant.sale_price_cop ?? combo.sale_price_cop ?? 0);
     const comboSavingsCop = Math.max(0, normalPriceCop - comboUnitPrice);
     const comboPriceAdjustmentCop = comboUnitPrice - normalPriceCop;
@@ -1715,20 +1761,20 @@ async function expandComboItemsForPos(
     if (components.some((component) => Math.max(1, Math.round(Number(component.quantity ?? 1))) !== comboQuantity)) {
       throw new Error("Los componentes del combo deben conservar la misma cantidad.");
     }
-    const weightedTotal = expectedChoices.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop), 0);
+    const weightedTotal = expectedComponents.reduce((sum, component) => sum + Math.max(1, component.normal_price_cop), 0);
     let allocated = 0;
     const expectedByLineKey = new Map<string, number>();
-    expectedChoices.forEach((choice, index) => {
-      const isLast = index === expectedChoices.length - 1;
-      const netPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, choice.unit_price_cop)) / Math.max(1, weightedTotal));
+    expectedComponents.forEach((component, index) => {
+      const isLast = index === expectedComponents.length - 1;
+      const netPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, component.normal_price_cop)) / Math.max(1, weightedTotal));
       allocated += netPrice;
-      if (choice.line_key) expectedByLineKey.set(choice.line_key, netPrice);
+      if (component.primary.line_key) expectedByLineKey.set(component.primary.line_key, netPrice);
     });
 
     for (const [componentIndex, component] of components.entries()) {
-      const expected = expectedChoices.find((choice) => choice.line_key === component.line_key) ?? expectedChoices.find((choice) => choice.kind === component.kind && choice.id === component.id);
+      const expected = expectedComponents.find((choice) => choice.primary.line_key === component.line_key) ?? expectedComponents.find((choice) => choice.primary.kind === component.kind && choice.primary.id === component.id && choice.secondary_id === (component as { secondary_id?: string | null }).secondary_id);
       if (!expected) throw new Error("Los componentes del combo no coinciden con la configuracion vigente.");
-      if (component.kind !== expected.kind || component.id !== expected.id) throw new Error("Los componentes del combo no coinciden con la configuracion vigente.");
+      if (component.kind !== expected.primary.kind || component.id !== expected.primary.id || (component as { secondary_id?: string | null }).secondary_id !== expected.secondary_id) throw new Error("Los componentes del combo no coinciden con la configuracion vigente.");
       const netPrice = component.line_key && expectedByLineKey.has(component.line_key) ? expectedByLineKey.get(component.line_key)! : Math.max(0, Math.round(Number(component.unit_price_cop ?? 0)));
       const componentRecord = component as Record<string, unknown>;
       const componentNotes = typeof componentRecord.notes === "string" && componentRecord.notes ? componentRecord.notes : `COMBO ${combo.sku}`;
@@ -1742,6 +1788,7 @@ async function expandComboItemsForPos(
         combo_price_adjustment_cop: comboPriceAdjustmentCop,
         combo_is_primary: componentIndex === 0,
         unit_price_cop: netPrice,
+        secondary_id: expected.secondary_id,
         notes: componentNotes
       });
     }
@@ -2265,7 +2312,10 @@ export async function registerPurchase(_previousState: FormActionState, formData
         if (error) throw new Error(error.message);
         purchaseKind = selectedItem?.item_kind === "sale_product" || selectedItem?.item_kind === "supply" ? selectedItem.item_kind : "ingredient";
       }
-      const effectivePresentationQuantity = submittedPurchaseMode === "packages" ? packageContentQuantity : presentationQuantity;
+      const isSaleProductPackage = purchaseKind === "sale_product" && submittedPurchaseMode === "packages";
+      const effectivePresentationQuantity = isSaleProductPackage
+        ? presentationQuantity
+        : submittedPurchaseMode === "packages" ? packageContentQuantity : presentationQuantity;
       const normalizedPresentation = effectivePresentationQuantity > 0
         ? normalizeStockQuantityToBase(effectivePresentationQuantity, presentationUnit)
         : { quantity: 0, unit: canonicalStockUnit(presentationUnit) };
@@ -2282,10 +2332,13 @@ export async function registerPurchase(_previousState: FormActionState, formData
       const itemPurchaseMode = purchaseKind === "ingredient" && !isUnitStockItem && (item.purchase_mode === "packages" || item.purchase_mode === "total_weight")
         ? item.purchase_mode
         : submittedPurchaseMode;
-      if (itemPurchaseMode === "packages" && packageContentQuantity <= 0) throw new Error("Ingresa el contenido por paquete en cada línea.");
+      if (itemPurchaseMode === "packages" && packageContentQuantity <= 0) {
+        throw new Error(isSaleProductPackage ? "Ingresa las unidades por paquete en cada línea." : "Ingresa el contenido por paquete en cada línea.");
+      }
+      if (isSaleProductPackage && presentationQuantity <= 0) throw new Error("Ingresa la presentación de cada unidad en cada línea.");
       const ingredientEntryQuantity = purchaseKind === "ingredient" && itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity;
       const normalizedQuantity = purchaseKind === "sale_product"
-        ? enteredQuantity
+        ? itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity
         : isUnitStockItem
           ? itemPurchaseMode === "packages" ? enteredQuantity * packageContentQuantity : enteredQuantity
           : purchaseKind === "supply"
@@ -2298,10 +2351,10 @@ export async function registerPurchase(_previousState: FormActionState, formData
         quantity: normalizedQuantity,
         unit: targetUnit,
         presentation_quantity: itemPurchaseMode === "packages"
-          ? purchaseKind === "sale_product" ? packageContentQuantity : normalizedPresentation.quantity
-          : purchaseKind === "ingredient" && targetUnit !== "unit" ? enteredQuantity : normalizedPresentation.quantity || null,
+          ? normalizedPresentation.quantity
+        : purchaseKind === "ingredient" && targetUnit !== "unit" ? enteredQuantity : normalizedPresentation.quantity || null,
         presentation_unit: itemPurchaseMode === "packages"
-          ? purchaseKind === "sale_product" ? presentationUnit : normalizedPresentation.unit
+          ? normalizedPresentation.unit
           : purchaseKind === "ingredient" && targetUnit !== "unit" ? presentationUnit : normalizedPresentation.quantity > 0 ? normalizedPresentation.unit : null,
         merchandise_total_cop: Math.round(merchandiseTotal),
         expiration_date: rawLine.expiration_date || null

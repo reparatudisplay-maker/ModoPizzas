@@ -144,7 +144,14 @@ type ComboChoice = {
   name: string;
   presentation?: string | null;
   unit_price_cop: number;
+  pizza_slot_order?: number;
+  is_half?: boolean;
   line_key?: string;
+};
+
+type ComboComponentDraft = {
+  primary: ComboChoice;
+  secondary: ComboChoice | null;
 };
 
 type CartAddition = {
@@ -814,14 +821,19 @@ export function PosOrderWorkspace({
     setComboWizard(combo);
   }
 
-  function selectComboPizza(slotOrder: number, variantId: string, groupId: string, optionId: string) {
+  function selectComboPizza(slotOrder: number, variantId: string, groupId: string, optionId: string, appendHalf = false) {
     if (!comboWizard) return;
     setComboSelections((current) => {
       const next = { ...current };
-      for (const group of comboWizard.variants.flatMap((candidate) => candidate.groups)) {
-        if (group.group_kind === "pizza" && group.sort_order === slotOrder) delete next[group.id];
+      const slotGroups = comboWizard.variants.flatMap((candidate) => candidate.groups)
+        .filter((group) => group.group_kind === "pizza" && group.sort_order === slotOrder);
+      const selectedSlotOptionIds = slotGroups.flatMap((group) => next[group.id] ?? []);
+      if (!appendHalf) {
+        for (const group of slotGroups) delete next[group.id];
+      } else if (selectedSlotOptionIds.includes(optionId) || selectedSlotOptionIds.length >= 2) {
+        return current;
       }
-      next[groupId] = [optionId];
+      next[groupId] = appendHalf ? [...(next[groupId] ?? []), optionId] : [optionId];
 
       const selectedVariantIds = Object.entries(next).flatMap(([selectedGroupId, optionIds]) => {
         if (optionIds.length === 0) return [];
@@ -884,6 +896,12 @@ export function PosOrderWorkspace({
     for (const [groupId, selected] of Object.entries(comboSelections)) {
       const group = groupsById.get(groupId);
       if (!group) continue;
+      const slotSelections = group.group_kind === "pizza"
+        ? [...groupsById.values()]
+            .filter((candidate) => candidate.group_kind === "pizza" && candidate.sort_order === group.sort_order)
+            .flatMap((candidate) => comboSelections[candidate.id] ?? [])
+        : [];
+      const isHalfSelection = group.group_kind === "pizza" && group.quantity_to_choose === 1 && slotSelections.length === 2;
       for (const optionId of selected) {
         const option = group.options.find((item) => item.id === optionId);
         if (!option) continue;
@@ -897,35 +915,69 @@ export function PosOrderWorkspace({
           id: sourceId,
           name: option.name,
           presentation: option.presentation,
-          unit_price_cop: option.unit_price_cop
+          unit_price_cop: option.unit_price_cop,
+          pizza_slot_order: group.group_kind === "pizza" ? group.sort_order : undefined,
+          is_half: isHalfSelection
         });
       }
     }
     for (const group of variant.groups) {
-      const selectedCount = group.group_kind === "pizza"
+      const selectedForGroup = group.group_kind === "pizza"
         ? choiceDrafts.filter((choice) => choice.kind === "pizza" && groupsById.get(choice.group_id)?.sort_order === group.sort_order).length
         : choiceDrafts.filter((choice) => choice.group_id === group.id).length;
+      const selectedCount = group.group_kind === "pizza" && group.quantity_to_choose === 1 && selectedForGroup === 2 && choiceDrafts
+        .filter((choice) => choice.kind === "pizza" && groupsById.get(choice.group_id)?.sort_order === group.sort_order)
+        .every((choice) => choice.is_half)
+        ? 1
+        : selectedForGroup;
       if (group.is_required && selectedCount !== group.quantity_to_choose) {
         setStockNotice(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
         return;
       }
     }
-    const normalPrice = choiceDrafts.reduce((sum, choice) => sum + choice.unit_price_cop, 0);
-    const comboUnitPrice = variant.sale_price_cop;
-    const comboSavings = Math.max(0, normalPrice - comboUnitPrice);
-    const comboPriceAdjustment = comboUnitPrice - normalPrice;
-    const comboInstanceId = editingComboLineKey ?? cartLineKey();
-    const weightTotal = choiceDrafts.reduce((sum, choice) => sum + Math.max(1, choice.unit_price_cop), 0);
-    let allocated = 0;
     const choices = choiceDrafts.map((choice) => ({
       ...choice,
       applied_variant_id: variant.id,
       applied_variant_name: variant.name,
       line_key: cartLineKey()
     }));
-    const nextLines = choices.map((choice, index) => {
-      const isLast = index === choices.length - 1;
-      const componentNormalPrice = choice.unit_price_cop;
+    const pairedHalfChoices = new Map<number, ComboChoice[]>();
+    for (const choice of choices) {
+      if (choice.kind !== "pizza" || !choice.is_half || choice.pizza_slot_order === undefined) continue;
+      const pair = pairedHalfChoices.get(choice.pizza_slot_order) ?? [];
+      pair.push(choice);
+      pairedHalfChoices.set(choice.pizza_slot_order, pair);
+    }
+    if ([...pairedHalfChoices.values()].some((pair) => pair.length !== 2)) {
+      setStockNotice("Selecciona los dos sabores de la pizza mitad y mitad.");
+      return;
+    }
+    for (const pair of pairedHalfChoices.values()) pair[1].line_key = pair[0].line_key;
+    const componentChoices: ComboComponentDraft[] = [];
+    for (const choice of choices) {
+      if (choice.kind !== "pizza" || !choice.is_half || choice.pizza_slot_order === undefined) {
+        componentChoices.push({ primary: choice, secondary: null });
+        continue;
+      }
+      const pair = pairedHalfChoices.get(choice.pizza_slot_order) ?? [];
+      if (pair[0] === choice) componentChoices.push({ primary: pair[0], secondary: pair[1] });
+    }
+    const normalPrice = componentChoices.reduce(
+      (sum, component) => sum + Math.max(component.primary.unit_price_cop, component.secondary?.unit_price_cop ?? 0),
+      0
+    );
+    const comboUnitPrice = variant.sale_price_cop;
+    const comboSavings = Math.max(0, normalPrice - comboUnitPrice);
+    const comboPriceAdjustment = comboUnitPrice - normalPrice;
+    const comboInstanceId = editingComboLineKey ?? cartLineKey();
+    const weightTotal = componentChoices.reduce(
+      (sum, component) => sum + Math.max(1, component.primary.unit_price_cop, component.secondary?.unit_price_cop ?? 0),
+      0
+    );
+    let allocated = 0;
+    const nextLines = componentChoices.map(({ primary: choice, secondary }, index) => {
+      const isLast = index === componentChoices.length - 1;
+      const componentNormalPrice = Math.max(choice.unit_price_cop, secondary?.unit_price_cop ?? 0);
       const componentNetPrice = isLast ? comboUnitPrice - allocated : Math.round((comboUnitPrice * Math.max(1, componentNormalPrice)) / Math.max(1, weightTotal));
       allocated += componentNetPrice;
       const common = {
@@ -957,8 +1009,8 @@ export function PosOrderWorkspace({
           signature: "",
           kind: "pizza" as const,
           id: choice.id,
-          secondary_id: null,
-          name: `${choice.name}${pizzaPresentation ? ` ${pizzaPresentation}` : ""}`,
+          secondary_id: secondary?.id ?? null,
+          name: `${choice.name}${secondary ? ` / ${secondary.name}` : ""}${pizzaPresentation ? ` ${pizzaPresentation}` : ""}`,
           sku: price?.sku ?? null,
           image_src: pizza?.image_src ?? comboWizard.image_src,
           removed_components: [],
@@ -1556,6 +1608,7 @@ export function PosOrderWorkspace({
             setSelectedComboVariantId(null);
             setEditingComboLineKey(null);
           }}
+          pizzas={pizzas}
           selections={comboSelections}
         />
       ) : null}
@@ -2607,17 +2660,20 @@ function ComboSelectorModal({
   selections,
   onPizzaSelect,
   onAdd,
-  onClose
+  onClose,
+  pizzas
 }: {
   combo: PosComboOption;
   variantId: string | null;
   onPizzaClear: (slotOrder: number) => void;
   selections: Record<string, string[]>;
-  onPizzaSelect: (slotOrder: number, variantId: string, groupId: string, optionId: string) => void;
+  onPizzaSelect: (slotOrder: number, variantId: string, groupId: string, optionId: string, appendHalf?: boolean) => void;
   onAdd: () => void;
   onClose: () => void;
+  pizzas: PosPizzaOption[];
 }) {
   const [stepTransitionLabel, setStepTransitionLabel] = useState<string | null>(null);
+  const [slotModes, setSlotModes] = useState<Record<number, PizzaMode>>({});
   const allGroups = combo.variants.flatMap((candidate) => candidate.groups.map((group) => ({ candidate, group })));
   const pizzaSlots = (combo.variants[0]?.groups ?? [])
     .filter((group) => group.group_kind === "pizza" && group.is_required)
@@ -2628,22 +2684,45 @@ function ComboSelectorModal({
         .filter(({ group }) => group.group_kind === "pizza" && group.sort_order === templateGroup.sort_order)
         .flatMap(({ candidate, group }) => group.options.map((option) => ({ candidate, group, option })))
     }));
-  const selectedPizzaChoices = pizzaSlots.flatMap((slot) => {
-    const choice = slot.choices.find(({ group, option }) => (selections[group.id] ?? []).includes(option.id));
-    return choice ? [{ slot, ...choice }] : [];
-  });
+  const selectedChoicesBySlot = pizzaSlots.map((slot) => ({
+    slot,
+    choices: slot.choices.filter(({ group, option }) => (selections[group.id] ?? []).includes(option.id))
+  }));
+  const selectedPizzaChoices = selectedChoicesBySlot.flatMap(({ slot, choices }) => choices.map((choice) => ({ slot, ...choice })));
+  const slotMode = (slot: typeof pizzaSlots[number]): PizzaMode =>
+    selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length === 2
+      ? "half"
+      : slotModes[slot.sort_order] ?? "whole";
+  const requiredSelectionsForSlot = (slot: typeof pizzaSlots[number]) => slotMode(slot) === "half" ? 2 : 1;
+  const slotHasHalfEligibleFlavor = (slot: typeof pizzaSlots[number]) =>
+    slot.choices.filter(({ option }) => option.pizza_flavor_id && pizzas.find((pizza) => pizza.flavor_id === option.pizza_flavor_id)?.allows_half_and_half).length >= 2;
+  const standalonePizzaTypeSlot = pizzaSlots.length === 1 && slotHasHalfEligibleFlavor(pizzaSlots[0])
+    ? pizzaSlots[0]
+    : null;
+  const needsPizzaTypeChoice = Boolean(
+    standalonePizzaTypeSlot
+    && (selectedChoicesBySlot[0]?.choices.length ?? 0) === 0
+    && slotModes[standalonePizzaTypeSlot.sort_order] === undefined
+  );
+  const slotIsComplete = (slot: typeof pizzaSlots[number]) => {
+    const count = selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length ?? 0;
+    return count === requiredSelectionsForSlot(slot);
+  };
   const appliedVariant = combo.variants
     .filter((candidate) => selectedPizzaChoices.some((choice) => choice.candidate.id === candidate.id))
     .sort((left, right) => right.sale_price_cop - left.sale_price_cop)[0] ?? null;
   const variant = combo.variants.find((candidate) => candidate.id === variantId) ?? appliedVariant;
   const includedProductGroups = (variant?.groups ?? []).filter((group) => group.group_kind === "sale_product" && group.is_required);
-  const complete = selectedPizzaChoices.length === pizzaSlots.length && includedProductGroups.every((group) => (selections[group.id] ?? []).length === group.quantity_to_choose);
-  const pendingSlot = pizzaSlots.find((slot) => !selectedPizzaChoices.some((choice) => choice.slot.sort_order === slot.sort_order)) ?? null;
-  const selectedPizzas = selectedPizzaChoices.map(({ slot, candidate, option }) => ({
-    label: comboOptionLabel(option),
-    groupName: candidate.name,
-    slotName: slot.name
-  }));
+  const complete = pizzaSlots.every(slotIsComplete) && includedProductGroups.every((group) => (selections[group.id] ?? []).length === group.quantity_to_choose);
+  const pendingSlot = pizzaSlots.find((slot) => !slotIsComplete(slot)) ?? null;
+  const selectedPizzas = selectedChoicesBySlot
+    .filter(({ choices }) => choices.length > 0)
+    .map(({ slot, choices }) => ({
+      label: choices.map(({ option }) => comboOptionLabel(option)).join(" / "),
+      groupName: [...choices].sort((left, right) => right.candidate.sale_price_cop - left.candidate.sale_price_cop)[0]?.candidate.name ?? "",
+      slotName: slot.name,
+      isHalf: choices.length === 2
+    }));
   const selectedBeverages = includedProductGroups.flatMap((group) =>
     (selections[group.id] ?? []).flatMap((optionId) => {
       const option = group.options.find((candidate) => candidate.id === optionId);
@@ -2660,10 +2739,19 @@ function ComboSelectorModal({
       .map(comboOptionLabel);
     return selected.length ? selected : group.options.length === 1 ? [comboOptionLabel(group.options[0])] : [];
   });
-  const totalSteps = pizzaSlots.length + 2;
-  const currentStep = pendingSlot ? selectedPizzaChoices.length + 2 : totalSteps;
-  const stepLabel = pendingSlot
-    ? pizzaSlots.length === 1
+  const minimumComboPrice = combo.variants.reduce((lowest, candidate) => Math.min(lowest, candidate.sale_price_cop), combo.sale_price_cop);
+  const totalSteps = pizzaSlots.length + 2 + Number(Boolean(standalonePizzaTypeSlot)) + pizzaSlots.filter((slot) => slotMode(slot) === "half").length;
+  const currentStep = needsPizzaTypeChoice
+    ? 2
+    : pendingSlot
+    ? 2 + Number(Boolean(standalonePizzaTypeSlot)) + selectedChoicesBySlot.reduce((sum, entry) => sum + Math.min(entry.choices.length, requiredSelectionsForSlot(entry.slot)), 0)
+    : totalSteps;
+  const stepLabel = needsPizzaTypeChoice
+    ? "Elige el tipo de pizza"
+    : pendingSlot
+    ? slotMode(pendingSlot) === "half" && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingSlot.sort_order)?.choices.length ?? 0) === 1
+      ? `Elige el segundo sabor de ${pendingSlot.name}`
+      : pizzaSlots.length === 1
       ? "Elige el sabor"
       : `Elige el sabor de ${pendingSlot.name}`
     : "Revisa tu combo";
@@ -2675,9 +2763,31 @@ function ComboSelectorModal({
   }, [stepTransitionLabel]);
 
   function handlePizzaSelect(slotOrder: number, candidateVariantId: string, groupId: string, optionId: string) {
+    const slot = pizzaSlots.find((candidate) => candidate.sort_order === slotOrder);
+    const selectingHalf = slot ? slotMode(slot) === "half" : false;
     const nextSlot = pizzaSlots.find((slot) => slot.sort_order > slotOrder);
-    if (nextSlot) setStepTransitionLabel(nextSlot.name || "la siguiente pizza");
-    onPizzaSelect(slotOrder, candidateVariantId, groupId, optionId);
+    if (selectingHalf && slot && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slotOrder)?.choices.length ?? 0) === 0) {
+      setStepTransitionLabel(`el segundo sabor de ${slot.name}`);
+    } else if (nextSlot) {
+      setStepTransitionLabel(nextSlot.name || "la siguiente pizza");
+    }
+    onPizzaSelect(slotOrder, candidateVariantId, groupId, optionId, selectingHalf);
+  }
+
+  function changeSlotMode(slot: typeof pizzaSlots[number], mode: PizzaMode) {
+    if ((selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length ?? 0) > 0) {
+      onPizzaClear(slot.sort_order);
+    }
+    setSlotModes((current) => ({ ...current, [slot.sort_order]: mode }));
+  }
+
+  function resetPizzaType(slot: typeof pizzaSlots[number]) {
+    onPizzaClear(slot.sort_order);
+    setSlotModes((current) => {
+      const next = { ...current };
+      delete next[slot.sort_order];
+      return next;
+    });
   }
 
   return (
@@ -2692,12 +2802,31 @@ function ComboSelectorModal({
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
         <div className="pos-wizard-body pos-combo-wizard-body">
-          {pendingSlot ? <div className="pos-combo-catalog">
-            <WizardStep title={stepLabel}>
+          {needsPizzaTypeChoice && standalonePizzaTypeSlot ? <div className="pos-combo-catalog pos-combo-type-choice">
+            <WizardStep title="Elige el tipo de pizza">
+              <p className="field-hint">Define primero c&oacute;mo quieres tu pizza grande.</p>
+              <div className="pos-option-grid">
+                <button className="pos-type-card" onClick={() => changeSlotMode(standalonePizzaTypeSlot, "whole")} type="button">
+                  <span className="pizza-type-illustration whole" />
+                  <strong>Pizza entera</strong>
+                  <span>Desde {formatCop(minimumComboPrice)}</span>
+                </button>
+                <button className="pos-type-card" onClick={() => changeSlotMode(standalonePizzaTypeSlot, "half")} type="button">
+                  <span className="pizza-type-illustration half" />
+                  <strong>Mitad y mitad</strong>
+                  <span>Precio del sabor mayor</span>
+                </button>
+              </div>
+            </WizardStep>
+          </div> : pendingSlot ? <div className="pos-combo-catalog">
+            <WizardStep onBack={standalonePizzaTypeSlot ? () => resetPizzaType(standalonePizzaTypeSlot) : undefined} title={stepLabel}>
               {stepTransitionLabel ? <p aria-live="polite" className="pos-combo-next-pizza-notice" role="status">Ahora elige <strong>{stepTransitionLabel}</strong></p> : null}
               <p className="field-hint">Todos los sabores disponibles.</p>
               <div className={stepTransitionLabel ? "pos-combo-flavor-grid is-advancing" : "pos-combo-flavor-grid"}>
-                {pendingSlot.choices.map(({ candidate, group, option }) => {
+                {pendingSlot.choices
+                  .filter(({ option }) => slotMode(pendingSlot) !== "half" || !option.pizza_flavor_id || pizzas.find((pizza) => pizza.flavor_id === option.pizza_flavor_id)?.allows_half_and_half)
+                  .filter(({ option }) => !selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingSlot.sort_order)?.choices.some((choice) => choice.option.pizza_flavor_id === option.pizza_flavor_id))
+                  .map(({ candidate, group, option }) => {
                   const projectedPrice = Math.max(candidate.sale_price_cop, ...selectedPizzaChoices.filter((choice) => choice.slot.sort_order !== pendingSlot.sort_order).map((choice) => choice.candidate.sale_price_cop));
                   return (
                     <button className="pos-product-card pos-second-flavor-card pos-combo-choice-card" key={`${group.id}-${option.id}`} onClick={() => handlePizzaSelect(pendingSlot.sort_order, candidate.id, group.id, option.id)} type="button">
@@ -2715,7 +2844,7 @@ function ComboSelectorModal({
                 const slot = pizzaSlots.find((candidate) => candidate.name === item.slotName);
                 return (
                   <div className="pos-combo-review-row" key={`pizza-${item.slotName}`}>
-                    <div><span>{item.slotName}</span><strong>1x {item.label}</strong></div>
+                    <div><span>{item.slotName}{item.isHalf ? " · Mitad y mitad" : ""}</span><strong>1x {item.label}</strong></div>
                     {slot ? <button className="ghost-button" onClick={() => onPizzaClear(slot.sort_order)} type="button">Cambiar</button> : null}
                   </div>
                 );
@@ -2733,7 +2862,7 @@ function ComboSelectorModal({
           <div className="pos-combo-footer-summary" aria-live="polite">
             {pizzaSlots.map((slot, index) => <div key={slot.id}><span>{slot.name || `Pizza ${index + 1}`}</span><strong>{selectedPizzas[index]?.label ?? "Selecciona un sabor"}</strong></div>)}
             <div><span>Bebida</span><strong>{footerBeverages.length ? footerBeverages.join(" · ") : "Incluida"}</strong></div>
-            <div className="pos-combo-footer-price"><span>Precio combo</span><strong>{variant ? formatCop(variant.sale_price_cop) : "Por definir"}</strong></div>
+            <div className="pos-combo-footer-price"><span>Precio combo</span><strong>{variant ? formatCop(variant.sale_price_cop) : needsPizzaTypeChoice ? `Desde ${formatCop(minimumComboPrice)}` : "Por definir"}</strong></div>
           </div>
           <div className="pos-combo-footer-actions">
             <button className="ghost-button" onClick={onClose} type="button">Cancelar</button>

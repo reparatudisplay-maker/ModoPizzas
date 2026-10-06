@@ -151,6 +151,9 @@ function getPurchaseQuantity(purchase: Purchase) {
   const item = purchase.purchase_items[0];
   if (!item) return "-";
   const product = item.inventory_items;
+  if (product?.item_kind === "sale_product") {
+    return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.quantity ?? 0))} ${unitLabel("unit")}`;
+  }
   if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
     if (product.purchase_mode === "packages") return formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
     return item.presentation_quantity && item.presentation_unit
@@ -285,7 +288,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
               quantity: Number(line.quantity ?? 0),
               unit: line.unit,
               presentation_quantity: line.presentation_quantity,
-              presentation_unit: line.presentation_unit === "unit" && masterItem?.unit && masterItem.unit !== "unit" ? masterItem.unit : line.presentation_unit,
+              presentation_unit: line.presentation_unit === "unit" && masterItem?.item_kind === "ingredient" && masterItem.unit !== "unit" ? masterItem.unit : line.presentation_unit,
               merchandise_total_cop: Number(line.merchandise_total_cop ?? line.line_total_cop ?? 0),
               expiration_date: line.expiration_date
             };
