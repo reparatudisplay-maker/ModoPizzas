@@ -2,6 +2,10 @@
 
 const CSS_PIXELS_PER_MILLIMETER = 96 / 25.4;
 
+export function canUseBrowserPrint() {
+  return typeof window !== "undefined" && typeof window.print === "function";
+}
+
 const thermalDocumentStyles = `
   @page { margin: 0; }
   * { box-sizing: border-box; }

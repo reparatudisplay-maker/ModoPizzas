@@ -71,7 +71,7 @@ function getPdfLines(source: HTMLElement) {
   });
 }
 
-function createThermalPdf(lines: PdfLine[]) {
+export function createThermalPdf(lines: PdfLine[]) {
   const laidOut = lines.map((line) => ({ ...line, leading: line.size + 3 }));
   const pageHeight = Math.max(70, VERTICAL_MARGIN_PT * 2 + laidOut.reduce((total, line) => total + line.leading, 0));
   let y = pageHeight - VERTICAL_MARGIN_PT;
@@ -107,14 +107,49 @@ function createThermalPdf(lines: PdfLine[]) {
   return new Blob([toPdfBytes(pdf)], { type: "application/pdf" });
 }
 
-export function downloadThermalPdf(source: HTMLElement, filename: string) {
+function thermalPdfBlob(source: HTMLElement) {
   const lines = getPdfLines(source);
-  if (lines.length === 0) return false;
-  const url = URL.createObjectURL(createThermalPdf(lines));
+  return lines.length > 0 ? createThermalPdf(lines) : null;
+}
+
+export function downloadThermalPdf(source: HTMLElement, filename: string) {
+  const blob = thermalPdfBlob(source);
+  if (!blob) return false;
+  const url = URL.createObjectURL(blob);
   const anchor = window.document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   return true;
+}
+
+export type ThermalPdfFallbackResult = "shared" | "opened" | "cancelled" | "unavailable";
+
+export async function shareOrOpenThermalPdf(source: HTMLElement, filename: string): Promise<ThermalPdfFallbackResult> {
+  const blob = thermalPdfBlob(source);
+  if (!blob) return "unavailable";
+
+  const file = new File([blob], filename, { type: "application/pdf" });
+  const canShareFile = typeof navigator.canShare !== "function" || navigator.canShare({ files: [file] });
+  if (typeof navigator.share === "function" && canShareFile) {
+    try {
+      await navigator.share({ files: [file], title: filename.replace(/\.pdf$/i, "") });
+      return "shared";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const preview = window.open(url, "_blank", "noopener,noreferrer");
+  if (!preview) {
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return "opened";
 }

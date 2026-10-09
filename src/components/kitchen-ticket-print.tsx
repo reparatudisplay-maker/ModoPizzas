@@ -4,8 +4,8 @@ import { useRef, useState, type Ref } from "react";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { getKitchenTicket, type KitchenTicket } from "@/app/admin/actions";
 import { formatStockQuantity } from "@/lib/units";
-import { printThermalDocuments } from "@/lib/thermal-print";
-import { downloadThermalPdf } from "@/lib/thermal-pdf";
+import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
+import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 
 function formatTicketDate(value: string) {
   if (!value) return "Sin fecha";
@@ -99,11 +99,24 @@ export const KitchenTicketDocument = ({ compact = false, ticket, printRef }: { c
 function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket: KitchenTicket }) {
   const ticketRef = useRef<HTMLElement>(null);
   const [printError, setPrintError] = useState("");
-  const handlePrint = () => {
+  const [printMessage, setPrintMessage] = useState("");
+  const handlePrint = async () => {
     setPrintError("");
-    if (!ticketRef.current || !printThermalDocuments([ticketRef.current], `Comanda ${ticket.order.code}`)) {
-      setPrintError("No se pudo abrir el documento térmico para imprimir.");
+    setPrintMessage("");
+    if (!ticketRef.current) {
+      setPrintError("No se pudo preparar la comanda para imprimir.");
+      return;
     }
+    if (canUseBrowserPrint()) {
+      if (!printThermalDocuments([ticketRef.current], `Comanda ${ticket.order.code}`)) {
+        setPrintError("No se pudo abrir el documento térmico para imprimir.");
+      }
+      return;
+    }
+    const result = await shareOrOpenThermalPdf(ticketRef.current, `comanda-${ticket.order.code}.pdf`);
+    if (result === "shared") setPrintMessage("PDF térmico listo para compartir o imprimir.");
+    else if (result === "opened") setPrintMessage("PDF térmico abierto para imprimir desde el visor.");
+    else if (result !== "cancelled") setPrintError("No se pudo preparar el PDF térmico.");
   };
   const handleDownload = () => {
     setPrintError("");
@@ -117,14 +130,18 @@ function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket
       <section aria-label={`Vista previa de comanda ${ticket.order.code}`} aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header kitchen-ticket-preview-header">
           <div><strong>Vista previa de comanda</strong><span>Formato térmico de 58 mm</span></div>
-          <button className="icon-button kitchen-ticket-print-action" onClick={handleDownload} title="Descargar PDF de comanda" type="button"><Download size={18} /></button>
-          <button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button>
+          <div className="kitchen-ticket-preview-header-actions">
+            <button className="ghost-button kitchen-ticket-header-print" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir</button>
+            <button className="icon-button kitchen-ticket-print-action" onClick={handleDownload} title="Descargar PDF de comanda" type="button"><Download size={18} /></button>
+            <button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button>
+          </div>
         </header>
         <div className="kitchen-ticket-print-root kitchen-ticket-print-root-58"><KitchenTicketDocument compact printRef={ticketRef} ticket={ticket} /></div>
+        {printMessage ? <p className="form-status">{printMessage}</p> : null}
         {printError ? <p className="form-status error">{printError}</p> : null}
         <footer className="modal-footer kitchen-ticket-preview-footer">
           <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
-          <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={handlePrint} type="button"><Printer size={17} /> Imprimir comanda</button></div>
+          <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir comanda</button></div>
         </footer>
       </section>
     </div>

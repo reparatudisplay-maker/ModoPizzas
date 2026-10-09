@@ -175,6 +175,11 @@ const menuPriceLinks: NavLink[] = [
     { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: canAccess("configuracion") }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
+  const communicationModule = active === "cocina"
+    ? "cocina"
+    : active === "pedidos-nuevo" || active === "caja-estado" || active === "caja-movimientos" || active === "caja-cierre"
+      ? "caja"
+      : null;
   const ordersActive = orderLinks.some((link) => link.key === active);
   const expensesActive = expenseLinks.some((link) => link.key === active);
   const cashActive = cashLinks.some((link) => link.key === active);
@@ -410,7 +415,7 @@ const menuPriceLinks: NavLink[] = [
       </section>
       <ModalDragController />
       {accountOpen ? <MyAccountModal avatarUrl={profile.avatarUrl} email={userEmail} fullName={displayName} onClose={() => setAccountOpen(false)} role={primaryRoleLabel(roleNames)} /> : null}
-      <ThemeToggle />
+      <ThemeToggle communicationModule={communicationModule} />
     </main>
   );
 }

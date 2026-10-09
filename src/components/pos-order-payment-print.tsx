@@ -4,9 +4,9 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { getKitchenTicket, getPosOrderReceipt, type PosOrderReceipt } from "@/app/admin/actions";
 import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
 import { formatCop } from "@/lib/format";
-import { Download, LoaderCircle } from "lucide-react";
-import { downloadThermalPdf } from "@/lib/thermal-pdf";
-import { printThermalDocuments } from "@/lib/thermal-print";
+import { Download, LoaderCircle, Printer, X } from "lucide-react";
+import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
+import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 
 export type PaymentPrintSelection = {
   kitchen: boolean;
@@ -69,22 +69,67 @@ function CustomerReceiptDocument({ receipt, printRef }: { receipt: PosOrderRecei
   );
 }
 
-export function CustomerReceiptPdfButton({ orderCode, orderId }: { orderCode: string; orderId: string }) {
+function CustomerReceiptPreview({ onClose, receipt }: { onClose: () => void; receipt: PosOrderReceipt }) {
+  const receiptRef = useRef<HTMLElement>(null);
+  const [printError, setPrintError] = useState("");
+  const [printMessage, setPrintMessage] = useState("");
+
+  const handleDownload = () => {
+    setPrintError("");
+    setPrintMessage("");
+    if (!receiptRef.current || !downloadThermalPdf(receiptRef.current, `ticket-${receipt.order.code}.pdf`)) {
+      setPrintError("No se pudo generar el PDF del ticket.");
+    }
+  };
+
+  const handlePrint = async () => {
+    setPrintError("");
+    setPrintMessage("");
+    if (!receiptRef.current) {
+      setPrintError("No se pudo preparar el ticket para imprimir.");
+      return;
+    }
+    if (canUseBrowserPrint()) {
+      if (!printThermalDocuments([receiptRef.current], `Ticket ${receipt.order.code}`)) {
+        setPrintError("No se pudo abrir el documento térmico para imprimir.");
+      }
+      return;
+    }
+    const result = await shareOrOpenThermalPdf(receiptRef.current, `ticket-${receipt.order.code}.pdf`);
+    if (result === "shared") setPrintMessage("PDF térmico listo para compartir o imprimir.");
+    else if (result === "opened") setPrintMessage("PDF térmico abierto para imprimir desde el visor.");
+    else if (result !== "cancelled") setPrintError("No se pudo preparar el PDF térmico.");
+  };
+
+  return (
+    <div className="modal-backdrop kitchen-ticket-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-label={`Vista previa de ticket ${receipt.order.code}`} aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header kitchen-ticket-preview-header">
+          <div><strong>Vista previa de ticket</strong><span>Formato térmico de 58 mm</span></div>
+          <div className="kitchen-ticket-preview-header-actions">
+            <button className="ghost-button kitchen-ticket-header-print" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir</button>
+            <button className="icon-button kitchen-ticket-print-action" onClick={handleDownload} title="Descargar PDF de ticket" type="button"><Download size={18} /></button>
+            <button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button>
+          </div>
+        </header>
+        <div className="kitchen-ticket-print-root kitchen-ticket-print-root-58"><CustomerReceiptDocument printRef={receiptRef} receipt={receipt} /></div>
+        {printMessage ? <p className="form-status">{printMessage}</p> : null}
+        {printError ? <p className="form-status error">{printError}</p> : null}
+        <footer className="modal-footer kitchen-ticket-preview-footer">
+          <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
+          <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir ticket</button></div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+export function CustomerReceiptPrintButton({ orderCode, orderId }: { orderCode: string; orderId: string }) {
   const [receipt, setReceipt] = useState<PosOrderReceipt | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const receiptRef = useRef<HTMLElement>(null);
-  const downloadedOrderIdRef = useRef("");
 
-  useEffect(() => {
-    if (!receipt || !receiptRef.current || downloadedOrderIdRef.current === orderId) return;
-    downloadedOrderIdRef.current = orderId;
-    if (!downloadThermalPdf(receiptRef.current, `ticket-${orderCode}.pdf`)) {
-      setError("No se pudo generar el PDF del ticket.");
-    }
-  }, [orderCode, orderId, receipt]);
-
-  const downloadReceipt = async () => {
+  const openPreview = async () => {
     setError("");
     setLoading(true);
     const result = await getPosOrderReceipt(orderId);
@@ -93,20 +138,23 @@ export function CustomerReceiptPdfButton({ orderCode, orderId }: { orderCode: st
       setError(result.message);
       return;
     }
-    downloadedOrderIdRef.current = "";
     setReceipt(result.receipt);
   };
 
   return (
     <>
-      <button aria-label={`Descargar ticket PDF de ${orderCode}`} className="ghost-button kitchen-ticket-trigger" disabled={loading} onClick={() => void downloadReceipt()} type="button">
-        {loading ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}
-        {loading ? "Generando..." : "Ticket PDF"}
+      <button aria-label={`Ver e imprimir ticket de ${orderCode}`} className="ghost-button kitchen-ticket-trigger" disabled={loading} onClick={() => void openPreview()} type="button">
+        {loading ? <LoaderCircle className="spin" size={16} /> : <Printer size={16} />}
+        {loading ? "Cargando..." : "Ticket"}
       </button>
       {error ? <span className="row-action-message error">{error}</span> : null}
-      {receipt ? <div className="post-payment-print-root" aria-hidden="true"><CustomerReceiptDocument printRef={receiptRef} receipt={receipt} /></div> : null}
+      {receipt ? <CustomerReceiptPreview onClose={() => setReceipt(null)} receipt={receipt} /> : null}
     </>
   );
+}
+
+export function CustomerReceiptPdfButton(props: { orderCode: string; orderId: string }) {
+  return <CustomerReceiptPrintButton {...props} />;
 }
 export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; onError: (message: string) => void }) {
   const [documents, setDocuments] = useState<Array<{ kind: "kitchen" | "receipt"; node: ReactNode }>>([]);

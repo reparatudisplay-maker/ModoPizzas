@@ -7669,8 +7669,23 @@ a {
   gap: 8px;
 }
 
-.kitchen-ticket-preview-header > div {
+.kitchen-ticket-preview-header > div:first-child {
   margin-right: auto;
+}
+
+.kitchen-ticket-preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kitchen-ticket-header-print {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 9px;
+  white-space: nowrap;
 }
 
 .kitchen-ticket-print-root {
@@ -7831,6 +7846,19 @@ a {
 
   .kitchen-ticket-preview-modal {
     max-height: calc(100vh - 20px);
+  }
+
+  .kitchen-ticket-preview-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .kitchen-ticket-preview-header > div:first-child {
+    min-width: 0;
+  }
+
+  .kitchen-ticket-preview-header-actions {
+    margin-left: auto;
   }
 }
 
