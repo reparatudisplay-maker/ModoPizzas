@@ -16,6 +16,8 @@ import {
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { KitchenTicketPrintButton } from "@/components/kitchen-ticket-print";
+import { CustomerReceiptPdfButton } from "@/components/pos-order-payment-print";
 
 export type PosOrderListRow = {
   id: string;
@@ -700,7 +702,7 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
             <strong>Pedido {order.code}</strong>
             <span>{formatDateTime(order.ordered_at)} · {kindLabel(order.kind)}</span>
           </div>
-          <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+          <div className="order-detail-header-actions"><KitchenTicketPrintButton orderCode={order.code} orderId={order.id} /><CustomerReceiptPdfButton orderCode={order.code} orderId={order.id} /><button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button></div>
         </header>
         <div className="order-detail-content">
           <div className="order-detail-meta">

@@ -21,6 +21,76 @@ export type FormActionState = {
   message: string;
 };
 
+export type KitchenTicket = {
+  order: { id: string; code: string; kind: string; ordered_at: string };
+  items: Array<{
+    id: string;
+    kind: "pizza" | "sale_product";
+    quantity: number;
+    name: string;
+    notes: string | null;
+    size: string | null;
+    requires_preparation: boolean;
+    base: {
+      mode: "purchased_base" | "production_dough" | string;
+      name: string | null;
+      size: string | null;
+      quantity: number;
+      unit: StockUnit;
+      production_batches: Array<{ production_number: number | null; elaborated_at: string | null; expiration_date: string | null; quantity: number; unit: StockUnit }>;
+    } | null;
+    components: Array<{
+      type: "ingredient" | "preparation" | "addition";
+      name: string;
+      quantity: number;
+      unit: StockUnit;
+      addition_name: string | null;
+      addition_scope: "whole" | "left" | "right" | null;
+      addition_scope_label: string | null;
+    }>;
+  }>;
+  summary: {
+    pizza_count: number;
+    bases: Array<{ mode: "purchased_base" | "production_dough" | string; name: string; size: string | null; quantity: number; unit: StockUnit }>;
+    components: Array<{ type: "ingredient" | "preparation" | "addition"; name: string; quantity: number; unit: StockUnit }>;
+  };
+};
+
+export type KitchenTicketState = {
+  status: "success" | "error";
+  message: string;
+  ticket?: KitchenTicket;
+};
+export type PosOrderReceipt = {
+  order: {
+    id: string;
+    code: string;
+    kind: string;
+    subtotal_cop: number;
+    combo_price_adjustment_cop: number;
+    discount_cop: number;
+    delivery_cop: number;
+    total_cop: number;
+    payment_method: string;
+    ordered_at: string;
+  };
+  items: Array<{
+    id: string;
+    kind: "pizza" | "sale_product";
+    quantity: number;
+    name: string;
+    unit_price_cop: number;
+    line_subtotal_cop: number;
+    additions: Array<{ quantity: number; name: string; unit_price_cop: number; line_subtotal_cop: number }>;
+  }>;
+  payments: Array<{ method: string; amount_cop: number; cash_received_cop: number | null; cash_change_cop: number | null }>;
+};
+
+export type PosOrderReceiptState = {
+  status: "success" | "error";
+  message: string;
+  receipt?: PosOrderReceipt;
+};
 export type PosOrderTestDeletionPreview = {
   order_id: string;
   order_code: string;
@@ -394,7 +464,15 @@ function presentationCode(quantity: number, unit: string) {
 }
 
 function buildReferenceSku(name: string, quantity: number, unit: string) {
-  return `${normalizeSkuName(name)}${presentationCode(quantity, unit)}`;
+  const tokens = name
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+  const isCocaColaZero = tokens[0] === "COCA" && tokens[1] === "COLA" && tokens.includes("ZERO");
+  const stem = isCocaColaZero ? "COZ" : normalizeSkuName(name);
+  return `${stem}${presentationCode(quantity, unit)}`;
 }
 
 function normalizeReferenceSku(value: string | null) {
@@ -405,6 +483,30 @@ function normalizeReferenceSku(value: string | null) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Z0-9]+/g, "");
   return normalized || null;
+}
+
+async function insertReferenceWithUniqueSku(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  payload: Record<string, unknown>,
+  preferredSku: string
+) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const sku = attempt === 0 ? preferredSku : `${preferredSku}${String(attempt + 1).padStart(2, "0")}`;
+    const { data: existingSku, error: existingSkuError } = await supabase.from("inventory_items").select("id").ilike("sku", sku).limit(1).maybeSingle();
+    if (existingSkuError) throw new Error(existingSkuError.message);
+    if (existingSku) continue;
+
+    const { data, error } = await supabase
+      .from("inventory_items")
+      .insert({ ...payload, sku })
+      .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, is_active")
+      .single();
+
+    if (!error) return data;
+    if (error.code !== "23505") throw new Error(error.message);
+  }
+
+  throw new Error("No se pudo generar un SKU único para esta presentación.");
 }
 
 function getFormFile(formData: FormData, key: string) {
@@ -2242,16 +2344,11 @@ async function resolvePurchaseInventoryItem(
   if (existingReferenceError) throw new Error(existingReferenceError.message);
   if (existingReference) return existingReference;
 
-  const sku = normalizeReferenceSku(referenceSku) ?? buildReferenceSku(masterItem.name, presentationQuantity, presentationUnit);
-  const { data: duplicateSku, error: duplicateSkuError } = await supabase.from("inventory_items").select("id").ilike("sku", sku).limit(1).maybeSingle();
-  if (duplicateSkuError) throw new Error(duplicateSkuError.message);
-  if (duplicateSku) throw new Error(`Ya existe un producto con el SKU ${sku}.`);
-
-  const { data, error } = await supabase
-    .from("inventory_items")
-    .insert({
+  const preferredSku = normalizeReferenceSku(referenceSku) ?? buildReferenceSku(masterItem.name, presentationQuantity, presentationUnit);
+  return insertReferenceWithUniqueSku(
+    supabase,
+    {
       name: masterItem.name.toUpperCase(),
-      sku,
       unit: "unit",
       item_kind: purchaseKind,
       category_id: masterItem.category_id,
@@ -2262,12 +2359,9 @@ async function resolvePurchaseInventoryItem(
       is_active: true,
       current_quantity: 0,
       average_cost_cop: 0
-    })
-    .select("id, name, sku, unit, item_kind, category_id, brand_id, purchase_mode, presentation_quantity, presentation_unit, is_active")
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data;
+    },
+    preferredSku
+  );
 }
 
 export async function registerPurchase(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -3187,6 +3281,174 @@ export async function cancelPosOrder(_previousState: FormActionState, formData: 
   return { status: "success", message: "Pedido cancelado correctamente." };
 }
 
+export async function getKitchenTicket(orderId: string): Promise<KitchenTicketState> {
+  if (!orderId) return { status: "error", message: "Pedido no válido." };
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_kitchen_ticket", { p_order_id: orderId });
+  if (error || !data) return { status: "error", message: error?.message ?? "No se pudo cargar la comanda de cocina." };
+
+  const asRecord = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const asArray = (value: unknown) => Array.isArray(value) ? value : [];
+  const text = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
+  const optionalText = (value: unknown) => typeof value === "string" ? value : null;
+  const quantity = (value: unknown) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const componentType = (value: unknown): "ingredient" | "preparation" | "addition" => value === "addition" || value === "preparation" ? value : "ingredient";
+  const scope = (value: unknown): "whole" | "left" | "right" | null => value === "whole" || value === "left" || value === "right" ? value : null;
+  const sourceMode = (value: unknown) => text(value, "purchased_base");
+  const parseComponents = (value: unknown) => asArray(value).map((entry) => {
+    const raw = asRecord(entry);
+    return {
+      type: componentType(raw.type),
+      name: text(raw.name, "Ingrediente sin nombre"),
+      quantity: quantity(raw.quantity),
+      unit: getStockUnitFromValue(raw.unit),
+      addition_name: optionalText(raw.addition_name),
+      addition_scope: scope(raw.addition_scope),
+      addition_scope_label: optionalText(raw.addition_scope_label)
+    };
+  });
+
+  const raw = asRecord(data);
+  const rawOrder = asRecord(raw.order);
+  if (!text(rawOrder.id) || !text(rawOrder.code)) {
+    return { status: "error", message: "La comanda recibida no tiene un pedido válido." };
+  }
+
+  const items = asArray(raw.items).map((entry) => {
+    const item = asRecord(entry);
+    const rawBase = asRecord(item.base);
+    const hasBase = Object.keys(rawBase).length > 0;
+    return {
+      id: text(item.id),
+      kind: item.kind === "sale_product" ? "sale_product" as const : "pizza" as const,
+      quantity: quantity(item.quantity),
+      name: text(item.name, "Producto sin nombre"),
+      notes: optionalText(item.notes),
+      size: optionalText(item.size),
+      requires_preparation: item.requires_preparation === true,
+      base: hasBase ? {
+        mode: sourceMode(rawBase.mode),
+        name: optionalText(rawBase.name),
+        size: optionalText(rawBase.size),
+        quantity: quantity(rawBase.quantity),
+        unit: getStockUnitFromValue(rawBase.unit),
+        production_batches: asArray(rawBase.production_batches).map((batch) => {
+          const source = asRecord(batch);
+          return {
+            production_number: Number.isFinite(Number(source.production_number)) ? Number(source.production_number) : null,
+            elaborated_at: optionalText(source.elaborated_at),
+            expiration_date: optionalText(source.expiration_date),
+            quantity: quantity(source.quantity),
+            unit: getStockUnitFromValue(source.unit)
+          };
+        })
+      } : null,
+      components: parseComponents(item.components)
+    };
+  });
+
+  const rawSummary = asRecord(raw.summary);
+  const bases = asArray(rawSummary.bases).map((entry) => {
+    const base = asRecord(entry);
+    return {
+      mode: sourceMode(base.mode),
+      name: text(base.name, "Base sin nombre"),
+      size: optionalText(base.size),
+      quantity: quantity(base.quantity),
+      unit: getStockUnitFromValue(base.unit)
+    };
+  });
+
+  return {
+    status: "success",
+    message: "Comanda de cocina cargada.",
+    ticket: {
+      order: {
+        id: text(rawOrder.id),
+        code: text(rawOrder.code),
+        kind: text(rawOrder.kind),
+        ordered_at: text(rawOrder.ordered_at)
+      },
+      items,
+      summary: {
+        pizza_count: quantity(rawSummary.pizza_count),
+        bases,
+        components: parseComponents(rawSummary.components).map(({ addition_name: _additionName, addition_scope: _additionScope, addition_scope_label: _additionScopeLabel, ...component }) => component)
+      }
+    }
+  };
+}
+export async function getPosOrderReceipt(orderId: string): Promise<PosOrderReceiptState> {
+  if (!orderId) return { status: "error", message: "Pedido no válido." };
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("pos_orders")
+    .select(`
+      id, code, kind, status, subtotal_cop, combo_price_adjustment_cop, discount_cop, delivery_cop, total_cop, payment_method, ordered_at,
+      pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
+      pos_order_items(
+        id, item_kind, quantity, product_name_snapshot, unit_price_cop, line_subtotal_cop,
+        pos_order_item_additions(quantity, name_snapshot, unit_price_cop, line_subtotal_cop)
+      )
+    `)
+    .eq("id", orderId)
+    .neq("status", "cancelled")
+    .maybeSingle();
+
+  if (error || !data) return { status: "error", message: error?.message ?? "No se pudo cargar el ticket del pedido." };
+
+  const record = data as unknown as Record<string, unknown>;
+  const numberValue = (value: unknown) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const text = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
+  const asArray = (value: unknown) => Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
+
+  return {
+    status: "success",
+    message: "Ticket de cliente cargado.",
+    receipt: {
+      order: {
+        id: text(record.id),
+        code: text(record.code),
+        kind: text(record.kind),
+        subtotal_cop: numberValue(record.subtotal_cop),
+        combo_price_adjustment_cop: numberValue(record.combo_price_adjustment_cop),
+        discount_cop: numberValue(record.discount_cop),
+        delivery_cop: numberValue(record.delivery_cop),
+        total_cop: numberValue(record.total_cop),
+        payment_method: text(record.payment_method),
+        ordered_at: text(record.ordered_at)
+      },
+      items: asArray(record.pos_order_items).map((item) => ({
+        id: text(item.id),
+        kind: item.item_kind === "sale_product" ? "sale_product" as const : "pizza" as const,
+        quantity: numberValue(item.quantity),
+        name: text(item.product_name_snapshot, "Producto sin nombre"),
+        unit_price_cop: numberValue(item.unit_price_cop),
+        line_subtotal_cop: numberValue(item.line_subtotal_cop),
+        additions: asArray(item.pos_order_item_additions).map((addition) => ({
+          quantity: numberValue(addition.quantity),
+          name: text(addition.name_snapshot, "Adición"),
+          unit_price_cop: numberValue(addition.unit_price_cop),
+          line_subtotal_cop: numberValue(addition.line_subtotal_cop)
+        }))
+      })),
+      payments: asArray(record.pos_order_payments).map((payment) => ({
+        method: text(payment.method),
+        amount_cop: numberValue(payment.amount_cop),
+        cash_received_cop: payment.cash_received_cop === null || payment.cash_received_cop === undefined ? null : numberValue(payment.cash_received_cop),
+        cash_change_cop: payment.cash_change_cop === null || payment.cash_change_cop === undefined ? null : numberValue(payment.cash_change_cop)
+      }))
+    }
+  };
+}
 export async function getPosOrderTestDeletionPreview(orderId: string): Promise<PosOrderTestDeletionPreviewState> {
   if (!orderId) return { status: "error", message: "Pedido no válido." };
   const supabase = await createServerSupabaseClient();

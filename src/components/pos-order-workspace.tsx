@@ -10,6 +10,7 @@ import { createPosOrder, getPosInventoryConsumptionPreview, type PosInventoryCon
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
 
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending";
@@ -222,6 +223,7 @@ const maxCardScale = 2;
 const pizzaCardScaleKey = "modo-pos-pizza-card-scale";
 const productCardScaleKey = "modo-pos-product-card-scale";
 const productViewSettingsKey = "modo-pos-product-view-settings";
+const printSelectionKey = "modo-pos-payment-print-selection";
 const cashDenominations = [2000, 5000, 10000, 20000, 50000, 100000];
 
 type ProductViewSettings = {
@@ -231,6 +233,20 @@ type ProductViewSettings = {
 };
 
 const defaultProductViewSettings: ProductViewSettings = { showCost: true, showStock: true, showSoldOut: true };
+const defaultPrintSelection: PaymentPrintSelection = { kitchen: false, receipt: false };
+
+function readPrintSelection(): PaymentPrintSelection {
+  if (typeof window === "undefined") return defaultPrintSelection;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(printSelectionKey) ?? "");
+    return {
+      kitchen: parsed?.kitchen === true,
+      receipt: parsed?.receipt === true
+    };
+  } catch {
+    return defaultPrintSelection;
+  }
+}
 
 function readProductViewSettings(): ProductViewSettings {
   const fallback = defaultProductViewSettings;
@@ -414,6 +430,13 @@ export function PosOrderWorkspace({
   const [cashConfirmed, setCashConfirmed] = useState(false);
   const [cashSubmitting, setCashSubmitting] = useState(false);
   const [cashSelectedOption, setCashSelectedOption] = useState<string | null>(null);
+  const [printSelection, setPrintSelection] = useState<PaymentPrintSelection>(defaultPrintSelection);
+  const [printPreferencesReady, setPrintPreferencesReady] = useState(false);
+  const [paymentConfirmModalOpen, setPaymentConfirmModalOpen] = useState(false);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [printJob, setPrintJob] = useState<PaymentPrintJob | null>(null);
+  const [printNotice, setPrintNotice] = useState("");
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [stockNotice, setStockNotice] = useState("");
   const [stockShortageModalOpen, setStockShortageModalOpen] = useState(false);
@@ -450,7 +473,28 @@ export function PosOrderWorkspace({
   }, [productViewSettings]);
 
   useEffect(() => {
+    setPrintSelection(readPrintSelection());
+    setPrintPreferencesReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!printPreferencesReady) return;
+    try {
+      window.localStorage.setItem(printSelectionKey, JSON.stringify(printSelection));
+    } catch {
+      // Browser storage can be unavailable in private or restricted contexts.
+    }
+  }, [printPreferencesReady, printSelection]);
+
+  useEffect(() => {
     if (state.status === "success") {
+      if (state.order && (printSelection.kitchen || printSelection.receipt)) {
+        setPrintJob({
+          id: `${state.order.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
+          orderId: state.order.id,
+          ...printSelection
+        });
+      }
       const timeout = window.setTimeout(() => {
         setCart([]);
         setDelivery("");
@@ -467,6 +511,9 @@ export function PosOrderWorkspace({
         setCashConfirmed(false);
         setCashSubmitting(false);
         setCashSelectedOption(null);
+        setPaymentConfirmModalOpen(false);
+        setPaymentConfirmed(false);
+        setPaymentSubmitting(false);
         setStockNotice("");
         cashSubmitLockRef.current = false;
         router.refresh();
@@ -478,6 +525,9 @@ export function PosOrderWorkspace({
         setCashConfirmed(false);
         setCashSubmitting(false);
         setCashModalOpen(false);
+        setPaymentConfirmed(false);
+        setPaymentSubmitting(false);
+        setPaymentConfirmModalOpen(false);
         setStockShortageModalOpen(true);
         cashSubmitLockRef.current = false;
       }, 0);
@@ -492,8 +542,17 @@ export function PosOrderWorkspace({
       }, 0);
       return () => window.clearTimeout(timeout);
     }
+    if (state.status === "error" && paymentMethod !== "cash" && paymentConfirmed) {
+      const timeout = window.setTimeout(() => {
+        setPaymentConfirmed(false);
+        setPaymentSubmitting(false);
+        setPaymentConfirmModalOpen(true);
+        cashSubmitLockRef.current = false;
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
     return undefined;
-  }, [cashConfirmed, paymentMethod, router, state.status, state.stockShortages]);
+  }, [cashConfirmed, paymentConfirmed, paymentMethod, printSelection, router, state.order, state.status, state.stockShortages]);
 
   const categories = useMemo(() => {
     const unique = new Map<string, string>();
@@ -1190,16 +1249,32 @@ export function PosOrderWorkspace({
   }
 
   function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
-    if (paymentMethod !== "cash" || cashConfirmed) return;
-    event.preventDefault();
+    if (cashSubmitLockRef.current) return;
     if (cart.length === 0 || hasInvalidSaleProductPrice) return;
-    setCashReceived("");
-    setCashSelectedOption(null);
-    setCashSubmitting(false);
-    cashSubmitLockRef.current = false;
-    setCashModalOpen(true);
+    event.preventDefault();
+    setPrintNotice("");
+    if (paymentMethod === "cash") {
+      if (cashConfirmed) return;
+      setCashReceived("");
+      setCashSelectedOption(null);
+      setCashSubmitting(false);
+      cashSubmitLockRef.current = false;
+      setCashModalOpen(true);
+      return;
+    }
+    if (paymentConfirmed) return;
+    setPaymentSubmitting(false);
+    setPaymentConfirmModalOpen(true);
   }
 
+  function confirmNonCashPayment() {
+    if (cashSubmitLockRef.current) return;
+    cashSubmitLockRef.current = true;
+    setPaymentConfirmed(true);
+    setPaymentSubmitting(true);
+    setPaymentConfirmModalOpen(false);
+    window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+  }
   function confirmCashPayment(received: number) {
     if (received < total) return;
     if (cashSubmitLockRef.current) return;
@@ -1218,6 +1293,13 @@ export function PosOrderWorkspace({
     setCashConfirmed(false);
     setCashSubmitting(false);
     setCashSelectedOption(null);
+    cashSubmitLockRef.current = false;
+  }
+
+  function closePaymentConfirmModal() {
+    setPaymentConfirmModalOpen(false);
+    setPaymentConfirmed(false);
+    setPaymentSubmitting(false);
     cashSubmitLockRef.current = false;
   }
 
@@ -1538,6 +1620,7 @@ export function PosOrderWorkspace({
               {state.status === "success" && state.order ? `Pedido ${state.order.code} confirmado por ${formatCop(state.order.total_cop)}.` : state.message}
             </p>
           ) : null}
+          {printNotice ? <p className="form-status error">{printNotice}</p> : null}
           {hasInvalidSaleProductPrice ? <p className="form-status error">Hay productos sin precio de venta configurado.</p> : null}
           <div className="pos-final-actions">
             <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
@@ -1976,7 +2059,6 @@ export function PosOrderWorkspace({
                     </div>
                   </section>
                 ) : null}
-
                 <label className="field cash-manual-amount">
                   <span>Otro monto</span>
                   <div className="cash-manual-input">
@@ -2019,8 +2101,11 @@ export function PosOrderWorkspace({
               {cashReceivedValue > 0 && cashReceivedValue < total ? <p className="form-status error">El monto recibido no cubre el total.</p> : null}
             </div>
 
-            <footer className="form-actions modal-form-actions">
-              <button className="ghost-button" onClick={closeCashModal} type="button">Cancelar</button>
+            <footer className="form-actions modal-form-actions cash-payment-footer">
+              <div className="cash-payment-footer-left">
+                <PaymentPrintSelector onChange={setPrintSelection} value={printSelection} />
+                <button className="ghost-button" onClick={closeCashModal} type="button">Cancelar</button>
+              </div>
               <button className="positive-button" disabled={cashReceivedValue < total || cashSubmitting} onClick={() => confirmCashPayment(cashReceivedValue)} type="button">
                 {cashSubmitting ? "Registrando..." : "Registrar pago"}
               </button>
@@ -2028,10 +2113,43 @@ export function PosOrderWorkspace({
           </section>
         </div>
       ) : null}
+
+      {paymentConfirmModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Confirmar pago" aria-modal="true" className="modal-panel cash-payment-modal payment-confirmation-modal" role="dialog">
+            <header className="modal-header">
+              <div><strong>Confirmar pago</strong><span>Verifica el pago antes de registrar el pedido.</span></div>
+              <button className="icon-button" onClick={closePaymentConfirmModal} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="payment-confirmation-body">
+              <div className="cash-total-display"><span>Total a registrar</span><strong>{formatCop(total)}</strong></div>
+              <div className="payment-confirmation-method"><span>Método de pago</span><strong>{paymentLabel(paymentMethod)}</strong></div>
+            </div>
+            <footer className="form-actions modal-form-actions cash-payment-footer">
+              <div className="cash-payment-footer-left">
+                <PaymentPrintSelector onChange={setPrintSelection} value={printSelection} />
+                <button className="ghost-button" onClick={closePaymentConfirmModal} type="button">Cancelar</button>
+              </div>
+              <button className="positive-button" disabled={paymentSubmitting} onClick={confirmNonCashPayment} type="button">{paymentSubmitting ? "Registrando..." : "Registrar pago"}</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {printJob ? <PostPaymentPrintJob job={printJob} onError={setPrintNotice} /> : null}
     </>
   );
 }
 
+function PaymentPrintSelector({ onChange, value }: { onChange: (value: PaymentPrintSelection) => void; value: PaymentPrintSelection }) {
+  return (
+    <fieldset className="payment-print-selector">
+      <legend>Imprimir:</legend>
+      <label><input checked={value.kitchen} onChange={(event) => onChange({ ...value, kitchen: event.target.checked })} type="checkbox" /> Comanda</label>
+      <label><input checked={value.receipt} onChange={(event) => onChange({ ...value, receipt: event.target.checked })} type="checkbox" /> Ticket</label>
+    </fieldset>
+  );
+}
 function WizardStep({ title, children, onBack }: { title: string; children: ReactNode; onBack?: () => void }) {
   return (
     <section className="pos-wizard-step">

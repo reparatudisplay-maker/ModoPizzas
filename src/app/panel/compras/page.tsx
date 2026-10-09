@@ -147,35 +147,52 @@ function purchaseHasBrand(purchase: Purchase, brandId: string) {
   return purchase.brand_id === brandId || purchase.purchase_items.some((item) => item.brand_id === brandId || item.inventory_items?.brand_id === brandId);
 }
 
+function isPackagePurchaseLine(item: Purchase["purchase_items"][number]) {
+  const purchasedQuantity = Number(item.purchased_quantity ?? 0);
+  const quantity = Number(item.quantity ?? 0);
+  const presentationQuantity = Number(item.presentation_quantity ?? 0);
+  const presentationUnit = item.presentation_unit;
+  if (purchasedQuantity <= 0 || quantity <= 0 || presentationQuantity <= 0 || !presentationUnit) return false;
+
+  if (item.unit === "unit") return Math.abs(quantity - purchasedQuantity) > 0.0001;
+
+  const packageContentInLineUnit = convertStockQuantity(presentationQuantity, presentationUnit, canonicalStockUnit(item.unit));
+  return Math.abs(quantity - purchasedQuantity * packageContentInLineUnit) < 0.0001;
+}
+
+function formatPackageCount(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 3 }).format(value);
+}
+
 function getPurchaseQuantity(purchase: Purchase) {
   const item = purchase.purchase_items[0];
   if (!item) return "-";
-  const product = item.inventory_items;
-  if (product?.item_kind === "sale_product") {
-    return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.quantity ?? 0))} ${unitLabel("unit")}`;
+  const total = formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
+  if (!isPackagePurchaseLine(item)) return total;
+
+  const packageCount = Number(item.purchased_quantity ?? 0);
+  const packageContent = formatStockQuantityInUnit(Number(item.presentation_quantity ?? 0), item.presentation_unit ?? item.unit);
+  if (item.unit === "unit") {
+    const unitsPerPackage = Number(item.quantity ?? 0) / packageCount;
+    return `${total} (${formatPackageCount(packageCount)} × ${formatPackageCount(unitsPerPackage)} ${unitLabel("unit")})`;
   }
-  if (product?.item_kind === "ingredient" && product.presentation_quantity === null) {
-    if (product.purchase_mode === "packages") return formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
-    return item.presentation_quantity && item.presentation_unit
-      ? formatStockQuantityInUnit(Number(item.presentation_quantity), item.presentation_unit)
-      : formatStockQuantityInUnit(Number(item.quantity ?? 0), item.unit);
-  }
-  return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(Number(item.purchased_quantity ?? item.quantity))} ${unitLabel("unit")}`;
+  return `${total} (${formatPackageCount(packageCount)} × ${packageContent})`;
 }
 
 function getPurchasePresentation(purchase: Purchase, masterItem?: InventoryItem | null) {
   const item = purchase.purchase_items[0];
   const product = item?.inventory_items;
-  if (product?.item_kind === "ingredient" && product.presentation_quantity === null && product.purchase_mode !== "packages") return "-";
   if (!item?.presentation_quantity || !item.presentation_unit) return "-";
+  const isPackage = isPackagePurchaseLine(item);
+  if (product?.item_kind === "ingredient" && !isPackage) return "-";
   const effectiveUnit = item.presentation_unit === "unit" && masterItem?.unit && masterItem.unit !== "unit" ? masterItem.unit : item.presentation_unit;
   if (effectiveUnit !== "unit") {
     const baseUnit = canonicalStockUnit(effectiveUnit);
     const formatted = formatStockQuantity(convertStockQuantity(Number(item.presentation_quantity), effectiveUnit, baseUnit), baseUnit);
-    return product?.item_kind === "ingredient" && product.purchase_mode === "packages" ? `${formatted} / paquete` : formatted;
+    return product?.item_kind === "ingredient" && isPackage ? `${formatted} / paquete` : formatted;
   }
   const formatted = formatQuantity(Number(item.presentation_quantity), effectiveUnit);
-  return product?.item_kind === "ingredient" && product.purchase_mode === "packages" ? `${formatted} / paquete` : formatted;
+  return product?.item_kind === "ingredient" && isPackage ? `${formatted} / paquete` : formatted;
 }
 
 function getPurchaseSku(purchase: Purchase) {
