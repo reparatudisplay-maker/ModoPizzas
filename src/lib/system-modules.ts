@@ -23,6 +23,7 @@ export type PanelActiveKey =
   | "configuracion"
   | "configuracion-negocio"
   | "configuracion-cocina"
+  | "configuracion-impresoras"
   | "menu-pizzas"
   | "menu-precios-adiciones"
   | "menu-precios-combos"
@@ -78,6 +79,7 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   configuracion: "configuracion",
   "configuracion-negocio": "configuracion",
   "configuracion-cocina": "configuracion",
+  "configuracion-impresoras": "configuracion",
   "menu-pizzas": "menu",
   "menu-precios-adiciones": "menu",
   "menu-precios-combos": "menu",

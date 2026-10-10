@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { getKitchenTicket, getPosOrderReceipt, type PosOrderReceipt } from "@/app/admin/actions";
+import { createIpadThermalPrintJob, getKitchenTicket, getPosOrderReceipt, getThermalPrinterSettings, type PosOrderReceipt } from "@/app/admin/actions";
 import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
 import { formatCop } from "@/lib/format";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
+import { createIpadThermalPayload, runIpadShortcut, shouldUseIpadShortcut } from "@/lib/device-thermal-print";
 
 export type PaymentPrintSelection = {
   kitchen: boolean;
@@ -87,6 +88,17 @@ function CustomerReceiptPreview({ onClose, receipt }: { onClose: () => void; rec
     setPrintMessage("");
     if (!receiptRef.current) {
       setPrintError("No se pudo preparar el ticket para imprimir.");
+      return;
+    }
+    const settingsResult = await getThermalPrinterSettings();
+    if (settingsResult.status === "success" && settingsResult.settings && shouldUseIpadShortcut(settingsResult.settings)) {
+      const jobResult = await createIpadThermalPrintJob(createIpadThermalPayload([receiptRef.current]));
+      if (jobResult.status === "error" || !jobResult.shortcut_input) {
+        setPrintError(jobResult.message);
+        return;
+      }
+      setPrintMessage("Ticket enviado al atajo Imprimir Modo Pizzas.");
+      runIpadShortcut(jobResult.shortcut_input);
       return;
     }
     if (canUseBrowserPrint()) {
@@ -196,9 +208,22 @@ export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; on
     if (documents.length === 0 || !printRootRef.current || printedJobIdRef.current === job.id) return;
     printedJobIdRef.current = job.id;
     const printables = Array.from(printRootRef.current.querySelectorAll<HTMLElement>(".post-payment-print-document > article"));
-    if (!printThermalDocuments(printables, "Documentos del pedido")) {
-      onError("No se pudo abrir el documento térmico para imprimir.");
-    }
+    const printDocuments = async () => {
+      const settingsResult = await getThermalPrinterSettings();
+      if (settingsResult.status === "success" && settingsResult.settings && shouldUseIpadShortcut(settingsResult.settings)) {
+        const jobResult = await createIpadThermalPrintJob(createIpadThermalPayload(printables));
+        if (jobResult.status === "error" || !jobResult.shortcut_input) {
+          onError(jobResult.message);
+          return;
+        }
+        runIpadShortcut(jobResult.shortcut_input);
+        return;
+      }
+      if (!printThermalDocuments(printables, "Documentos del pedido")) {
+        onError("No se pudo abrir el documento térmico para imprimir.");
+      }
+    };
+    void printDocuments();
   }, [documents, job.id, onError]);
 
   if (documents.length === 0) return null;

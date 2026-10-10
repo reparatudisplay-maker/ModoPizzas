@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
@@ -90,6 +91,27 @@ export type PosOrderReceiptState = {
   status: "success" | "error";
   message: string;
   receipt?: PosOrderReceipt;
+};
+
+export type ThermalPrinterSettings = {
+  ip_address: string;
+  port: number;
+  model: string;
+  paper_width_mm: number;
+  printable_width_mm: number;
+  preferred_print_method: "auto" | "browser" | "ipad_shortcut";
+};
+
+export type ThermalPrinterSettingsState = {
+  status: "success" | "error";
+  message: string;
+  settings?: ThermalPrinterSettings;
+};
+
+export type IpadThermalPrintJobState = {
+  status: "success" | "error";
+  message: string;
+  shortcut_input?: string;
 };
 export type PosOrderTestDeletionPreview = {
   order_id: string;
@@ -3612,6 +3634,89 @@ export async function updateKitchenOrderItemStatus(_previousState: FormActionSta
   return { status: "success", message: "Linea actualizada." };
 }
 
+function isValidIpv4(value: string) {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
+}
+
+function printerSettingsFromRow(row: Record<string, unknown>): ThermalPrinterSettings {
+  const preferred = row.preferred_print_method;
+  return {
+    ip_address: String(row.ip_address ?? "").replace(/\/\d+$/, ""),
+    port: Number(row.port ?? 9100),
+    model: String(row.model ?? "JP58W"),
+    paper_width_mm: Number(row.paper_width_mm ?? 58),
+    printable_width_mm: Number(row.printable_width_mm ?? 48),
+    preferred_print_method: preferred === "browser" || preferred === "ipad_shortcut" ? preferred : "auto"
+  };
+}
+
+export async function getThermalPrinterSettings(): Promise<ThermalPrinterSettingsState> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("printer_settings")
+    .select("ip_address, port, model, paper_width_mm, printable_width_mm, preferred_print_method")
+    .eq("id", true)
+    .maybeSingle();
+
+  if (error || !data) return { status: "error", message: error?.message ?? "No se encontró la configuración de impresora." };
+  return { status: "success", message: "Configuración de impresora cargada.", settings: printerSettingsFromRow(data as Record<string, unknown>) };
+}
+
+export async function saveThermalPrinterSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const user = await requireUserPermission(supabase, "configuracion.edit");
+  const ipAddress = getString(formData, "ip_address");
+  const port = getInteger(formData, "port", 9100);
+  const preferredMethod = getString(formData, "preferred_print_method");
+
+  if (!isValidIpv4(ipAddress)) return { status: "error", message: "Ingresa una dirección IPv4 válida para la impresora." };
+  if (port < 1 || port > 65535) return { status: "error", message: "Ingresa un puerto entre 1 y 65535." };
+  if (!["auto", "browser", "ipad_shortcut"].includes(preferredMethod)) return { status: "error", message: "Selecciona un método de impresión válido." };
+
+  const { error } = await supabase.from("printer_settings").upsert({
+    id: true,
+    ip_address: ipAddress,
+    port,
+    model: "JP58W",
+    paper_width_mm: 58,
+    printable_width_mm: 48,
+    preferred_print_method: preferredMethod,
+    updated_at: new Date().toISOString(),
+    updated_by: user.id
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/panel/configuracion/impresoras");
+  return { status: "success", message: "Configuración de impresora guardada." };
+}
+
+export async function createIpadThermalPrintJob(payloadBase64: string): Promise<IpadThermalPrintJobState> {
+  const supabase = await createServerSupabaseClient();
+  const [settingsResult, jobResult] = await Promise.all([
+    supabase
+      .from("printer_settings")
+      .select("ip_address, port, model, paper_width_mm, printable_width_mm, preferred_print_method")
+      .eq("id", true)
+      .maybeSingle(),
+    supabase.rpc("create_thermal_print_job", { p_payload_base64: payloadBase64 })
+  ]);
+
+  if (settingsResult.error || !settingsResult.data) return { status: "error", message: settingsResult.error?.message ?? "No se encontró la configuración de impresora." };
+  if (jobResult.error || !jobResult.data) return { status: "error", message: jobResult.error?.message ?? "No se pudo preparar la comanda para iPad." };
+
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  if (!host) return { status: "error", message: "No se pudo preparar el enlace seguro de impresión." };
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const settings = printerSettingsFromRow(settingsResult.data as Record<string, unknown>);
+  const jobUrl = `${protocol}://${host}/api/thermal-print-jobs/${encodeURIComponent(String(jobResult.data))}`;
+  return {
+    status: "success",
+    message: "Comanda preparada para el atajo de iPad.",
+    shortcut_input: `${settings.ip_address}|${settings.port}|${jobUrl}`
+  };
+}
 export async function saveKitchenSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const ovenCount = getInteger(formData, "oven_count", 1);
