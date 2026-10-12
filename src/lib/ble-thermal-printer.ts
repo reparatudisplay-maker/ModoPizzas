@@ -83,7 +83,7 @@ function currentStatus(): BlePrinterStatus {
       ? `Conectada a ${device?.name ?? "JP58W"}. Característica de escritura lista.`
       : supportsWebBluetooth()
         ? "Sin impresora Bluetooth conectada."
-        : "Web Bluetooth no está disponible en este navegador."
+        : "Este navegador no permite conexión Bluetooth desde páginas web."
   };
 }
 
@@ -107,7 +107,7 @@ export function subscribeBlePrinterStatus(listener: (status: BlePrinterStatus) =
 function describeBleError(error: unknown) {
   if (error instanceof DOMException && error.name === "NotFoundError") return "No se seleccionó una impresora Bluetooth.";
   if (error instanceof DOMException && error.name === "SecurityError") return "El navegador no permitió el acceso Bluetooth. Revisa sus permisos.";
-  if (error instanceof DOMException && error.name === "NotSupportedError") return "El navegador expone Bluetooth, pero no permite seleccionar dispositivos BLE. Usa la impresión original.";
+  if (error instanceof DOMException && error.name === "NotSupportedError") return "Este navegador no permite seleccionar impresoras Bluetooth desde páginas web. Usa la impresión original.";
   if (error instanceof Error) return error.message;
   return "No se pudo completar la operación Bluetooth.";
 }
@@ -118,7 +118,7 @@ export function getBleErrorMessage(error: unknown) {
 
 export async function connectBlePrinter() {
   const bluetooth = getWebBluetooth();
-  if (!bluetooth) throw new Error("Este navegador no expone navigator.bluetooth.requestDevice. La impresión Bluetooth BLE no está disponible; usa la impresión original.");
+  if (!bluetooth) throw new Error("Este navegador no permite conexión Bluetooth desde páginas web. En iPhone o iPad, abre Modo Pizzas desde Bluefy; en otros dispositivos usa la impresión original.");
   if (device?.gatt?.connected && characteristic) return currentStatus();
 
   const nextDevice = await bluetooth.requestDevice({
@@ -237,7 +237,7 @@ async function writeBlePayload(payload: Uint8Array) {
       : typeof characteristic.writeValue === "function"
         ? characteristic.writeValue.bind(characteristic)
         : null;
-  if (!write) throw new Error("La característica BLE no admite escritura en este navegador.");
+  if (!write) throw new Error("La impresora no permite escritura Bluetooth en este navegador.");
 
   writing = true;
   try {

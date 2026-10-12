@@ -55,7 +55,7 @@ export function PrinterSettingsModule({ settings }: { settings: ThermalPrinterSe
 
   const connectBle = async () => {
     if (!supportsWebBluetooth()) {
-      setBleError("Este navegador no expone navigator.bluetooth.requestDevice. La impresión Bluetooth BLE no está disponible; usa la impresión original.");
+      setBleError("Este navegador no permite conexión Bluetooth desde páginas web. En iPhone o iPad, abre Modo Pizzas desde Bluefy; en otros dispositivos usa la impresión original.");
       return;
     }
 
@@ -116,10 +116,10 @@ export function PrinterSettingsModule({ settings }: { settings: ThermalPrinterSe
             <label className="field"><span>Papel</span><input disabled value="58 mm · área útil 48 mm" /></label>
             <label className="field"><span>Dirección IP</span><input defaultValue={settings.ip_address} inputMode="decimal" name="ip_address" required /></label>
             <label className="field"><span>Puerto TCP</span><input defaultValue={settings.port} max={65535} min={1} name="port" required type="number" /></label>
-            <label className="field"><span>Método en este dispositivo</span><select onChange={(event) => { const next = event.target.value as DevicePrintMethod; setMethod(next); saveDevicePrintMethod(next); }} value={method}><option value="auto">Automático (BLE si está disponible)</option><option value="bluetooth">Bluetooth BLE</option><option value="browser">Impresión original</option></select></label>
+            <label className="field"><span>Método en este dispositivo</span><select onChange={(event) => { const next = event.target.value as DevicePrintMethod; setMethod(next); saveDevicePrintMethod(next); }} value={method}><option value="auto">Automático (Bluetooth si está disponible)</option><option value="bluetooth">Bluetooth</option><option value="browser">Impresión original</option></select></label>
             <input name="preferred_print_method" type="hidden" value="auto" />
           </div>
-          <p className="muted">La preferencia se guarda solo en este navegador. Automático usa BLE cuando este navegador expone navigator.bluetooth.requestDevice; selecciona Impresión original para abrir el diálogo del navegador.</p>
+          <p className="muted">La preferencia se guarda solo en este navegador. Automático usa Bluetooth cuando este navegador permite seleccionar impresoras; selecciona Impresión original para abrir el diálogo del navegador.</p>
         </section>
         {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
         <div className="form-actions"><SaveButton /><button className="ghost-button" disabled={testing} onClick={() => void printTest()} type="button"><Printer size={16} /> {testing ? "Preparando..." : "Impresión de prueba"}</button></div>
@@ -131,17 +131,18 @@ export function PrinterSettingsModule({ settings }: { settings: ThermalPrinterSe
         <section className="kitchen-ticket-summary"><p><span>IP</span><strong>{settings.ip_address}:{settings.port}</strong></p><p><span>ESTADO</span><strong>LISTA</strong></p></section>
       </article>
       <section className="form-panel kitchen-settings-form" aria-labelledby="ble-print-title">
-        <div className="section-title-row"><div><h2 id="ble-print-title">Impresión Bluetooth BLE</h2><p className="muted">Conexión directa desde cualquier navegador compatible con Web Bluetooth. No usa Wi-Fi, Atajos ni modifica los métodos originales.</p></div></div>
+        <div className="section-title-row"><div><h2 id="ble-print-title">Impresión Bluetooth</h2><p className="muted">Conexión directa desde cualquier navegador compatible con Bluetooth web. No usa Wi-Fi, Atajos ni modifica los métodos originales.</p></div></div>
         <div className="form-grid">
           <label className="field"><span>Impresora esperada</span><input disabled value="JP-58W_B54E · JP58W / 58H" /></label>
-          <label className="field"><span>Servicio BLE</span><input disabled value={JP58W_BLE_SERVICE_UUID.toUpperCase()} /></label>
+          <label className="field"><span>Servicio Bluetooth</span><input disabled value={JP58W_BLE_SERVICE_UUID.toUpperCase()} /></label>
           <label className="field"><span>Escritura</span><input disabled value="Write / Write Without Response · fragmentos de 20 bytes" /></label>
         </div>
         <p className={`form-status ${bleSupported ? "success" : "error"}`}>{bleStatus.message}</p>
+        {!bleSupported ? <p className="field-hint">Para conectar la impresora por Bluetooth, abre Modo Pizzas desde <a href="https://apps.apple.com/us/app/bluefy-web-ble-browser/id1492822055" rel="noreferrer" target="_blank">Bluefy</a> en iPhone o iPad. En otros equipos, usa un navegador compatible o la impresión original.</p> : null}
         {bleError ? <p className="form-status error">{bleError}</p> : null}
         <div className="form-actions">
-          <button className="primary-button" disabled={bleBusy || !bleSupported} onClick={() => void connectBle()} type="button">{bleBusy ? <LoaderCircle className="spin" size={16} /> : <Bluetooth size={16} />} Conectar impresora Bluetooth</button>
-          <button className="ghost-button" disabled={bleBusy || !bleStatus.connected} onClick={() => void handleBleTest()} type="button"><Printer size={16} /> Imprimir prueba BLE</button>
+          <button className="primary-button" disabled={bleBusy} onClick={() => void connectBle()} type="button">{bleBusy ? <LoaderCircle className="spin" size={16} /> : <Bluetooth size={16} />} Conectar por Bluetooth</button>
+          <button className="ghost-button" disabled={bleBusy || !bleStatus.connected} onClick={() => void handleBleTest()} type="button"><Printer size={16} /> Imprimir prueba Bluetooth</button>
           <button className="ghost-button" disabled={bleBusy || !bleStatus.connected} onClick={disconnectBle} type="button"><Unplug size={16} /> Desconectar</button>
         </div>
       </section>
