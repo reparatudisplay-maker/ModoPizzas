@@ -797,16 +797,16 @@ export function PosOrderWorkspace({
     };
   }
 
-  function addConfiguredPizza(source = wizard, additionsToUse = selectedAdditionsList, quantity = wizard?.quantity ?? 1) {
-    if (!source) return;
+  function addConfiguredPizza(source = wizard, additionsToUse = selectedAdditionsList, quantity = wizard?.quantity ?? 1): boolean {
+    if (!source) return false;
     const line = configuredPizzaLine(source, additionsToUse);
-    if (!line) return;
+    if (!line) return false;
     if (source.editingLineKey) {
       const existingLine = cart.find((item) => item.key === source.editingLineKey);
       if (existingLine?.combo_instance_id) {
         if (line.id !== existingLine.id || line.secondary_id !== existingLine.secondary_id) {
           setStockNotice("Para cambiar el sabor o tamano de un combo usa Editar combo.");
-          return;
+          return false;
         }
         const comboLine = {
           ...line,
@@ -839,7 +839,7 @@ export function PosOrderWorkspace({
         setSelectedAdditions({});
         setAdditionScopes({});
         setIngredientModalOpen(false);
-        return;
+        return true;
       }
       const signature = productKey(line);
       setCart((current) =>
@@ -856,6 +856,12 @@ export function PosOrderWorkspace({
     setSelectedAdditions({});
     setAdditionScopes({});
     setIngredientModalOpen(false);
+    return true;
+  }
+
+  function addConfiguredPizzaAndOpenProducts() {
+    if (wizard?.editingLineKey) return;
+    if (addConfiguredPizza()) setTab("products");
   }
 
   function openComboWizard(combo: PosComboOption) {
@@ -1734,7 +1740,7 @@ export function PosOrderWorkspace({
                     </div>
                   ) : null}
                   <div className="pos-option-grid">
-                    {wizard.flavor.prices.map((price) => (
+                    {wizard.flavor.prices.filter((price) => price.is_active).map((price) => (
                       <button
                         className={wizard.selectedSize?.size_id === price.size_id ? "pos-size-card selected" : "pos-size-card"}
                         disabled={!price.is_active || !price.id || price.price_cop === null}
@@ -1851,6 +1857,9 @@ export function PosOrderWorkspace({
               >
                 Cancelar
               </button>
+              {wizard.step === "summary" && !wizard.editingLineKey ? (
+                <button className="ghost-button" onClick={addConfiguredPizzaAndOpenProducts} type="button">Agregar bebida</button>
+              ) : null}
               {wizard.step === "summary" ? (
                 <button className="positive-button" onClick={() => addConfiguredPizza()} type="button">{wizard.editingLineKey ? "Guardar cambios" : "Agregar al pedido"}</button>
               ) : null}

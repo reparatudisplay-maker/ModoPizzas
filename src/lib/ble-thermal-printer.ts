@@ -45,18 +45,16 @@ let lastPayloadAt = 0;
 const statusListeners = new Set<(status: BlePrinterStatus) => void>();
 
 function getWebBluetooth(): WebBluetooth | null {
-  if (typeof navigator === "undefined" || !("bluetooth" in navigator)) return null;
-  return (navigator as Navigator & { bluetooth?: WebBluetooth }).bluetooth ?? null;
+  if (typeof navigator === "undefined") return null;
+
+  const bluetooth = (navigator as Navigator & { bluetooth?: Partial<WebBluetooth> }).bluetooth;
+  return bluetooth && typeof bluetooth.requestDevice === "function"
+    ? (bluetooth as WebBluetooth)
+    : null;
 }
 
 export function supportsWebBluetooth() {
   return getWebBluetooth() !== null;
-}
-
-function isLikelyMobileBrowser() {
-  if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 export function getDevicePrintMethod(): DevicePrintMethod {
@@ -72,8 +70,7 @@ export function saveDevicePrintMethod(method: DevicePrintMethod) {
 export function shouldUseBlePrinter() {
   const method = getDevicePrintMethod();
   if (method === "browser") return false;
-  if (method === "bluetooth") return supportsWebBluetooth();
-  return supportsWebBluetooth() && isLikelyMobileBrowser();
+  return supportsWebBluetooth();
 }
 
 function currentStatus(): BlePrinterStatus {
@@ -110,6 +107,7 @@ export function subscribeBlePrinterStatus(listener: (status: BlePrinterStatus) =
 function describeBleError(error: unknown) {
   if (error instanceof DOMException && error.name === "NotFoundError") return "No se seleccionó una impresora Bluetooth.";
   if (error instanceof DOMException && error.name === "SecurityError") return "El navegador no permitió el acceso Bluetooth. Revisa sus permisos.";
+  if (error instanceof DOMException && error.name === "NotSupportedError") return "El navegador expone Bluetooth, pero no permite seleccionar dispositivos BLE. Usa la impresión original.";
   if (error instanceof Error) return error.message;
   return "No se pudo completar la operación Bluetooth.";
 }
@@ -120,7 +118,7 @@ export function getBleErrorMessage(error: unknown) {
 
 export async function connectBlePrinter() {
   const bluetooth = getWebBluetooth();
-  if (!bluetooth) throw new Error("Este navegador no ofrece Web Bluetooth. Usa el método de impresión original.");
+  if (!bluetooth) throw new Error("Este navegador no expone navigator.bluetooth.requestDevice. La impresión Bluetooth BLE no está disponible; usa la impresión original.");
   if (device?.gatt?.connected && characteristic) return currentStatus();
 
   const nextDevice = await bluetooth.requestDevice({
