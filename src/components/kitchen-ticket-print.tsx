@@ -2,11 +2,11 @@
 
 import { useRef, useState, type Ref } from "react";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
-import { createIpadThermalPrintJob, getKitchenTicket, getThermalPrinterSettings, type KitchenTicket } from "@/app/admin/actions";
+import { getKitchenTicket, type KitchenTicket } from "@/app/admin/actions";
 import { formatStockQuantity } from "@/lib/units";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
-import { createIpadThermalPayload, runIpadShortcut, shouldUseIpadShortcut } from "@/lib/device-thermal-print";
+import { getBleErrorMessage, printBleThermalDocuments, shouldUseBlePrinter } from "@/lib/ble-thermal-printer";
 
 function formatTicketDate(value: string) {
   if (!value) return "Sin fecha";
@@ -108,15 +108,12 @@ function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket
       setPrintError("No se pudo preparar la comanda para imprimir.");
       return;
     }
-    const settingsResult = await getThermalPrinterSettings();
-    if (settingsResult.status === "success" && settingsResult.settings && shouldUseIpadShortcut(settingsResult.settings)) {
-      const jobResult = await createIpadThermalPrintJob(createIpadThermalPayload([ticketRef.current]));
-      if (jobResult.status === "error" || !jobResult.shortcut_input) {
-        setPrintError(jobResult.message);
-        return;
+    if (shouldUseBlePrinter()) {
+      try {
+        setPrintMessage(await printBleThermalDocuments([ticketRef.current], { connectIfNeeded: true }));
+      } catch (error) {
+        setPrintError(getBleErrorMessage(error));
       }
-      setPrintMessage("Comanda enviada al atajo Imprimir Modo Pizzas.");
-      runIpadShortcut(jobResult.shortcut_input);
       return;
     }
     if (canUseBrowserPrint()) {

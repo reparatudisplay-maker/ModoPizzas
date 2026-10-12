@@ -23,7 +23,7 @@ export default async function PrinterSettingsPage() {
         model: String(data.model),
         paper_width_mm: Number(data.paper_width_mm),
         printable_width_mm: Number(data.printable_width_mm),
-        preferred_print_method: data.preferred_print_method === "browser" || data.preferred_print_method === "ipad_shortcut" ? data.preferred_print_method : "auto"
+        preferred_print_method: data.preferred_print_method === "browser" ? "browser" : "auto"
       }} />
     </PanelShell>
   );

@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
@@ -99,7 +98,7 @@ export type ThermalPrinterSettings = {
   model: string;
   paper_width_mm: number;
   printable_width_mm: number;
-  preferred_print_method: "auto" | "browser" | "ipad_shortcut";
+  preferred_print_method: "auto" | "browser";
 };
 
 export type ThermalPrinterSettingsState = {
@@ -108,11 +107,6 @@ export type ThermalPrinterSettingsState = {
   settings?: ThermalPrinterSettings;
 };
 
-export type IpadThermalPrintJobState = {
-  status: "success" | "error";
-  message: string;
-  shortcut_input?: string;
-};
 export type PosOrderTestDeletionPreview = {
   order_id: string;
   order_code: string;
@@ -3647,7 +3641,7 @@ function printerSettingsFromRow(row: Record<string, unknown>): ThermalPrinterSet
     model: String(row.model ?? "JP58W"),
     paper_width_mm: Number(row.paper_width_mm ?? 58),
     printable_width_mm: Number(row.printable_width_mm ?? 48),
-    preferred_print_method: preferred === "browser" || preferred === "ipad_shortcut" ? preferred : "auto"
+    preferred_print_method: preferred === "browser" ? preferred : "auto"
   };
 }
 
@@ -3672,7 +3666,7 @@ export async function saveThermalPrinterSettings(_previousState: FormActionState
 
   if (!isValidIpv4(ipAddress)) return { status: "error", message: "Ingresa una dirección IPv4 válida para la impresora." };
   if (port < 1 || port > 65535) return { status: "error", message: "Ingresa un puerto entre 1 y 65535." };
-  if (!["auto", "browser", "ipad_shortcut"].includes(preferredMethod)) return { status: "error", message: "Selecciona un método de impresión válido." };
+  if (!["auto", "browser"].includes(preferredMethod)) return { status: "error", message: "Selecciona un método de impresión válido." };
 
   const { error } = await supabase.from("printer_settings").upsert({
     id: true,
@@ -3691,32 +3685,6 @@ export async function saveThermalPrinterSettings(_previousState: FormActionState
   return { status: "success", message: "Configuración de impresora guardada." };
 }
 
-export async function createIpadThermalPrintJob(payloadBase64: string): Promise<IpadThermalPrintJobState> {
-  const supabase = await createServerSupabaseClient();
-  const [settingsResult, jobResult] = await Promise.all([
-    supabase
-      .from("printer_settings")
-      .select("ip_address, port, model, paper_width_mm, printable_width_mm, preferred_print_method")
-      .eq("id", true)
-      .maybeSingle(),
-    supabase.rpc("create_thermal_print_job", { p_payload_base64: payloadBase64 })
-  ]);
-
-  if (settingsResult.error || !settingsResult.data) return { status: "error", message: settingsResult.error?.message ?? "No se encontró la configuración de impresora." };
-  if (jobResult.error || !jobResult.data) return { status: "error", message: jobResult.error?.message ?? "No se pudo preparar la comanda para iPad." };
-
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
-  if (!host) return { status: "error", message: "No se pudo preparar el enlace seguro de impresión." };
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const settings = printerSettingsFromRow(settingsResult.data as Record<string, unknown>);
-  const jobUrl = `${protocol}://${host}/api/thermal-print-jobs/${encodeURIComponent(String(jobResult.data))}`;
-  return {
-    status: "success",
-    message: "Comanda preparada para el atajo de iPad.",
-    shortcut_input: `${settings.ip_address}|${settings.port}|${jobUrl}`
-  };
-}
 export async function saveKitchenSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const ovenCount = getInteger(formData, "oven_count", 1);

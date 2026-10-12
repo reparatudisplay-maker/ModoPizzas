@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { createIpadThermalPrintJob, getKitchenTicket, getPosOrderReceipt, getThermalPrinterSettings, type PosOrderReceipt } from "@/app/admin/actions";
+import { getKitchenTicket, getPosOrderReceipt, type PosOrderReceipt } from "@/app/admin/actions";
 import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
 import { formatCop } from "@/lib/format";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
-import { createIpadThermalPayload, runIpadShortcut, shouldUseIpadShortcut } from "@/lib/device-thermal-print";
+import { getBleErrorMessage, printBleThermalDocuments, shouldUseBlePrinter } from "@/lib/ble-thermal-printer";
 
 export type PaymentPrintSelection = {
   kitchen: boolean;
@@ -90,15 +90,12 @@ function CustomerReceiptPreview({ onClose, receipt }: { onClose: () => void; rec
       setPrintError("No se pudo preparar el ticket para imprimir.");
       return;
     }
-    const settingsResult = await getThermalPrinterSettings();
-    if (settingsResult.status === "success" && settingsResult.settings && shouldUseIpadShortcut(settingsResult.settings)) {
-      const jobResult = await createIpadThermalPrintJob(createIpadThermalPayload([receiptRef.current]));
-      if (jobResult.status === "error" || !jobResult.shortcut_input) {
-        setPrintError(jobResult.message);
-        return;
+    if (shouldUseBlePrinter()) {
+      try {
+        setPrintMessage(await printBleThermalDocuments([receiptRef.current], { connectIfNeeded: true }));
+      } catch (error) {
+        setPrintError(getBleErrorMessage(error));
       }
-      setPrintMessage("Ticket enviado al atajo Imprimir Modo Pizzas.");
-      runIpadShortcut(jobResult.shortcut_input);
       return;
     }
     if (canUseBrowserPrint()) {
@@ -209,15 +206,13 @@ export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; on
     printedJobIdRef.current = job.id;
     const printables = Array.from(printRootRef.current.querySelectorAll<HTMLElement>(".post-payment-print-document > article"));
     const printDocuments = async () => {
-      const settingsResult = await getThermalPrinterSettings();
-      if (settingsResult.status === "success" && settingsResult.settings && shouldUseIpadShortcut(settingsResult.settings)) {
-        const jobResult = await createIpadThermalPrintJob(createIpadThermalPayload(printables));
-        if (jobResult.status === "error" || !jobResult.shortcut_input) {
-          onError(jobResult.message);
+      if (shouldUseBlePrinter()) {
+        try {
+          for (const printable of printables) await printBleThermalDocuments([printable]);
           return;
+        } catch (error) {
+          onError(`No se pudo enviar por Bluetooth; se abrirá la impresión original. ${getBleErrorMessage(error)}`);
         }
-        runIpadShortcut(jobResult.shortcut_input);
-        return;
       }
       if (!printThermalDocuments(printables, "Documentos del pedido")) {
         onError("No se pudo abrir el documento térmico para imprimir.");
