@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
 import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
 import { getAdjustedSourceStock } from "@/lib/inventory-stock";
+import { defaultPrintTemplate, normalizePrintTemplate, type PrintTemplate, type PrintTemplateKind } from "@/lib/print-templates";
 import type { StockUnit } from "@/lib/units";
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
@@ -105,6 +106,12 @@ export type ThermalPrinterSettingsState = {
   status: "success" | "error";
   message: string;
   settings?: ThermalPrinterSettings;
+};
+
+export type PrintTemplatesState = {
+  status: "success" | "error";
+  message: string;
+  templates?: Record<PrintTemplateKind, PrintTemplate>;
 };
 
 export type PosOrderTestDeletionPreview = {
@@ -3683,6 +3690,64 @@ export async function saveThermalPrinterSettings(_previousState: FormActionState
 
   revalidatePath("/panel/configuracion/impresoras");
   return { status: "success", message: "Configuración de impresora guardada." };
+}
+
+function printTemplateFromRow(kind: PrintTemplateKind, row: Record<string, unknown> | null | undefined) {
+  return normalizePrintTemplate(kind, {
+    elements: Array.isArray(row?.elements) ? row.elements : undefined,
+    margin_mm: Number(row?.margin_mm ?? 0),
+    line_spacing: Number(row?.line_spacing ?? 1),
+    leading_blank_lines: Number(row?.leading_blank_lines ?? 0),
+    trailing_blank_lines: Number(row?.trailing_blank_lines ?? 3)
+  });
+}
+
+export async function getPrintTemplates(): Promise<PrintTemplatesState> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("print_templates")
+    .select("kind, elements, margin_mm, line_spacing, leading_blank_lines, trailing_blank_lines")
+    .in("kind", ["kitchen", "receipt"]);
+  if (error) return { status: "error", message: error.message };
+  const rows = new Map((data ?? []).map((row) => [String(row.kind), row as Record<string, unknown>]));
+  return {
+    status: "success",
+    message: "Plantillas cargadas.",
+    templates: {
+      kitchen: printTemplateFromRow("kitchen", rows.get("kitchen")),
+      receipt: printTemplateFromRow("receipt", rows.get("receipt"))
+    }
+  };
+}
+
+export async function savePrintTemplate(template: PrintTemplate): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const user = await requireUserPermission(supabase, "configuracion.edit");
+  if (template.kind !== "kitchen" && template.kind !== "receipt") return { status: "error", message: "La plantilla no es válida." };
+  const safeTemplate = normalizePrintTemplate(template.kind, template);
+  const { error } = await supabase.from("print_templates").upsert({
+    kind: safeTemplate.kind,
+    elements: safeTemplate.elements,
+    margin_mm: safeTemplate.margin_mm,
+    line_spacing: safeTemplate.line_spacing,
+    leading_blank_lines: safeTemplate.leading_blank_lines,
+    trailing_blank_lines: safeTemplate.trailing_blank_lines,
+    updated_at: new Date().toISOString(),
+    updated_by: user.id
+  });
+  if (error) return { status: "error", message: error.message };
+  revalidatePath("/panel/configuracion/plantillas-impresion");
+  return { status: "success", message: "Plantilla guardada." };
+}
+
+export async function restoreDefaultPrintTemplate(kind: PrintTemplateKind): Promise<PrintTemplatesState> {
+  if (kind !== "kitchen" && kind !== "receipt") return { status: "error", message: "La plantilla no es válida." };
+  const result = await savePrintTemplate(defaultPrintTemplate(kind));
+  if (result.status === "error") return { status: "error", message: result.message };
+  const templatesResult = await getPrintTemplates();
+  return templatesResult.status === "success"
+    ? { ...templatesResult, message: "Se restauró la plantilla predeterminada." }
+    : templatesResult;
 }
 
 export async function saveKitchenSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

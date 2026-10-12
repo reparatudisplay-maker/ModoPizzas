@@ -8255,3 +8255,247 @@ a {
     white-space: nowrap;
   }
 }
+
+.print-template-editor {
+  gap: 16px;
+}
+
+.print-template-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.print-template-tabs button,
+.print-template-toolbar button {
+  align-items: center;
+  background: var(--panel);
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.print-template-tabs button + button {
+  border-left: 1px solid var(--border);
+}
+
+.print-template-tabs button.active,
+.print-template-toolbar button.active {
+  background: color-mix(in srgb, var(--secondary) 15%, var(--panel));
+  color: var(--secondary);
+}
+
+.print-template-layout {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(240px, .9fr) minmax(260px, 1fr) minmax(260px, .95fr);
+}
+
+.print-template-elements-panel,
+.print-template-properties,
+.print-template-preview-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.print-template-add-row,
+.print-template-add-actions,
+.print-template-toolbar,
+.print-template-row-move,
+.print-template-stepper,
+.print-template-stepper > div {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.print-template-add-row select {
+  min-width: 0;
+  flex: 1;
+}
+
+.print-template-add-actions {
+  flex-wrap: wrap;
+}
+
+.print-template-element-list {
+  display: grid;
+  gap: 6px;
+  max-height: 470px;
+  overflow-y: auto;
+}
+
+.print-template-element-row {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: grab;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-height: 42px;
+  padding: 6px 8px;
+}
+
+.print-template-element-row.selected {
+  background: color-mix(in srgb, var(--secondary) 10%, var(--panel));
+  border-color: var(--secondary);
+}
+
+.print-template-element-row > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.print-template-element-row small {
+  color: var(--muted);
+  font-size: .7rem;
+  font-weight: 700;
+}
+
+.print-template-row-move button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 3px;
+}
+
+.print-template-row-move button:disabled {
+  cursor: default;
+  opacity: .35;
+}
+
+.print-template-toolbar {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.print-template-toolbar span {
+  flex: 1;
+}
+
+.print-template-toolbar button + button {
+  border-left: 1px solid var(--border);
+}
+
+.print-template-remove {
+  justify-self: start;
+}
+
+.print-template-properties hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.print-template-properties h3 {
+  font-size: .95rem;
+  margin: 0;
+}
+
+.print-template-steppers {
+  display: grid;
+  gap: 8px;
+}
+
+.print-template-stepper {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.print-template-stepper > span {
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 700;
+}
+
+.print-template-stepper strong {
+  display: inline-grid;
+  min-width: 24px;
+  place-items: center;
+}
+
+.print-template-stepper .icon-button {
+  height: 30px;
+  width: 30px;
+}
+
+.print-template-paper {
+  background: color-mix(in srgb, var(--background) 65%, var(--panel));
+  display: grid;
+  justify-content: center;
+  max-height: 550px;
+  overflow: auto;
+  padding: 16px;
+}
+
+.print-template-paper .kitchen-ticket,
+.print-template-paper .customer-receipt {
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 18%, transparent);
+  box-sizing: border-box;
+  width: 48mm;
+}
+
+.print-template-element[data-print-font-size="small"] {
+  font-size: .82em;
+}
+
+.print-template-element[data-print-font-size="large"] {
+  font-size: 1.16em;
+}
+
+.print-template-separator {
+  border-top: 1px dashed #111;
+  height: 0;
+  width: 100%;
+}
+
+.customer-receipt-order {
+  font-size: .72rem;
+  text-align: center;
+}
+
+@media (max-width: 1120px) {
+  .print-template-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .print-template-preview-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 700px) {
+  .section-title-row:has(.print-template-tabs) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .print-template-tabs {
+    width: 100%;
+  }
+
+  .print-template-tabs button {
+    flex: 1;
+  }
+
+  .print-template-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .print-template-preview-panel {
+    grid-column: auto;
+  }
+}

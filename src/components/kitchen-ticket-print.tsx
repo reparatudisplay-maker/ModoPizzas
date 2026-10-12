@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, useState, type Ref } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
-import { getKitchenTicket, type KitchenTicket } from "@/app/admin/actions";
+import { getKitchenTicket, getPrintTemplates, type KitchenTicket } from "@/app/admin/actions";
+import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame } from "@/components/print-template-elements";
+import { defaultPrintTemplate, type PrintTemplate } from "@/lib/print-templates";
 import { formatStockQuantity } from "@/lib/units";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
@@ -40,18 +42,11 @@ function ComponentList({ components }: { components: KitchenTicket["items"][numb
   );
 }
 
-export const KitchenTicketDocument = ({ compact = false, ticket, printRef }: { compact?: boolean; ticket: KitchenTicket; printRef?: Ref<HTMLElement> }) => {
+export const KitchenTicketDocument = ({ compact = false, template = defaultPrintTemplate("kitchen"), ticket, printRef }: { compact?: boolean; template?: PrintTemplate; ticket: KitchenTicket; printRef?: Ref<HTMLElement> }) => {
   const pizzaItems = ticket.items.filter((item) => item.kind === "pizza");
   const deliveryItems = ticket.items.filter((item) => item.kind === "sale_product");
-
-  return (
-    <article className={`kitchen-ticket thermal${compact ? " kitchen-ticket-58" : ""}`} ref={printRef}>
-      <header className="kitchen-ticket-header">
-        <strong>COMANDA DE COCINA</strong>
-        <b>{ticket.order.code}</b>
-        <span>{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</span>
-      </header>
-
+  const pizzaSection = (
+    <>
       {pizzaItems.map((item, itemIndex) => {
         const ingredients = item.components.filter((component) => component.type !== "addition");
         const additions = item.components.filter((component) => component.type === "addition");
@@ -79,25 +74,33 @@ export const KitchenTicketDocument = ({ compact = false, ticket, printRef }: { c
           </section>
         );
       })}
+    </>
+  );
+  const fields: Record<string, ReactNode> = {
+    kitchen_header: <header className="kitchen-ticket-header"><strong>COMANDA DE COCINA</strong><b>{ticket.order.code}</b></header>,
+    kitchen_order: <div className="kitchen-ticket-order-notes"><span>{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</span></div>,
+    kitchen_pizzas: pizzaSection,
+    kitchen_delivery: deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><b>PARA ENTREGAR</b><ul>{deliveryItems.map((item) => <li key={item.id}><strong>{item.quantity} ×</strong> {item.name}</li>)}</ul></section> : null,
+    kitchen_summary: <section className="kitchen-ticket-summary">
+      <b>RESUMEN OPERATIVO</b>
+      <p><span>TOTAL PIZZAS</span><strong>{ticket.summary.pizza_count}</strong></p>
+      {ticket.summary.bases.length > 0 ? <><small>BASES</small><ComponentList components={ticket.summary.bases.map((base) => ({ type: "ingredient" as const, name: base.name, quantity: base.quantity, unit: base.unit, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
+      {ticket.summary.components.length > 0 ? <><small>TOTAL INGREDIENTES</small><ComponentList components={ticket.summary.components.map((component) => ({ ...component, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
+    </section>
+  };
 
-      {deliveryItems.length > 0 ? (
-        <section className="kitchen-ticket-delivery">
-          <b>PARA ENTREGAR</b>
-          <ul>{deliveryItems.map((item) => <li key={item.id}><strong>{item.quantity} ×</strong> {item.name}</li>)}</ul>
-        </section>
-      ) : null}
-
-      <section className="kitchen-ticket-summary">
-        <b>RESUMEN OPERATIVO</b>
-        <p><span>TOTAL PIZZAS</span><strong>{ticket.summary.pizza_count}</strong></p>
-        {ticket.summary.bases.length > 0 ? <><small>BASES</small><ComponentList components={ticket.summary.bases.map((base) => ({ type: "ingredient" as const, name: base.name, quantity: base.quantity, unit: base.unit, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
-        {ticket.summary.components.length > 0 ? <><small>TOTAL INGREDIENTES</small><ComponentList components={ticket.summary.components.map((component) => ({ ...component, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
-      </section>
+  return (
+    <article className={`kitchen-ticket thermal${compact ? " kitchen-ticket-58" : ""}`} data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
+      <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
+      {template.elements.map((element) => element.type === "field"
+        ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]}</PrintTemplateElementFrame>
+        : <PrintTemplateCustomElement element={element} key={element.id} />)}
+      <PrintTemplateBlankLines lines={template.trailing_blank_lines} position="end" />
     </article>
   );
 };
 
-function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket: KitchenTicket }) {
+function KitchenTicketPreview({ onClose, template, ticket }: { onClose: () => void; template: PrintTemplate; ticket: KitchenTicket }) {
   const ticketRef = useRef<HTMLElement>(null);
   const [printError, setPrintError] = useState("");
   const [printMessage, setPrintMessage] = useState("");
@@ -110,7 +113,7 @@ function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket
     }
     if (shouldUseBlePrinter()) {
       try {
-        setPrintMessage(await printBleThermalDocuments([ticketRef.current], { connectIfNeeded: true }));
+        setPrintMessage(await printBleThermalDocuments([ticketRef.current], { connectIfNeeded: true, leadingBlankLines: template.leading_blank_lines, trailingBlankLines: template.trailing_blank_lines }));
       } catch (error) {
         setPrintError(getBleErrorMessage(error));
       }
@@ -145,7 +148,7 @@ function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket
             <button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button>
           </div>
         </header>
-        <div className="kitchen-ticket-print-root kitchen-ticket-print-root-58"><KitchenTicketDocument compact printRef={ticketRef} ticket={ticket} /></div>
+        <div className="kitchen-ticket-print-root kitchen-ticket-print-root-58"><KitchenTicketDocument compact printRef={ticketRef} template={template} ticket={ticket} /></div>
         {printMessage ? <p className="form-status">{printMessage}</p> : null}
         {printError ? <p className="form-status error">{printError}</p> : null}
         <footer className="modal-footer kitchen-ticket-preview-footer">
@@ -159,19 +162,21 @@ function KitchenTicketPreview({ onClose, ticket }: { onClose: () => void; ticket
 
 export function KitchenTicketPrintButton({ orderCode, orderId }: { orderCode: string; orderId: string }) {
   const [ticket, setTicket] = useState<KitchenTicket | null>(null);
+  const [template, setTemplate] = useState<PrintTemplate | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const openPreview = async () => {
     setError("");
     setLoading(true);
-    const result = await getKitchenTicket(orderId);
+    const [result, templatesResult] = await Promise.all([getKitchenTicket(orderId), getPrintTemplates()]);
     setLoading(false);
     if (result.status === "error" || !result.ticket) {
       setError(result.message);
       return;
     }
     setTicket(result.ticket);
+    setTemplate(templatesResult.status === "success" && templatesResult.templates ? templatesResult.templates.kitchen : defaultPrintTemplate("kitchen"));
   };
 
   return (
@@ -181,7 +186,7 @@ export function KitchenTicketPrintButton({ orderCode, orderId }: { orderCode: st
         {loading ? "Cargando..." : "Imprimir comanda"}
       </button>
       {error ? <span className="row-action-message error">{error}</span> : null}
-      {ticket ? <KitchenTicketPreview onClose={() => setTicket(null)} ticket={ticket} /> : null}
+      {ticket && template ? <KitchenTicketPreview onClose={() => { setTicket(null); setTemplate(null); }} template={template} ticket={ticket} /> : null}
     </>
   );
 }

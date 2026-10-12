@@ -14,11 +14,17 @@ const thermalDocumentStyles = `
   .thermal-print-document { break-inside: avoid; }
   .thermal-print-document + .thermal-print-document { margin: 0; padding: 0; border-top: 2px dashed #111; }
   .kitchen-ticket, .customer-receipt { width: 100%; margin: 0; padding: 0; color: #000; background: #fff; font: inherit; }
+  .print-template-element { display: block; }
+  .print-template-element[data-print-font-size="small"] { font-size: .82em; }
+  .print-template-element[data-print-font-size="large"] { font-size: 1.16em; }
+  .print-template-separator { border-top: 1px dashed #111; height: 0; width: 100%; }
+  .print-template-blank-lines { display: block; width: 100%; }
   .kitchen-ticket-header, .customer-receipt-header { display: grid; gap: 1px; padding-bottom: 5px; border-bottom: 2px solid #111; text-align: left; }
   .kitchen-ticket-header strong, .customer-receipt-header strong { font-size: .95rem; letter-spacing: .035em; }
   .kitchen-ticket-header b { font-size: 1.2rem; }
   .customer-receipt-header b { font-size: .92rem; }
-  .kitchen-ticket-header span, .customer-receipt-header span { font-size: .72rem; }
+  .kitchen-ticket-header span, .customer-receipt-header span, .customer-receipt-order { font-size: .72rem; }
+  .customer-receipt-order { text-align: center; }
   .kitchen-ticket-pizza, .kitchen-ticket-delivery, .kitchen-ticket-order-notes, .kitchen-ticket-summary { display: grid; gap: 4px; padding: 6px 0; border-bottom: 1px dashed #555; break-inside: avoid; }
   .kitchen-ticket-pizza > header { display: grid; gap: 1px; }
   .kitchen-ticket-pizza > header span, .kitchen-ticket-group > b, .kitchen-ticket-delivery > b, .kitchen-ticket-order-notes > b, .kitchen-ticket-summary > b, .kitchen-ticket-summary > small { font-size: .67rem; font-weight: 800; letter-spacing: .035em; }

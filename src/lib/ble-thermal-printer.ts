@@ -181,11 +181,40 @@ function wrapThermalLine(line: string, width = 32) {
   return rows;
 }
 
-export function buildBleThermalPayload(documents: HTMLElement[]) {
-  const body = documents
-    .flatMap((document) => toPrinterAscii(document.innerText).split(/\r?\n/).flatMap((line) => wrapThermalLine(line)))
-    .join("\n");
-  return new Uint8Array([0x1b, 0x40, 0x1b, 0x61, 0x00, ...new TextEncoder().encode(`${body}\n\n\n`), 0x1b, 0x64, 0x03]);
+type BlePrintOptions = {
+  connectIfNeeded?: boolean;
+  leadingBlankLines?: number;
+  trailingBlankLines?: number;
+};
+
+function feedLines(lines: number) {
+  return [0x1b, 0x64, Math.max(0, Math.min(20, Math.round(lines)))];
+}
+
+function templateElementBytes(element: HTMLElement) {
+  const encoder = new TextEncoder();
+  const alignment = element.dataset.printAlign === "center" ? 1 : element.dataset.printAlign === "right" ? 2 : 0;
+  const fontSize = element.dataset.printFontSize === "large" ? 0x10 : 0;
+  const bold = element.dataset.printBold === "true" ? 1 : 0;
+  const underline = element.dataset.printUnderline === "true" ? 1 : 0;
+  const spacingAfter = Math.max(0, Math.min(8, Math.round(Number(element.dataset.printSpacingAfter ?? 0))));
+  const text = element.querySelector(".print-template-separator")
+    ? "--------------------------------"
+    : toPrinterAscii(element.innerText);
+  const lines = text.split(/\r?\n/).flatMap((line) => wrapThermalLine(line));
+  return [0x1b, 0x61, alignment, 0x1b, 0x45, bold, 0x1b, 0x2d, underline, 0x1b, 0x21, fontSize, ...encoder.encode(`${lines.join("\n")}\n${"\n".repeat(spacingAfter)}`), 0x1b, 0x45, 0x00, 0x1b, 0x2d, 0x00, 0x1b, 0x21, 0x00];
+}
+
+export function buildBleThermalPayload(documents: HTMLElement[], options: BlePrintOptions = {}) {
+  const body = documents.flatMap((document) => {
+    const templateElements = Array.from(document.querySelectorAll<HTMLElement>(".print-template-element"));
+    if (templateElements.length > 0) return templateElements.flatMap(templateElementBytes);
+    const text = toPrinterAscii(document.innerText).split(/\r?\n/).flatMap((line) => wrapThermalLine(line)).join("\n");
+    return [...new TextEncoder().encode(`${text}\n`)];
+  });
+  const leading = Math.max(0, Math.min(20, Math.round(options.leadingBlankLines ?? Number(documents[0]?.dataset.thermalLeadingBlankLines ?? 0))));
+  const trailing = Math.max(0, Math.min(20, Math.round(options.trailingBlankLines ?? Number(documents[0]?.dataset.thermalTrailingBlankLines ?? 3))));
+  return new Uint8Array([0x1b, 0x40, ...feedLines(leading), ...body, ...feedLines(trailing)]);
 }
 
 export function buildBleTestPayload() {
@@ -229,8 +258,8 @@ export async function printBleTest() {
   await writeBlePayload(buildBleTestPayload());
 }
 
-export async function printBleThermalDocuments(documents: HTMLElement[], options: { connectIfNeeded?: boolean } = {}) {
+export async function printBleThermalDocuments(documents: HTMLElement[], options: BlePrintOptions = {}) {
   if ((!device?.gatt?.connected || !characteristic) && options.connectIfNeeded) await connectBlePrinter();
-  await writeBlePayload(buildBleThermalPayload(documents));
+  await writeBlePayload(buildBleThermalPayload(documents, options));
   return "Datos enviados por Bluetooth. Confirma la salida física en la JP58W.";
 }

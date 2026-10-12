@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -173,7 +173,8 @@ const menuPriceLinks: NavLink[] = [
     { key: "configuracion", href: "/panel/configuracion", label: "Usuarios y permisos", icon: UserCog, show: isAdmin },
     { key: "configuracion-negocio", href: "/panel/configuracion/negocio", label: "Informacion publica", icon: MapPin, show: isAdmin },
     { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: canAccess("configuracion") },
-    { key: "configuracion-impresoras", href: "/panel/configuracion/impresoras", label: "Impresoras", icon: Printer, show: canAccess("configuracion") }
+    { key: "configuracion-impresoras", href: "/panel/configuracion/impresoras", label: "Impresoras", icon: Printer, show: canAccess("configuracion") },
+    { key: "configuracion-plantillas-impresion", href: "/panel/configuracion/plantillas-impresion", label: "Plantillas de impresion", icon: FilePenLine, show: canAccess("configuracion") }
   ];
   const masterActive = masterLinks.some((link) => link.key === active);
   const communicationModule = active === "cocina"
