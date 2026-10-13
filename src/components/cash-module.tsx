@@ -75,6 +75,16 @@ export type ShiftSaleRow = {
   created_at: string;
 };
 
+export type PlatformShiftReceivableRow = {
+  id: string;
+  platform: "rappi" | "didi";
+  gross_cop: number;
+  estimated_commission_cop: number;
+  net_expected_cop: number;
+  settled_net_cop: number;
+  status: string;
+};
+
 const initialState: FormActionState = { status: "idle", message: "" };
 
 const movementLabels: Record<string, string> = {
@@ -259,11 +269,13 @@ export function CashClosingModule({
   openSession,
   movements,
   sales,
+  platformReceivables,
   closedSessions
 }: {
   openSession: CashSessionRow | null;
   movements: CashMovementRow[];
   sales: ShiftSaleRow[];
+  platformReceivables: PlatformShiftReceivableRow[];
   closedSessions: CashSessionRow[];
 }) {
   const [closeModal, setCloseModal] = useState(false);
@@ -272,7 +284,9 @@ export function CashClosingModule({
     cash: sales.filter((sale) => sale.payment_method === "cash"),
     transfer: sales.filter((sale) => sale.payment_method === "transfer"),
     mixed: sales.filter((sale) => sale.payment_method === "mixed"),
-    pending: sales.filter((sale) => sale.payment_method === "pending")
+    pending: sales.filter((sale) => sale.payment_method === "pending"),
+    rappi: sales.filter((sale) => sale.payment_method === "rappi"),
+    didi: sales.filter((sale) => sale.payment_method === "didi")
   };
 
   return (
@@ -305,6 +319,8 @@ export function CashClosingModule({
             <SalesGroup label="Transferencias" sales={salesByMethod.transfer} />
             <SalesGroup label="Mixto" sales={salesByMethod.mixed} />
             <SalesGroup label="Pendiente" sales={salesByMethod.pending} />
+            <PlatformReceivablesGroup label="Rappi · liquidación" platform="rappi" receivables={platformReceivables} sales={salesByMethod.rappi} />
+            <PlatformReceivablesGroup label="DiDi · liquidación" platform="didi" receivables={platformReceivables} sales={salesByMethod.didi} />
             <div className="cash-expected-row">
               <span>Ventas totales</span>
               <strong>{formatCop(sales.reduce((sum, sale) => sum + sale.total_cop, 0))}</strong>
@@ -385,6 +401,19 @@ function SalesGroup({ label, sales }: { label: string; sales: ShiftSaleRow[] }) 
     value: sale.total_cop
   }));
   return <CashGroup label={label} rows={rows} total={sales.reduce((sum, sale) => sum + sale.total_cop, 0)} />;
+}
+
+function PlatformReceivablesGroup({ label, platform, receivables, sales }: { label: string; platform: "rappi" | "didi"; receivables: PlatformShiftReceivableRow[]; sales: ShiftSaleRow[] }) {
+  const rows = receivables.filter((row) => row.platform === platform);
+  const gross = rows.reduce((sum, row) => sum + row.gross_cop, 0);
+  const commission = rows.reduce((sum, row) => sum + row.estimated_commission_cop, 0);
+  const pendingNet = rows.reduce((sum, row) => sum + (row.status === "pending" ? Math.max(0, row.net_expected_cop - row.settled_net_cop) : 0), 0);
+  const saleTotal = sales.reduce((sum, sale) => sum + sale.total_cop, 0);
+  if (saleTotal === 0) return null;
+  return <div className="cash-group static-platform-group">
+    <div className="cash-group-summary"><span>{label}</span><strong>{formatCop(saleTotal)}</strong></div>
+    <div className="cash-platform-totals"><span>Venta bruta <b>{formatCop(gross || saleTotal)}</b></span><span>Comisión estimada <b>{formatCop(commission)}</b></span><span>Neto pendiente <b>{formatCop(pendingNet)}</b></span></div>
+  </div>;
 }
 
 function OpenCashModal({ registers, onClose }: { registers: CashRegisterOption[]; onClose: () => void }) {

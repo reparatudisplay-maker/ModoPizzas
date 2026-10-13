@@ -3,10 +3,10 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, GripVertical, Italic, LoaderCircle, Minus, Plus, Printer, RotateCcw, Trash2, Underline } from "lucide-react";
 import { restoreDefaultPrintTemplate, savePrintTemplate, type PrintTemplatesState } from "@/app/admin/actions";
-import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame } from "@/components/print-template-elements";
+import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
 import { getBleErrorMessage, printBleThermalDocuments, shouldUseBlePrinter } from "@/lib/ble-thermal-printer";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
-import { fieldLabel, kitchenFieldLabels, receiptFieldLabels, type PrintTemplate, type PrintTemplateAlignment, type PrintTemplateElement, type PrintTemplateFontSize, type PrintTemplateKind, protectedTemplateField } from "@/lib/print-templates";
+import { fieldLabel, kitchenFieldLabels, printTemplatePartStyle, receiptFieldLabels, type PrintTemplate, type PrintTemplateAlignment, type PrintTemplateElement, type PrintTemplateFontSize, type PrintTemplateKind, type PrintTemplatePart as TemplatePart, type PrintTemplatePartStyle, protectedTemplateField } from "@/lib/print-templates";
 
 type Props = { templates: Record<PrintTemplateKind, PrintTemplate> };
 
@@ -27,6 +27,17 @@ function updateElement(template: PrintTemplate, id: string, update: Partial<Prin
   return { ...template, elements: template.elements.map((element) => element.id === id ? { ...element, ...update } : element) };
 }
 
+function updatePartStyle(template: PrintTemplate, id: string, part: TemplatePart, update: Partial<PrintTemplatePartStyle>) {
+  return {
+    ...template,
+    elements: template.elements.map((element) => {
+      if (element.id !== id) return element;
+      const current = printTemplatePartStyle(element, part);
+      return { ...element, part_styles: { ...element.part_styles, [part]: { ...current, ...update } } };
+    })
+  };
+}
+
 function moveElement(template: PrintTemplate, sourceId: string, targetId: string) {
   const source = template.elements.findIndex((element) => element.id === sourceId);
   const target = template.elements.findIndex((element) => element.id === targetId);
@@ -41,19 +52,30 @@ function Stepper({ label, max, min = 0, onChange, value }: { label: string; max:
   return <div className="print-template-stepper"><span>{label}</span><div><button aria-label={`Reducir ${label}`} className="icon-button" disabled={value <= min} onClick={() => onChange(value - 1)} type="button"><Minus size={15} /></button><strong>{value}</strong><button aria-label={`Aumentar ${label}`} className="icon-button" disabled={value >= max} onClick={() => onChange(value + 1)} type="button"><Plus size={15} /></button></div></div>;
 }
 
-function PreviewField({ field, kind }: { field: string; kind: PrintTemplateKind }) {
+function PartFormatControls({ element, onChange, part, title }: { element: PrintTemplateElement; onChange: (update: Partial<PrintTemplatePartStyle>) => void; part: TemplatePart; title: string }) {
+  const style = printTemplatePartStyle(element, part);
+  return <div className="print-template-part-controls">
+    <strong>{title}</strong>
+    <button aria-label={`Negrita de ${title}`} aria-pressed={style.bold} className={style.bold ? "active" : ""} onClick={() => onChange({ bold: !style.bold })} type="button"><Bold size={15} /></button>
+    <select aria-label={`Tamaño de ${title}`} onChange={(event) => onChange({ font_size: event.target.value as PrintTemplateFontSize })} value={style.font_size}><option value="small">Pequeño</option><option value="normal">Normal</option><option value="large">Destacado</option></select>
+    {([ ["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight] ] as const).map(([alignment, Icon]) => <button aria-label={`Alinear ${title} a ${alignment}`} aria-pressed={style.align === alignment} className={style.align === alignment ? "active" : ""} key={alignment} onClick={() => onChange({ align: alignment })} type="button"><Icon size={15} /></button>)}
+  </div>;
+}
+
+function PreviewField({ element, kind }: { element: PrintTemplateElement; kind: PrintTemplateKind }) {
+  const field = element.field ?? "";
   const values: Record<string, ReactNode> = {
-    kitchen_header: <header className="kitchen-ticket-header"><strong>COMANDA DE COCINA</strong><b>PD124</b></header>,
-    kitchen_order: <div className="kitchen-ticket-order-notes">Local · 11/10/2026, 1:30 p. m.</div>,
-    kitchen_pizzas: <section className="kitchen-ticket-pizza"><header><span>1 × PIZZA</span><strong>HAWAIANA / PEPPERONI</strong><small>MEDIANA 35 CM</small></header><div className="kitchen-ticket-group"><b>BASE</b><p><span>Base 35 cm</span><strong>1 UND</strong></p></div><div className="kitchen-ticket-group"><b>INGREDIENTES</b><ul className="kitchen-ticket-quantity-list"><li><span>Salsa Napolitana</span><strong>50 G</strong></li><li><span>Mozzarella</span><strong>120 G</strong></li><li><span>Pepperoni</span><strong>45 G</strong></li></ul></div><div className="kitchen-ticket-notes"><b>NOTAS</b><span>Sin cebolla</span></div></section>,
-    kitchen_delivery: <section className="kitchen-ticket-delivery"><b>PARA ENTREGAR</b><ul><li><strong>1 ×</strong> COCA-COLA 1,5 L</li></ul></section>,
-    kitchen_summary: <section className="kitchen-ticket-summary"><b>RESUMEN OPERATIVO</b><p><span>TOTAL PIZZAS</span><strong>1</strong></p><small>BASES</small><ul className="kitchen-ticket-quantity-list"><li><span>Base 35 cm</span><strong>1 UND</strong></li></ul></section>,
-    receipt_header: <header className="customer-receipt-header"><strong>MODO PIZZAS</strong><b>TICKET DE COMPRA</b></header>,
-    receipt_order: <div className="customer-receipt-order">PD124 · 11/10/2026, 1:30 p. m.</div>,
-    receipt_items: <ul className="customer-receipt-items"><li><div><strong>1 × HAWAIANA MEDIANA</strong><span>$ 35.900 c/u</span></div><b>$ 35.900</b></li><li><div><strong>1 × COCA-COLA 1,5 L</strong><span>$ 12.000 c/u</span></div><b>$ 12.000</b></li></ul>,
-    receipt_totals: <section className="customer-receipt-totals"><p><span>Subtotal</span><strong>$ 47.900</strong></p><p className="customer-receipt-total"><span>TOTAL</span><strong>$ 47.900</strong></p></section>,
-    receipt_payment: <section className="customer-receipt-payment"><p><span>PAGO</span><strong>Efectivo</strong></p><p><span>Recibido</span><strong>$ 50.000</strong></p><p><span>Cambio</span><strong>$ 2.100</strong></p></section>,
-    receipt_footer: <footer className="customer-receipt-footer">Gracias por tu compra</footer>
+    kitchen_header: <header className="kitchen-ticket-header"><PrintTemplatePart as="strong" element={element} part="title">COMANDA DE COCINA</PrintTemplatePart><PrintTemplatePart as="b" element={element} part="value">PD124</PrintTemplatePart></header>,
+    kitchen_order: <div className="kitchen-ticket-order-notes"><PrintTemplatePart element={element} part="value">Local · 11/10/2026, 1:30 p. m.</PrintTemplatePart></div>,
+    kitchen_pizzas: <section className="kitchen-ticket-pizza"><header><PrintTemplatePart element={element} part="label">1 × PIZZA</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">HAWAIANA / PEPPERONI</PrintTemplatePart><PrintTemplatePart as="small" element={element} part="value">MEDIANA 35 CM</PrintTemplatePart></header><div className="kitchen-ticket-group"><PrintTemplatePart as="b" element={element} part="title">BASE</PrintTemplatePart><p><PrintTemplatePart element={element} part="label">Base 35 cm</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">1 UND</PrintTemplatePart></p></div><div className="kitchen-ticket-group"><PrintTemplatePart as="b" element={element} part="title">INGREDIENTES</PrintTemplatePart><ul className="kitchen-ticket-quantity-list">{[["Salsa Napolitana", "50 G"], ["Mozzarella", "120 G"], ["Pepperoni", "45 G"]].map(([name, quantity]) => <li key={name}><PrintTemplatePart element={element} part="label">{name}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{quantity}</PrintTemplatePart></li>)}</ul></div><div className="kitchen-ticket-notes"><PrintTemplatePart as="b" element={element} part="title">NOTAS: </PrintTemplatePart><PrintTemplatePart element={element} part="value">Sin cebolla</PrintTemplatePart></div></section>,
+    kitchen_delivery: <section className="kitchen-ticket-delivery"><PrintTemplatePart as="b" element={element} part="title">PARA ENTREGAR</PrintTemplatePart><ul><li><PrintTemplatePart element={element} part="value">1 × COCA-COLA 1,5 L</PrintTemplatePart></li></ul></section>,
+    kitchen_summary: <section className="kitchen-ticket-summary"><PrintTemplatePart as="b" element={element} part="title">RESUMEN OPERATIVO</PrintTemplatePart><p><PrintTemplatePart element={element} part="label">TOTAL PIZZAS</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">1</PrintTemplatePart></p><PrintTemplatePart as="small" element={element} part="title">BASES</PrintTemplatePart><ul className="kitchen-ticket-quantity-list"><li><PrintTemplatePart element={element} part="label">Base 35 cm</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">1 UND</PrintTemplatePart></li></ul></section>,
+    receipt_header: <header className="customer-receipt-header"><PrintTemplatePart as="strong" element={element} part="title">MODO PIZZAS</PrintTemplatePart><PrintTemplatePart as="b" element={element} part="value">TICKET DE COMPRA</PrintTemplatePart></header>,
+    receipt_order: <div className="customer-receipt-order"><PrintTemplatePart element={element} part="value">PD124 · 11/10/2026, 1:30 p. m.</PrintTemplatePart></div>,
+    receipt_items: <ul className="customer-receipt-items"><li><div><PrintTemplatePart as="strong" element={element} part="label">1 × HAWAIANA MEDIANA</PrintTemplatePart><PrintTemplatePart element={element} part="value">$ 35.900 c/u</PrintTemplatePart></div><PrintTemplatePart as="b" element={element} part="value">$ 35.900</PrintTemplatePart></li><li><div><PrintTemplatePart as="strong" element={element} part="label">1 × COCA-COLA 1,5 L</PrintTemplatePart><PrintTemplatePart element={element} part="value">$ 12.000 c/u</PrintTemplatePart></div><PrintTemplatePart as="b" element={element} part="value">$ 12.000</PrintTemplatePart></li></ul>,
+    receipt_totals: <section className="customer-receipt-totals"><p><PrintTemplatePart element={element} part="label">Subtotal</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">$ 47.900</PrintTemplatePart></p><p className="customer-receipt-total"><PrintTemplatePart element={element} part="label">TOTAL</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">$ 47.900</PrintTemplatePart></p></section>,
+    receipt_payment: <section className="customer-receipt-payment"><p><PrintTemplatePart element={element} part="label">PAGO</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">Efectivo</PrintTemplatePart></p><p><PrintTemplatePart element={element} part="label">Recibido</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">$ 50.000</PrintTemplatePart></p><p><PrintTemplatePart element={element} part="label">Cambio</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">$ 2.100</PrintTemplatePart></p></section>,
+    receipt_footer: <footer className="customer-receipt-footer"><PrintTemplatePart element={element} part="value">Gracias por tu compra</PrintTemplatePart></footer>
   };
   return values[field] ?? <span>{fieldLabel(kind, field)}</span>;
 }
@@ -63,7 +85,7 @@ function TemplatePreview({ template, printRef }: { template: PrintTemplate; prin
   return <article className={articleClass} data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-line-spacing={template.line_spacing} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
     <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
     {template.elements.map((element) => element.type === "field"
-      ? <PrintTemplateElementFrame element={element} key={element.id}><PreviewField field={element.field ?? ""} kind={template.kind} /></PrintTemplateElementFrame>
+      ? <PrintTemplateElementFrame element={element} key={element.id}><PreviewField element={element} kind={template.kind} /></PrintTemplateElementFrame>
       : <PrintTemplateCustomElement element={element} key={element.id} />)}
     <PrintTemplateBlankLines lines={template.trailing_blank_lines} position="end" />
   </article>;
@@ -143,6 +165,7 @@ export function PrintTemplateEditor({ templates: initialTemplates }: Props) {
           <label className="toggle-field"><input checked={selected.visible} disabled={protectedTemplateField(kind, selected.field)} onChange={(event) => setTemplate(updateElement(template, selected.id, { visible: event.target.checked }))} type="checkbox" /><span>Mostrar elemento</span></label>
           <div className="print-template-toolbar"><button aria-label="Negrita" aria-pressed={selected.bold} className={selected.bold ? "active" : ""} onClick={() => setTemplate(updateElement(template, selected.id, { bold: !selected.bold }))} type="button"><Bold size={16} /></button><button aria-label="Cursiva" aria-pressed={selected.italic} className={selected.italic ? "active" : ""} onClick={() => setTemplate(updateElement(template, selected.id, { italic: !selected.italic }))} type="button"><Italic size={16} /></button><button aria-label="Subrayado" aria-pressed={selected.underline} className={selected.underline ? "active" : ""} onClick={() => setTemplate(updateElement(template, selected.id, { underline: !selected.underline }))} type="button"><Underline size={16} /></button><span />{([ ["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight] ] as const).map(([alignment, Icon]) => <button aria-label={`Alinear ${alignment}`} aria-pressed={selected.align === alignment} className={selected.align === alignment ? "active" : ""} key={alignment} onClick={() => setTemplate(updateElement(template, selected.id, { align: alignment as PrintTemplateAlignment }))} type="button"><Icon size={16} /></button>)}</div>
           <div className="form-grid"><label className="field"><span>Tamaño</span><select onChange={(event) => setTemplate(updateElement(template, selected.id, { font_size: event.target.value as PrintTemplateFontSize }))} value={selected.font_size}><option value="small">Pequeño</option><option value="normal">Normal</option><option value="large">Destacado</option></select></label><Stepper label="Espacio después" max={8} onChange={(value) => setTemplate(updateElement(template, selected.id, { spacing_after: value }))} value={selected.spacing_after} /></div>
+          {selected.type === "field" ? <div className="print-template-parts-panel"><p className="muted">Formato interno del bloque</p><PartFormatControls element={selected} onChange={(update) => setTemplate(updatePartStyle(template, selected.id, "title", update))} part="title" title="Título" /><PartFormatControls element={selected} onChange={(update) => setTemplate(updatePartStyle(template, selected.id, "label", update))} part="label" title="Etiqueta" /><PartFormatControls element={selected} onChange={(update) => setTemplate(updatePartStyle(template, selected.id, "value", update))} part="value" title="Valor y contenido" /></div> : null}
           {!protectedTemplateField(kind, selected.field) ? <button className="danger-button print-template-remove" onClick={() => { const next = template.elements.filter((element) => element.id !== selected.id); setTemplate({ ...template, elements: next }); setSelectedId(next[0]?.id ?? ""); }} type="button"><Trash2 size={16} /> Eliminar elemento</button> : <p className="muted">Este campo se conserva por trazabilidad del documento.</p>}
         </> : <p className="empty-state">Agrega o selecciona un elemento.</p>}
         <hr />

@@ -3,8 +3,8 @@
 import { useRef, useState, type ReactNode, type Ref } from "react";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { getKitchenTicket, getPrintTemplates, type KitchenTicket } from "@/app/admin/actions";
-import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame } from "@/components/print-template-elements";
-import { defaultPrintTemplate, type PrintTemplate } from "@/lib/print-templates";
+import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
+import { defaultPrintTemplate, type PrintTemplate, type PrintTemplateElement } from "@/lib/print-templates";
 import { formatStockQuantity } from "@/lib/units";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
@@ -29,13 +29,13 @@ function formatQuantity(quantity: number, unit: Parameters<typeof formatStockQua
   return formatStockQuantity(quantity, unit);
 }
 
-function ComponentList({ components }: { components: KitchenTicket["items"][number]["components"] }) {
+function ComponentList({ components, element }: { components: KitchenTicket["items"][number]["components"]; element: PrintTemplateElement }) {
   return (
     <ul className="kitchen-ticket-quantity-list">
       {components.map((component, index) => (
         <li key={`${component.name}-${component.unit}-${index}`}>
-          <span>{component.name}</span>
-          <strong>{formatQuantity(component.quantity, component.unit)}</strong>
+          <PrintTemplatePart element={element} part="label">{component.name}</PrintTemplatePart>
+          <PrintTemplatePart as="strong" element={element} part="value">{formatQuantity(component.quantity, component.unit)}</PrintTemplatePart>
         </li>
       ))}
     </ul>
@@ -45,7 +45,7 @@ function ComponentList({ components }: { components: KitchenTicket["items"][numb
 export const KitchenTicketDocument = ({ compact = false, template = defaultPrintTemplate("kitchen"), ticket, printRef }: { compact?: boolean; template?: PrintTemplate; ticket: KitchenTicket; printRef?: Ref<HTMLElement> }) => {
   const pizzaItems = ticket.items.filter((item) => item.kind === "pizza");
   const deliveryItems = ticket.items.filter((item) => item.kind === "sale_product");
-  const pizzaSection = (
+  const pizzaSection = (element: PrintTemplateElement) => (
     <>
       {pizzaItems.map((item, itemIndex) => {
         const ingredients = item.components.filter((component) => component.type !== "addition");
@@ -53,39 +53,39 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
         return (
           <section className="kitchen-ticket-pizza" key={item.id || `${item.name}-${itemIndex}`}>
             <header>
-              <span>{item.quantity} × PIZZA</span>
-              <strong>{item.name}</strong>
-              {item.size ? <small>{item.size}</small> : null}
+              <PrintTemplatePart element={element} part="label">{item.quantity} × PIZZA</PrintTemplatePart>
+              <PrintTemplatePart as="strong" element={element} part="value">{item.name}</PrintTemplatePart>
+              {item.size ? <PrintTemplatePart as="small" element={element} part="value">{item.size}</PrintTemplatePart> : null}
             </header>
 
             {item.base ? (
               <div className="kitchen-ticket-group">
-                <b>{item.base.mode === "production_dough" ? "MASA DE PRODUCCIÓN" : "BASE"}</b>
-                <p><span>{item.base.name ?? "Base sin registro"}</span><strong>{formatQuantity(item.base.quantity, item.base.unit)}</strong></p>
+                <PrintTemplatePart as="b" element={element} part="title">{item.base.mode === "production_dough" ? "MASA DE PRODUCCIÓN" : "BASE"}</PrintTemplatePart>
+                <p><PrintTemplatePart element={element} part="label">{item.base.name ?? "Base sin registro"}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatQuantity(item.base.quantity, item.base.unit)}</PrintTemplatePart></p>
                 {item.base.production_batches.map((batch, batchIndex) => (
-                  <small key={`${batch.production_number}-${batchIndex}`}>Producción P{batch.production_number ?? "—"} · {formatQuantity(batch.quantity, batch.unit)}</small>
+                  <PrintTemplatePart as="small" element={element} key={`${batch.production_number}-${batchIndex}`} part="value">Producción P{batch.production_number ?? "—"} · {formatQuantity(batch.quantity, batch.unit)}</PrintTemplatePart>
                 ))}
               </div>
             ) : null}
 
-            {ingredients.length > 0 ? <div className="kitchen-ticket-group"><b>INGREDIENTES</b><ComponentList components={ingredients} /></div> : null}
-            {additions.length > 0 ? <div className="kitchen-ticket-group kitchen-ticket-additions"><b>ADICIONES</b><ComponentList components={additions} /></div> : null}
-            {item.notes ? <div className="kitchen-ticket-notes"><b>NOTAS</b><span>{item.notes}</span></div> : null}
+            {ingredients.length > 0 ? <div className="kitchen-ticket-group"><PrintTemplatePart as="b" element={element} part="title">INGREDIENTES</PrintTemplatePart><ComponentList components={ingredients} element={element} /></div> : null}
+            {additions.length > 0 ? <div className="kitchen-ticket-group kitchen-ticket-additions"><PrintTemplatePart as="b" element={element} part="title">ADICIONES</PrintTemplatePart><ComponentList components={additions} element={element} /></div> : null}
+            {item.notes ? <div className="kitchen-ticket-notes"><PrintTemplatePart as="b" element={element} part="title">NOTAS: </PrintTemplatePart><PrintTemplatePart element={element} part="value">{item.notes}</PrintTemplatePart></div> : null}
           </section>
         );
       })}
     </>
   );
-  const fields: Record<string, ReactNode> = {
-    kitchen_header: <header className="kitchen-ticket-header"><strong>COMANDA DE COCINA</strong><b>{ticket.order.code}</b></header>,
-    kitchen_order: <div className="kitchen-ticket-order-notes"><span>{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</span></div>,
+  const fields: Record<string, (element: PrintTemplateElement) => ReactNode> = {
+    kitchen_header: (element) => <header className="kitchen-ticket-header"><PrintTemplatePart as="strong" element={element} part="title">COMANDA DE COCINA</PrintTemplatePart><PrintTemplatePart as="b" element={element} part="value">{ticket.order.code}</PrintTemplatePart></header>,
+    kitchen_order: (element) => <div className="kitchen-ticket-order-notes"><PrintTemplatePart element={element} part="value">{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</PrintTemplatePart></div>,
     kitchen_pizzas: pizzaSection,
-    kitchen_delivery: deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><b>PARA ENTREGAR</b><ul>{deliveryItems.map((item) => <li key={item.id}><strong>{item.quantity} ×</strong> {item.name}</li>)}</ul></section> : null,
-    kitchen_summary: <section className="kitchen-ticket-summary">
-      <b>RESUMEN OPERATIVO</b>
-      <p><span>TOTAL PIZZAS</span><strong>{ticket.summary.pizza_count}</strong></p>
-      {ticket.summary.bases.length > 0 ? <><small>BASES</small><ComponentList components={ticket.summary.bases.map((base) => ({ type: "ingredient" as const, name: base.name, quantity: base.quantity, unit: base.unit, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
-      {ticket.summary.components.length > 0 ? <><small>TOTAL INGREDIENTES</small><ComponentList components={ticket.summary.components.map((component) => ({ ...component, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
+    kitchen_delivery: (element) => deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><PrintTemplatePart as="b" element={element} part="title">PARA ENTREGAR</PrintTemplatePart><ul>{deliveryItems.map((item) => <li key={item.id}><PrintTemplatePart element={element} part="value">{item.quantity} × {item.name}</PrintTemplatePart></li>)}</ul></section> : null,
+    kitchen_summary: (element) => <section className="kitchen-ticket-summary">
+      <PrintTemplatePart as="b" element={element} part="title">RESUMEN OPERATIVO</PrintTemplatePart>
+      <p><PrintTemplatePart element={element} part="label">TOTAL PIZZAS</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{ticket.summary.pizza_count}</PrintTemplatePart></p>
+      {ticket.summary.bases.length > 0 ? <><PrintTemplatePart as="small" element={element} part="title">BASES</PrintTemplatePart><ComponentList element={element} components={ticket.summary.bases.map((base) => ({ type: "ingredient" as const, name: base.name, quantity: base.quantity, unit: base.unit, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
+      {ticket.summary.components.length > 0 ? <><PrintTemplatePart as="small" element={element} part="title">TOTAL INGREDIENTES</PrintTemplatePart><ComponentList element={element} components={ticket.summary.components.map((component) => ({ ...component, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
     </section>
   };
 
@@ -93,7 +93,7 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
     <article className={`kitchen-ticket thermal${compact ? " kitchen-ticket-58" : ""}`} data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-line-spacing={template.line_spacing} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
       <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
       {template.elements.map((element) => element.type === "field"
-        ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]}</PrintTemplateElementFrame>
+        ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]?.(element)}</PrintTemplateElementFrame>
         : <PrintTemplateCustomElement element={element} key={element.id} />)}
       <PrintTemplateBlankLines lines={template.trailing_blank_lines} position="end" />
     </article>

@@ -13,7 +13,8 @@ import { formatStockQuantity, type StockUnit } from "@/lib/units";
 import { PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
 
 type OrderKind = "local" | "pickup" | "delivery";
-type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending";
+type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending" | "rappi" | "didi";
+type SourceChannel = "direct" | "rappi" | "didi";
 type DiscountType = "percentage" | "amount";
 
 type AppliedDiscount = {
@@ -314,6 +315,8 @@ function paymentLabel(method: PaymentMethod) {
   if (method === "cash") return "Efectivo";
   if (method === "card") return "Tarjeta";
   if (method === "transfer") return "Transferencia";
+  if (method === "rappi") return "Rappi";
+  if (method === "didi") return "DiDi";
   if (method === "mixed") return "Mixto";
   return "Pendiente";
 }
@@ -409,6 +412,7 @@ export function PosOrderWorkspace({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [sourceChannel, setSourceChannel] = useState<SourceChannel>("direct");
   const [delivery, setDelivery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -1344,6 +1348,8 @@ export function PosOrderWorkspace({
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
         <input name="kind" type="hidden" value={orderKind} />
         <input name="payment_method" type="hidden" value={paymentMethod} />
+        <input name="source_channel" type="hidden" value={sourceChannel} />
+        <input name="collection_party" type="hidden" value={paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business"} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
         <input name="discount_type" type="hidden" value={discount?.type ?? "none"} />
@@ -1614,13 +1620,25 @@ export function PosOrderWorkspace({
           ) : null}
           <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" value={notes} />
 
+          <label className="pos-platform-channel">
+            <span>Canal del pedido</span>
+            <select onChange={(event) => setSourceChannel(event.target.value as SourceChannel)} value={sourceChannel}>
+              <option value="direct">Directo</option>
+              <option value="rappi">Rappi</option>
+              <option value="didi">DiDi</option>
+            </select>
+          </label>
           <div className="pos-payment-grid">
-            {(["cash", "transfer", "mixed", "pending"] as PaymentMethod[]).map((method) => (
-              <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => setPaymentMethod(method)} type="button">
+            {(["cash", "transfer", "mixed", "pending", "rappi", "didi"] as PaymentMethod[]).map((method) => (
+              <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => {
+                setPaymentMethod(method);
+                if (method === "rappi" || method === "didi") setSourceChannel(method);
+              }} type="button">
                 {paymentLabel(method)}
               </button>
             ))}
           </div>
+          {(paymentMethod === "rappi" || paymentMethod === "didi") ? <p className="muted">{paymentLabel(paymentMethod)} recauda esta venta. Se registrará como liquidación pendiente, no como efectivo ni transferencia del turno.</p> : null}
 
           <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
             <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}

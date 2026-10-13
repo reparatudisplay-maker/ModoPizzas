@@ -39,6 +39,7 @@ export type PanelActiveKey =
   | "caja-estado"
   | "caja-movimientos"
   | "caja-cierre"
+  | "caja-liquidaciones"
   | "cocina"
   | "produccion"
   | "produccion-preparaciones"
@@ -96,6 +97,7 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   "caja-estado": "caja",
   "caja-movimientos": "caja",
   "caja-cierre": "caja",
+  "caja-liquidaciones": "caja",
   cocina: "cocina",
   produccion: "produccion",
   "produccion-preparaciones": "produccion",

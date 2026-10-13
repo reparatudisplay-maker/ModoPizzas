@@ -1,4 +1,4 @@
-import { CashClosingModule, type CashSessionRow, type ShiftSaleRow } from "@/components/cash-module";
+import { CashClosingModule, type CashSessionRow, type PlatformShiftReceivableRow, type ShiftSaleRow } from "@/components/cash-module";
 import { PanelShell } from "@/components/panel-shell";
 import { hydrateCashSession, loadCashMovements } from "@/lib/cash-data";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -37,11 +37,12 @@ export default async function CashClosingPage() {
   const openSession = await hydrateCashSession(supabase, openSessionResult.data as unknown as SessionRecord | null);
   const movements = openSession ? await loadCashMovements(supabase, openSession.id) : [];
   const sales = openSession ? await loadShiftSales(supabase, openSession.opened_at) : [];
+  const platformReceivables = openSession ? await loadShiftPlatformReceivables(supabase, openSession.opened_at) : [];
   const closedSessions = await Promise.all(((closedSessionsResult.data ?? []) as unknown as SessionRecord[]).map((session) => hydrateCashSession(supabase, session)));
 
   return (
     <PanelShell active="caja-cierre" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Cierre de caja" userEmail={user.email ?? "usuario"}>
-      <CashClosingModule closedSessions={closedSessions.filter((session): session is CashSessionRow => Boolean(session))} movements={movements} openSession={openSession} sales={sales} />
+      <CashClosingModule closedSessions={closedSessions.filter((session): session is CashSessionRow => Boolean(session))} movements={movements} openSession={openSession} platformReceivables={platformReceivables} sales={sales} />
     </PanelShell>
   );
 }
@@ -61,5 +62,22 @@ async function loadShiftSales(supabase: Awaited<ReturnType<typeof createServerSu
     payment_method: sale.payment_method,
     total_cop: Number(sale.total_cop ?? 0),
     created_at: sale.created_at
+  }));
+}
+
+async function loadShiftPlatformReceivables(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, openedAt: string): Promise<PlatformShiftReceivableRow[]> {
+  const { data, error } = await supabase
+    .from("platform_receivables")
+    .select("id, platform, gross_cop, estimated_commission_cop, net_expected_cop, status, pos_orders!inner(created_at), platform_settlement_allocations(net_cop)")
+    .gte("pos_orders.created_at", openedAt);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    platform: row.platform as "rappi" | "didi",
+    gross_cop: Number(row.gross_cop),
+    estimated_commission_cop: Number(row.estimated_commission_cop),
+    net_expected_cop: Number(row.net_expected_cop),
+    settled_net_cop: ((row.platform_settlement_allocations as { net_cop: number | string }[] | null) ?? []).reduce((sum, allocation) => sum + Number(allocation.net_cop), 0),
+    status: row.status
   }));
 }

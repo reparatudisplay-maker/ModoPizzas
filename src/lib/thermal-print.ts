@@ -18,9 +18,15 @@ const thermalDocumentStyles = `
   .print-template-element[data-print-font-size="small"] { font-size: .82em; }
   .print-template-element[data-print-font-size="large"] { font-size: 1.16em; }
   .print-template-element .kitchen-ticket-header, .print-template-element .customer-receipt-header, .print-template-element .customer-receipt-order { text-align: inherit; }
-  .print-template-element[data-print-bold="true"] * { font-weight: 700; }
-  .print-template-element[data-print-bold="false"] * { font-weight: 400; }
-  .print-template-element[data-print-font-size] :is(strong, b, small, span) { font-size: inherit; }
+  .print-template-element[data-print-bold="true"] { font-weight: 700; }
+  .print-template-element[data-print-bold="false"] { font-weight: 400; }
+  .print-template-part[data-print-align="left"] { text-align: left; }
+  .print-template-part[data-print-align="center"] { text-align: center; }
+  .print-template-part[data-print-align="right"] { text-align: right; }
+  .print-template-part[data-print-bold="true"] { font-weight: 700; }
+  .print-template-part[data-print-bold="false"] { font-weight: 400; }
+  .print-template-part[data-print-font-size="small"] { font-size: .82em; }
+  .print-template-part[data-print-font-size="large"] { font-size: 1.16em; }
   .print-template-separator { border-top: 1px dashed #111; height: 0; width: 100%; }
   .print-template-blank-lines { display: block; width: 100%; }
   .kitchen-ticket-header, .customer-receipt-header { display: grid; gap: 1px; padding-bottom: 5px; border-bottom: 2px solid #111; text-align: left; }
@@ -40,7 +46,9 @@ const thermalDocumentStyles = `
   .kitchen-ticket-quantity-list li { display: flex; justify-content: space-between; gap: 6px; }
   .kitchen-ticket-quantity-list li > span, .kitchen-ticket-group p > span, .kitchen-ticket-summary p > span, .customer-receipt-items li > div > strong { min-width: 0; overflow-wrap: anywhere; }
   .kitchen-ticket-quantity-list li > strong, .kitchen-ticket-group p > strong, .kitchen-ticket-summary p > strong { flex: 0 0 auto; white-space: nowrap; text-align: right; }
-  .kitchen-ticket-additions, .kitchen-ticket-notes, .kitchen-ticket-order-notes { display: grid; gap: 2px; padding: 4px; background: transparent; }
+  .kitchen-ticket-additions, .kitchen-ticket-order-notes { display: grid; gap: 2px; padding: 4px; background: transparent; }
+  .kitchen-ticket-notes { display: block; padding: 4px; background: transparent; overflow-wrap: anywhere; }
+  .kitchen-ticket-notes .print-template-part[data-print-part="title"] { margin-right: .28em; }
   .kitchen-ticket-additions { border-left: 2px solid #111; }
   .kitchen-ticket-summary { border-bottom: 0; }
   .customer-receipt { display: grid; gap: 7px; }

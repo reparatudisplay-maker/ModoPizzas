@@ -537,7 +537,9 @@ function paymentLabel(method: string) {
     card: "Tarjeta",
     transfer: "Transferencia",
     mixed: "Mixto",
-    pending: "Pendiente"
+    pending: "Pendiente",
+    rappi: "Rappi",
+    didi: "DiDi"
   };
   return labels[method] ?? method;
 }

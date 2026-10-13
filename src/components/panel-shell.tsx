@@ -146,7 +146,8 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const cashLinks: NavLink[] = [
     { key: "caja-estado", href: "/panel/caja", label: "Estado / Apertura", icon: Wallet, show: canAccess("caja") },
     { key: "caja-movimientos", href: "/panel/caja/movimientos", label: "Movimientos", icon: ReceiptText, show: canAccess("caja") },
-    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canAccess("caja") }
+    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canAccess("caja") },
+    { key: "caja-liquidaciones", href: "/panel/caja/liquidaciones", label: "Liquidaciones", icon: ReceiptText, show: canAccess("caja") }
   ];
   const kitchenLinks: NavLink[] = [
     { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canAccess("cocina") }
@@ -179,7 +180,7 @@ const menuPriceLinks: NavLink[] = [
   const masterActive = masterLinks.some((link) => link.key === active);
   const communicationModule = active === "cocina"
     ? "cocina"
-    : active === "pedidos-nuevo" || active === "caja-estado" || active === "caja-movimientos" || active === "caja-cierre"
+    : active === "pedidos-nuevo" || active === "caja-estado" || active === "caja-movimientos" || active === "caja-cierre" || active === "caja-liquidaciones"
       ? "caja"
       : null;
   const ordersActive = orderLinks.some((link) => link.key === active);

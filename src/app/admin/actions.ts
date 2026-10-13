@@ -3191,9 +3191,12 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const cashReceivedCop = getDecimal(formData, "cash_received_cop", 0);
   const cashChangeCop = getDecimal(formData, "cash_change_cop", 0);
   const notes = getString(formData, "notes");
+  const sourceChannel = getString(formData, "source_channel") || "direct";
+  const collectionParty = getString(formData, "collection_party") || "business";
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
-  if (!["cash", "card", "transfer", "mixed", "pending"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
+  if (!["cash", "card", "transfer", "mixed", "pending", "rappi", "didi"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
+  if (!["direct", "rappi", "didi"].includes(sourceChannel) || !["business", "platform"].includes(collectionParty)) return { status: "error", message: "Selecciona el canal de recaudo." };
   if (!["none", "percentage", "amount"].includes(discountType)) return { status: "error", message: "El tipo de descuento no es válido." };
   if (discountType === "none" && (discountValue !== 0 || discountCop !== 0)) return { status: "error", message: "El descuento no es válido." };
   if (discountType === "percentage" && (discountValue <= 0 || discountValue >= 100)) return { status: "error", message: "El descuento porcentual debe ser mayor que cero y menor al 100%." };
@@ -3219,7 +3222,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el combo." };
   }
 
-  const { data, error } = await supabase.rpc("create_pos_order_with_discount_payment", {
+  const { data, error } = await supabase.rpc("create_pos_order_with_platform_payment", {
     p_kind: kind,
     p_customer_name: upperText(customerName),
     p_customer_phone: customerPhone,
@@ -3228,6 +3231,8 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     p_discount_cop: discountCop,
     p_delivery_cop: deliveryCop,
     p_payment_method: paymentMethod,
+    p_source_channel: sourceChannel,
+    p_collection_party: collectionParty,
     p_notes: upperText(notes),
     p_items: rpcItems,
     p_cash_received_cop: paymentMethod === "cash" ? cashReceivedCop : null,
@@ -4150,8 +4155,44 @@ function revalidateCashAndExpenses() {
   revalidatePath("/panel/caja");
   revalidatePath("/panel/caja/movimientos");
   revalidatePath("/panel/caja/cierre");
+  revalidatePath("/panel/caja/liquidaciones");
   revalidatePath("/panel/pedidos");
   revalidatePath("/panel/pedidos/nuevo");
+}
+
+export async function savePlatformPaymentSettings(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const platform = getString(formData, "platform");
+  const commissionPercent = getDecimal(formData, "commission_percent", 0);
+  const fixedFeeCop = getDecimal(formData, "fixed_fee_cop", 0);
+  const dueDays = Math.round(getDecimal(formData, "settlement_due_days", 7));
+  if (!["rappi", "didi"].includes(platform) || commissionPercent < 0 || commissionPercent > 100 || fixedFeeCop < 0 || dueDays < 0 || dueDays > 60) return { status: "error", message: "La configuración de plataforma no es válida." };
+  const { error } = await supabase.from("platform_payment_settings").update({ commission_percent: commissionPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() }).eq("platform", platform);
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Configuración de plataforma guardada." };
+}
+
+export async function registerPlatformSettlementAction(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const platform = getString(formData, "platform");
+  const receivedCop = getDecimal(formData, "received_cop", 0);
+  const destination = getString(formData, "destination_account");
+  const notes = getString(formData, "notes");
+  let allocations: unknown;
+  try { allocations = JSON.parse(getString(formData, "allocations")); } catch { return { status: "error", message: "La distribución de la liquidación no es válida." }; }
+  const { error } = await supabase.rpc("register_platform_settlement", { p_platform: platform, p_received_at: new Date().toISOString(), p_received_cop: receivedCop, p_destination_account: destination, p_notes: notes, p_allocations: allocations });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Liquidación registrada sin afectar el efectivo del turno." };
+}
+
+export async function reconcilePlatformReceivableAction(receivableId: string): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("reconcile_platform_receivable", { p_receivable_id: receivableId });
+  if (error) return { status: "error", message: error.message };
+  revalidateCashAndExpenses();
+  return { status: "success", message: "Liquidación conciliada." };
 }
 
 export async function saveExpenseCategory(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

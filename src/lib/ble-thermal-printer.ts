@@ -350,8 +350,20 @@ function lineSpacingCommand(value: number) {
   return [0x1b, 0x33, 20 + level * 6];
 }
 
-type ThermalTextLine = {
+type ThermalTextStyle = {
+  alignment: number;
+  fontSize: number;
+  bold: boolean;
+  underline: boolean;
+};
+
+type ThermalTextRun = {
   text: string;
+  style: ThermalTextStyle;
+};
+
+type ThermalTextLine = {
+  runs: ThermalTextRun[];
   fixedWidth?: boolean;
 };
 
@@ -363,62 +375,98 @@ function thermalLineWidth() {
   return Math.max(24, Math.min(64, Math.floor((activeProfile?.printableWidthMm ?? 48) / 1.5)));
 }
 
-function thermalPair(left: string, right: string, width: number): ThermalTextLine[] {
-  if (!left) return right ? [{ text: right }] : [];
-  if (!right) return [{ text: left }];
-  if (left.length + right.length + 1 <= width) {
-    return [{ text: `${left}${" ".repeat(width - left.length - right.length)}${right}`, fixedWidth: true }];
+function thermalPair(left: ThermalTextRun, right: ThermalTextRun, width: number): ThermalTextLine[] {
+  if (!left.text) return right.text ? [{ runs: [right] }] : [];
+  if (!right.text) return [{ runs: [left] }];
+  if (left.text.length + right.text.length + 1 <= width && left.style.alignment === right.style.alignment) {
+    return [{ runs: [{ ...left, text: `${left.text}${" ".repeat(width - left.text.length - right.text.length)}` }, right], fixedWidth: true }];
   }
-  return [...wrapThermalLine(left, width).map((text) => ({ text })), { text: right }];
+  return [...wrapThermalLine(left.text, width).map((text) => ({ runs: [{ ...left, text }] })), { runs: [right] }];
 }
 
-function templateNodeLines(node: Element, width: number): ThermalTextLine[] {
+function styleFromNode(node: HTMLElement, fallback: ThermalTextStyle): ThermalTextStyle {
+  const alignment = node.dataset.printAlign === "center" ? 1 : node.dataset.printAlign === "right" ? 2 : node.dataset.printAlign === "left" ? 0 : fallback.alignment;
+  const fontSize = node.dataset.printFontSize === "large" ? 0x10 : node.dataset.printFontSize === "small" ? 0x01 : node.dataset.printFontSize === "normal" ? 0 : fallback.fontSize;
+  const semanticBold = node.tagName === "STRONG" || node.tagName === "B";
+  return {
+    alignment,
+    fontSize,
+    bold: node.dataset.printBold === "true" ? true : node.dataset.printBold === "false" ? false : (semanticBold || fallback.bold),
+    underline: node.dataset.printUnderline === "true" ? true : node.dataset.printUnderline === "false" ? false : fallback.underline
+  };
+}
+
+function templateNodeLines(node: Element, width: number, inherited: ThermalTextStyle): ThermalTextLine[] {
   const element = node as HTMLElement;
-  if (element.classList.contains("print-template-separator")) return [{ text: "-".repeat(width), fixedWidth: true }];
+  const style = styleFromNode(element, inherited);
+  if (element.classList.contains("print-template-separator")) return [{ runs: [{ text: "-".repeat(width), style }], fixedWidth: true }];
   if (element.classList.contains("print-template-blank-lines")) return [];
 
   const children = Array.from(element.children);
   const hasDirectText = Array.from(element.childNodes).some((child) => child.nodeType === 3 && Boolean(child.textContent?.trim()));
   if (hasDirectText) {
-    const text = textFromNode(element);
-    return text ? [{ text }] : [];
+    const runs = Array.from(element.childNodes).flatMap((child): ThermalTextRun[] => {
+      if (child.nodeType === 3) {
+        const text = toPrinterAscii(child.textContent ?? "").replace(/\s+/g, " ");
+        return text ? [{ text, style }] : [];
+      }
+      const childElement = child as HTMLElement;
+      return templateNodeLines(childElement, width, style).flatMap((line) => line.runs);
+    });
+    return runs.length > 0 ? [{ runs }] : [];
+  }
+  if (element.classList.contains("kitchen-ticket-notes")) {
+    const runs = children.flatMap((child) => templateNodeLines(child, width, style).flatMap((line) => line.runs));
+    return runs.length > 0 ? [{ runs }] : [];
   }
   const isPairRow = children.length >= 2
-    && children.some((child) => child.tagName === "SPAN")
-    && children.some((child) => child.tagName === "STRONG" || child.tagName === "B");
+    && children[0]?.tagName === "SPAN"
+    && (children.at(-1)?.tagName === "STRONG" || children.at(-1)?.tagName === "B");
   if (isPairRow) {
-    const left = textFromNode(children.find((child) => child.tagName === "SPAN") ?? element);
-    const right = textFromNode([...children].reverse().find((child) => child.tagName === "STRONG" || child.tagName === "B") ?? element);
+    const leftNode = children.find((child) => child.tagName === "SPAN") as HTMLElement | undefined;
+    const rightNode = [...children].reverse().find((child) => child.tagName === "STRONG" || child.tagName === "B") as HTMLElement | undefined;
+    const left = { text: textFromNode(leftNode ?? element), style: styleFromNode(leftNode ?? element, style) };
+    const right = { text: textFromNode(rightNode ?? element), style: styleFromNode(rightNode ?? element, style) };
     return thermalPair(left, right, width);
   }
   if (children.length === 0) {
     const text = textFromNode(element);
-    return text ? [{ text }] : [];
+    return text ? [{ runs: [{ text, style }] }] : [];
   }
-  return children.flatMap((child) => templateNodeLines(child, width));
+  return children.flatMap((child) => templateNodeLines(child, width, style));
 }
 
-function templateElementLines(element: HTMLElement, width: number) {
-  if (element.querySelector(".print-template-separator")) return [{ text: "-".repeat(width), fixedWidth: true }];
-  const lines = Array.from(element.children).flatMap((child) => templateNodeLines(child, width));
+function templateElementLines(element: HTMLElement, width: number, style: ThermalTextStyle) {
+  if (element.querySelector(".print-template-separator")) return [{ runs: [{ text: "-".repeat(width), style }], fixedWidth: true }];
+  const lines = Array.from(element.children).flatMap((child) => templateNodeLines(child, width, style));
   if (lines.length > 0) return lines;
   const text = toPrinterAscii(element.innerText).trim();
-  return text ? [{ text }] : [];
+  return text ? [{ runs: [{ text, style }] }] : [];
 }
 
 function templateElementBytes(element: HTMLElement) {
   const encoder = new TextEncoder();
-  const alignment = element.dataset.printAlign === "center" ? 1 : element.dataset.printAlign === "right" ? 2 : 0;
-  const fontSize = element.dataset.printFontSize === "large" ? 0x10 : element.dataset.printFontSize === "small" ? 0x01 : 0;
-  const bold = element.dataset.printBold === "true" ? 1 : 0;
-  const underline = element.dataset.printUnderline === "true" ? 1 : 0;
+  const style = styleFromNode(element, { alignment: 0, fontSize: 0, bold: false, underline: false });
   const spacingAfter = Math.max(0, Math.min(8, Math.round(Number(element.dataset.printSpacingAfter ?? 0))));
   const width = thermalLineWidth();
-  const lines = templateElementLines(element, width).flatMap((line) => line.fixedWidth ? [line.text] : wrapThermalLine(line.text, width));
-  // ESC ! replaces the full print-mode byte. Keep its emphasis bit alongside the
-  // selected font size so a later size command cannot cancel ESC E bold mode.
-  const printMode = fontSize | (bold ? 0x08 : 0);
-  return [0x1b, 0x61, alignment, 0x1b, 0x21, printMode, 0x1b, 0x2d, underline, ...encoder.encode(`${lines.join("\n")}\n${"\n".repeat(spacingAfter)}`), 0x1b, 0x2d, 0x00, 0x1b, 0x21, 0x00];
+  const lines = templateElementLines(element, width, style);
+  const bytes: number[] = [];
+  let activeStyle: ThermalTextStyle | null = null;
+  const writeStyle = (next: ThermalTextStyle) => {
+    if (activeStyle && activeStyle.alignment === next.alignment && activeStyle.fontSize === next.fontSize && activeStyle.bold === next.bold && activeStyle.underline === next.underline) return;
+    bytes.push(0x1b, 0x61, next.alignment, 0x1b, 0x21, next.fontSize | (next.bold ? 0x08 : 0), 0x1b, 0x2d, next.underline ? 1 : 0);
+    activeStyle = next;
+  };
+  for (const line of lines) {
+    const runs = line.fixedWidth ? line.runs : line.runs.flatMap((run) => wrapThermalLine(run.text, width).map((text) => ({ ...run, text })));
+    for (const run of runs) {
+      writeStyle(run.style);
+      bytes.push(...encoder.encode(run.text));
+    }
+    bytes.push(0x0a);
+  }
+  bytes.push(...encoder.encode("\n".repeat(spacingAfter)), 0x1b, 0x2d, 0x00, 0x1b, 0x21, 0x00);
+  return bytes;
 }
 
 export function buildBleThermalPayload(documents: HTMLElement[], options: BlePrintOptions = {}) {

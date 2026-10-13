@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { getKitchenTicket, getPosOrderReceipt, getPrintTemplates, type PosOrderReceipt } from "@/app/admin/actions";
 import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
-import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame } from "@/components/print-template-elements";
+import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
 import { formatCop } from "@/lib/format";
-import { defaultPrintTemplate, type PrintTemplate } from "@/lib/print-templates";
+import { defaultPrintTemplate, type PrintTemplate, type PrintTemplateElement } from "@/lib/print-templates";
 import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
@@ -26,46 +26,46 @@ function formatDate(value: string) {
 }
 
 function paymentLabel(method: string) {
-  const labels: Record<string, string> = { cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia", mixed: "Mixto", pending: "Pendiente" };
+  const labels: Record<string, string> = { cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia", mixed: "Mixto", pending: "Pendiente", rappi: "Rappi", didi: "DiDi" };
   return labels[method] ?? method;
 }
 
 export function CustomerReceiptDocument({ receipt, printRef, template = defaultPrintTemplate("receipt") }: { receipt: PosOrderReceipt; printRef?: Ref<HTMLElement>; template?: PrintTemplate }) {
   const cashPayment = receipt.payments.find((payment) => payment.method === "cash");
   const hasBreakdown = receipt.order.combo_price_adjustment_cop !== 0 || receipt.order.discount_cop > 0 || receipt.order.delivery_cop > 0;
-  const fields: Record<string, ReactNode> = {
-    receipt_header: <header className="customer-receipt-header"><strong>MODO PIZZAS</strong><b>TICKET DE COMPRA</b></header>,
-    receipt_order: <div className="customer-receipt-order">{receipt.order.code} · {formatDate(receipt.order.ordered_at)}</div>,
-    receipt_items: <ul className="customer-receipt-items">
+  const fields: Record<string, (element: PrintTemplateElement) => ReactNode> = {
+    receipt_header: (element) => <header className="customer-receipt-header"><PrintTemplatePart as="strong" element={element} part="title">MODO PIZZAS</PrintTemplatePart><PrintTemplatePart as="b" element={element} part="value">TICKET DE COMPRA</PrintTemplatePart></header>,
+    receipt_order: (element) => <div className="customer-receipt-order"><PrintTemplatePart element={element} part="value">{receipt.order.code} · {formatDate(receipt.order.ordered_at)}</PrintTemplatePart></div>,
+    receipt_items: (element) => <ul className="customer-receipt-items">
       {receipt.items.map((item) => (
         <li key={item.id}>
-          <div><strong>{item.quantity} × {item.name}</strong><span>{formatCop(item.unit_price_cop)} c/u</span></div>
-          <b>{formatCop(item.line_subtotal_cop)}</b>
-          {item.additions.map((addition, index) => <small key={`${addition.name}-${index}`}>+ {addition.quantity} × {addition.name} <strong>{formatCop(addition.line_subtotal_cop)}</strong></small>)}
+          <div><PrintTemplatePart as="strong" element={element} part="label">{item.quantity} × {item.name}</PrintTemplatePart><PrintTemplatePart element={element} part="value">{formatCop(item.unit_price_cop)} c/u</PrintTemplatePart></div>
+          <PrintTemplatePart as="b" element={element} part="value">{formatCop(item.line_subtotal_cop)}</PrintTemplatePart>
+          {item.additions.map((addition, index) => <PrintTemplatePart as="small" element={element} key={`${addition.name}-${index}`} part="value">+ {addition.quantity} × {addition.name} {formatCop(addition.line_subtotal_cop)}</PrintTemplatePart>)}
         </li>
       ))}
     </ul>,
-    receipt_totals: <section className="customer-receipt-totals">
-      {hasBreakdown ? <p><span>Subtotal</span><strong>{formatCop(receipt.order.subtotal_cop)}</strong></p> : null}
-      {receipt.order.combo_price_adjustment_cop !== 0 ? <p><span>Ajuste combo</span><strong>{receipt.order.combo_price_adjustment_cop > 0 ? "+" : "-"}{formatCop(Math.abs(receipt.order.combo_price_adjustment_cop))}</strong></p> : null}
-      {receipt.order.discount_cop > 0 ? <p><span>Descuento</span><strong>-{formatCop(receipt.order.discount_cop)}</strong></p> : null}
-      {receipt.order.delivery_cop > 0 ? <p><span>Domicilio</span><strong>+{formatCop(receipt.order.delivery_cop)}</strong></p> : null}
-      <p className="customer-receipt-total"><span>TOTAL</span><strong>{formatCop(receipt.order.total_cop)}</strong></p>
+    receipt_totals: (element) => <section className="customer-receipt-totals">
+      {hasBreakdown ? <p><PrintTemplatePart element={element} part="label">Subtotal</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(receipt.order.subtotal_cop)}</PrintTemplatePart></p> : null}
+      {receipt.order.combo_price_adjustment_cop !== 0 ? <p><PrintTemplatePart element={element} part="label">Ajuste combo</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{receipt.order.combo_price_adjustment_cop > 0 ? "+" : "-"}{formatCop(Math.abs(receipt.order.combo_price_adjustment_cop))}</PrintTemplatePart></p> : null}
+      {receipt.order.discount_cop > 0 ? <p><PrintTemplatePart element={element} part="label">Descuento</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">-{formatCop(receipt.order.discount_cop)}</PrintTemplatePart></p> : null}
+      {receipt.order.delivery_cop > 0 ? <p><PrintTemplatePart element={element} part="label">Domicilio</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">+{formatCop(receipt.order.delivery_cop)}</PrintTemplatePart></p> : null}
+      <p className="customer-receipt-total"><PrintTemplatePart element={element} part="label">TOTAL</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(receipt.order.total_cop)}</PrintTemplatePart></p>
     </section>,
-    receipt_payment: <section className="customer-receipt-payment">
-      <p><span>PAGO</span><strong>{paymentLabel(receipt.order.payment_method)}</strong></p>
-      {receipt.payments.length > 1 ? receipt.payments.map((payment, index) => <p key={`${payment.method}-${index}`}><span>{paymentLabel(payment.method)}</span><strong>{formatCop(payment.amount_cop)}</strong></p>) : null}
-      {cashPayment?.cash_received_cop !== null && cashPayment?.cash_received_cop !== undefined ? <p><span>Recibido</span><strong>{formatCop(cashPayment.cash_received_cop)}</strong></p> : null}
-      {cashPayment?.cash_change_cop !== null && cashPayment?.cash_change_cop !== undefined ? <p><span>Cambio</span><strong>{formatCop(cashPayment.cash_change_cop)}</strong></p> : null}
+    receipt_payment: (element) => <section className="customer-receipt-payment">
+      <p><PrintTemplatePart element={element} part="label">PAGO</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{paymentLabel(receipt.order.payment_method)}</PrintTemplatePart></p>
+      {receipt.payments.length > 1 ? receipt.payments.map((payment, index) => <p key={`${payment.method}-${index}`}><PrintTemplatePart element={element} part="label">{paymentLabel(payment.method)}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(payment.amount_cop)}</PrintTemplatePart></p>) : null}
+      {cashPayment?.cash_received_cop !== null && cashPayment?.cash_received_cop !== undefined ? <p><PrintTemplatePart element={element} part="label">Recibido</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(cashPayment.cash_received_cop)}</PrintTemplatePart></p> : null}
+      {cashPayment?.cash_change_cop !== null && cashPayment?.cash_change_cop !== undefined ? <p><PrintTemplatePart element={element} part="label">Cambio</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(cashPayment.cash_change_cop)}</PrintTemplatePart></p> : null}
     </section>,
-    receipt_footer: <footer className="customer-receipt-footer">Gracias por tu compra</footer>
+    receipt_footer: (element) => <footer className="customer-receipt-footer"><PrintTemplatePart element={element} part="value">Gracias por tu compra</PrintTemplatePart></footer>
   };
 
   return (
     <article className="customer-receipt thermal receipt-58" data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-line-spacing={template.line_spacing} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
       <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
       {template.elements.map((element) => element.type === "field"
-        ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]}</PrintTemplateElementFrame>
+        ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]?.(element)}</PrintTemplateElementFrame>
         : <PrintTemplateCustomElement element={element} key={element.id} />)}
       <PrintTemplateBlankLines lines={template.trailing_blank_lines} position="end" />
     </article>

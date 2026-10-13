@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import type { PrintTemplateElement } from "@/lib/print-templates";
+import { createElement, type ReactNode } from "react";
+import { printTemplatePartStyle, type PrintTemplateElement, type PrintTemplatePart } from "@/lib/print-templates";
 
 export function PrintTemplateElementFrame({ children, element }: { children: ReactNode; element: PrintTemplateElement }) {
   if (!element.visible) return null;
@@ -22,6 +22,32 @@ export function PrintTemplateElementFrame({ children, element }: { children: Rea
       {children}
     </div>
   );
+}
+
+export function PrintTemplatePart({
+  as = "span",
+  children,
+  element,
+  part
+}: {
+  as?: "span" | "strong" | "b" | "small";
+  children: ReactNode;
+  element: PrintTemplateElement;
+  part: PrintTemplatePart;
+}) {
+  const style = printTemplatePartStyle(element, part);
+  return createElement(as, {
+    className: "print-template-part",
+    "data-print-part": part,
+    "data-print-align": style.align,
+    "data-print-bold": style.bold ? "true" : "false",
+    "data-print-font-size": style.font_size,
+    style: {
+      fontWeight: style.bold ? 700 : 400,
+      fontSize: style.font_size === "small" ? ".82em" : style.font_size === "large" ? "1.16em" : "1em",
+      textAlign: style.align
+    }
+  }, children);
 }
 
 export function PrintTemplateCustomElement({ element }: { element: PrintTemplateElement }) {

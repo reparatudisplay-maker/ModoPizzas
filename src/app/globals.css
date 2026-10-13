@@ -4826,6 +4826,41 @@ a {
   gap: 8px;
 }
 
+.pos-platform-channel {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.pos-platform-channel span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.pos-platform-channel select {
+  min-height: 34px;
+  width: auto;
+}
+
+.cash-platform-totals {
+  display: grid;
+  gap: 4px;
+  padding: 0 12px 10px;
+}
+
+.cash-platform-totals span {
+  color: var(--muted);
+  display: flex;
+  font-size: 0.84rem;
+  justify-content: space-between;
+}
+
+.cash-platform-totals b {
+  color: var(--text);
+}
+
 .pos-tabs button,
 .pos-kind-grid button,
 .pos-payment-grid button {
@@ -7803,6 +7838,15 @@ a {
   background: #eeeeee;
 }
 
+.kitchen-ticket-notes {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.kitchen-ticket-notes .print-template-part[data-print-part="title"] {
+  margin-right: .28em;
+}
+
 .kitchen-ticket-delivery ul {
   display: grid;
   gap: 4px;
@@ -8462,17 +8506,61 @@ a {
   text-align: inherit;
 }
 
-.print-template-element[data-print-bold="true"] * {
-  font-weight: 700 !important;
+.print-template-element[data-print-bold="true"] {
+  font-weight: 700;
 }
 
-.print-template-element[data-print-bold="false"] * {
-  font-weight: 400 !important;
+.print-template-element[data-print-bold="false"] {
+  font-weight: 400;
 }
 
-.print-template-element[data-print-font-size] :is(strong, b, small, span) {
-  font-size: inherit !important;
+.print-template-part {
+  text-align: inherit;
 }
+
+.print-template-part[data-print-align="left"] { text-align: left; }
+.print-template-part[data-print-align="center"] { text-align: center; }
+.print-template-part[data-print-align="right"] { text-align: right; }
+.print-template-part[data-print-bold="true"] { font-weight: 700 !important; }
+.print-template-part[data-print-bold="false"] { font-weight: 400 !important; }
+.print-template-part[data-print-font-size="small"] { font-size: .82em !important; }
+.print-template-part[data-print-font-size="large"] { font-size: 1.16em !important; }
+
+.print-template-parts-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.print-template-parts-panel .muted { margin: 0; }
+
+.print-template-part-controls {
+  display: grid;
+  grid-template-columns: minmax(86px, 1fr) 34px minmax(92px, 1fr) repeat(3, 32px);
+  align-items: center;
+  gap: 5px;
+}
+
+.print-template-part-controls > button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.print-template-part-controls > button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+}
+
+.print-template-part-controls select { min-width: 0; }
 
 .print-template-separator {
   border-top: 1px dashed #111;
