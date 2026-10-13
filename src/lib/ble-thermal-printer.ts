@@ -345,30 +345,93 @@ function feedLines(lines: number) {
   return [0x1b, 0x64, Math.max(0, Math.min(20, Math.round(lines)))];
 }
 
+function lineSpacingCommand(value: number) {
+  const level = Math.max(1, Math.min(3, Math.round(value)));
+  return [0x1b, 0x33, 20 + level * 6];
+}
+
+type ThermalTextLine = {
+  text: string;
+  fixedWidth?: boolean;
+};
+
+function textFromNode(node: Element) {
+  return toPrinterAscii(node.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function thermalLineWidth() {
+  return Math.max(24, Math.min(64, Math.floor((activeProfile?.printableWidthMm ?? 48) / 1.5)));
+}
+
+function thermalPair(left: string, right: string, width: number): ThermalTextLine[] {
+  if (!left) return right ? [{ text: right }] : [];
+  if (!right) return [{ text: left }];
+  if (left.length + right.length + 1 <= width) {
+    return [{ text: `${left}${" ".repeat(width - left.length - right.length)}${right}`, fixedWidth: true }];
+  }
+  return [...wrapThermalLine(left, width).map((text) => ({ text })), { text: right }];
+}
+
+function templateNodeLines(node: Element, width: number): ThermalTextLine[] {
+  const element = node as HTMLElement;
+  if (element.classList.contains("print-template-separator")) return [{ text: "-".repeat(width), fixedWidth: true }];
+  if (element.classList.contains("print-template-blank-lines")) return [];
+
+  const children = Array.from(element.children);
+  const hasDirectText = Array.from(element.childNodes).some((child) => child.nodeType === 3 && Boolean(child.textContent?.trim()));
+  if (hasDirectText) {
+    const text = textFromNode(element);
+    return text ? [{ text }] : [];
+  }
+  const isPairRow = children.length >= 2
+    && children.some((child) => child.tagName === "SPAN")
+    && children.some((child) => child.tagName === "STRONG" || child.tagName === "B");
+  if (isPairRow) {
+    const left = textFromNode(children.find((child) => child.tagName === "SPAN") ?? element);
+    const right = textFromNode([...children].reverse().find((child) => child.tagName === "STRONG" || child.tagName === "B") ?? element);
+    return thermalPair(left, right, width);
+  }
+  if (children.length === 0) {
+    const text = textFromNode(element);
+    return text ? [{ text }] : [];
+  }
+  return children.flatMap((child) => templateNodeLines(child, width));
+}
+
+function templateElementLines(element: HTMLElement, width: number) {
+  if (element.querySelector(".print-template-separator")) return [{ text: "-".repeat(width), fixedWidth: true }];
+  const lines = Array.from(element.children).flatMap((child) => templateNodeLines(child, width));
+  if (lines.length > 0) return lines;
+  const text = toPrinterAscii(element.innerText).trim();
+  return text ? [{ text }] : [];
+}
+
 function templateElementBytes(element: HTMLElement) {
   const encoder = new TextEncoder();
   const alignment = element.dataset.printAlign === "center" ? 1 : element.dataset.printAlign === "right" ? 2 : 0;
-  const fontSize = element.dataset.printFontSize === "large" ? 0x10 : 0;
+  const fontSize = element.dataset.printFontSize === "large" ? 0x10 : element.dataset.printFontSize === "small" ? 0x01 : 0;
   const bold = element.dataset.printBold === "true" ? 1 : 0;
   const underline = element.dataset.printUnderline === "true" ? 1 : 0;
   const spacingAfter = Math.max(0, Math.min(8, Math.round(Number(element.dataset.printSpacingAfter ?? 0))));
-  const text = element.querySelector(".print-template-separator")
-    ? "--------------------------------"
-    : toPrinterAscii(element.innerText);
-  const lines = text.split(/\r?\n/).flatMap((line) => wrapThermalLine(line));
-  return [0x1b, 0x61, alignment, 0x1b, 0x45, bold, 0x1b, 0x2d, underline, 0x1b, 0x21, fontSize, ...encoder.encode(`${lines.join("\n")}\n${"\n".repeat(spacingAfter)}`), 0x1b, 0x45, 0x00, 0x1b, 0x2d, 0x00, 0x1b, 0x21, 0x00];
+  const width = thermalLineWidth();
+  const lines = templateElementLines(element, width).flatMap((line) => line.fixedWidth ? [line.text] : wrapThermalLine(line.text, width));
+  // ESC ! replaces the full print-mode byte. Keep its emphasis bit alongside the
+  // selected font size so a later size command cannot cancel ESC E bold mode.
+  const printMode = fontSize | (bold ? 0x08 : 0);
+  return [0x1b, 0x61, alignment, 0x1b, 0x21, printMode, 0x1b, 0x2d, underline, ...encoder.encode(`${lines.join("\n")}\n${"\n".repeat(spacingAfter)}`), 0x1b, 0x2d, 0x00, 0x1b, 0x21, 0x00];
 }
 
 export function buildBleThermalPayload(documents: HTMLElement[], options: BlePrintOptions = {}) {
   const body = documents.flatMap((document) => {
+    const lineSpacing = lineSpacingCommand(Number(document.dataset.thermalLineSpacing ?? 1));
     const templateElements = Array.from(document.querySelectorAll<HTMLElement>(".print-template-element"));
-    if (templateElements.length > 0) return templateElements.flatMap(templateElementBytes);
+    if (templateElements.length > 0) return [...lineSpacing, ...templateElements.flatMap(templateElementBytes)];
     const text = toPrinterAscii(document.innerText).split(/\r?\n/).flatMap((line) => wrapThermalLine(line)).join("\n");
-    return [...new TextEncoder().encode(`${text}\n`)];
+    return [...lineSpacing, ...new TextEncoder().encode(`${text}\n`)];
   });
   const leading = Math.max(0, Math.min(20, Math.round(options.leadingBlankLines ?? Number(documents[0]?.dataset.thermalLeadingBlankLines ?? 0))));
   const trailing = Math.max(0, Math.min(20, Math.round(options.trailingBlankLines ?? Number(documents[0]?.dataset.thermalTrailingBlankLines ?? 3))));
-  return new Uint8Array([0x1b, 0x40, ...feedLines(leading), ...body, ...feedLines(trailing)]);
+  return new Uint8Array([0x1b, 0x40, ...feedLines(leading), ...body, 0x1b, 0x32, ...feedLines(trailing)]);
 }
 
 export function buildBleTestPayload() {

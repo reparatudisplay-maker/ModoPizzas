@@ -447,6 +447,8 @@ export function PosOrderWorkspace({
   const [baseLineKey, setBaseLineKey] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const cashSubmitLockRef = useRef(false);
+  const handledSuccessOrderIdRef = useRef<string | null>(null);
+  const submittedPaymentMethodRef = useRef<PaymentMethod | null>(null);
   const router = useRouter();
   const normalizedQuery = normalizeMasterText(query);
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
@@ -487,40 +489,51 @@ export function PosOrderWorkspace({
   }, [printPreferencesReady, printSelection]);
 
   useEffect(() => {
-    if (state.status === "success") {
-      if (state.order && (printSelection.kitchen || printSelection.receipt)) {
-        setPrintJob({
-          id: `${state.order.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
-          orderId: state.order.id,
-          ...printSelection
-        });
-      }
-      const timeout = window.setTimeout(() => {
-        setCart([]);
-        setDelivery("");
-        setCustomerName("");
-        setCustomerPhone("");
-        setNotes("");
-        setOrderKind("local");
-        setPaymentMethod("cash");
-        setDiscount(null);
-        setDiscountInput("");
-        setDiscountModalOpen(false);
-        setCashModalOpen(false);
-        setCashReceived("");
-        setCashConfirmed(false);
-        setCashSubmitting(false);
-        setCashSelectedOption(null);
-        setPaymentConfirmModalOpen(false);
-        setPaymentConfirmed(false);
-        setPaymentSubmitting(false);
-        setStockNotice("");
-        cashSubmitLockRef.current = false;
-        router.refresh();
-      }, 0);
-      return () => window.clearTimeout(timeout);
+    if (state.status !== "success" || !state.order || handledSuccessOrderIdRef.current === state.order.id) return;
+
+    // useActionState preserves its last result. Record the order already handled so a
+    // later change to the payment form cannot replay this success and clear a new cart.
+    handledSuccessOrderIdRef.current = state.order.id;
+    submittedPaymentMethodRef.current = null;
+    if (printSelection.kitchen || printSelection.receipt) {
+      setPrintJob({
+        id: `${state.order.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
+        orderId: state.order.id,
+        ...printSelection
+      });
     }
-    if (state.status === "error" && state.stockShortages?.length) {
+    const timeout = window.setTimeout(() => {
+      setCart([]);
+      setDelivery("");
+      setCustomerName("");
+      setCustomerPhone("");
+      setNotes("");
+      setOrderKind("local");
+      setPaymentMethod("cash");
+      setDiscount(null);
+      setDiscountInput("");
+      setDiscountModalOpen(false);
+      setCashModalOpen(false);
+      setCashReceived("");
+      setCashConfirmed(false);
+      setCashSubmitting(false);
+      setCashSelectedOption(null);
+      setPaymentConfirmModalOpen(false);
+      setPaymentConfirmed(false);
+      setPaymentSubmitting(false);
+      setStockNotice("");
+      cashSubmitLockRef.current = false;
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [printSelection, router, state]);
+
+  useEffect(() => {
+    if (state.status !== "error") return;
+
+    const submittedPaymentMethod = submittedPaymentMethodRef.current;
+    submittedPaymentMethodRef.current = null;
+    if (state.stockShortages?.length) {
       const timeout = window.setTimeout(() => {
         setCashConfirmed(false);
         setCashSubmitting(false);
@@ -533,7 +546,7 @@ export function PosOrderWorkspace({
       }, 0);
       return () => window.clearTimeout(timeout);
     }
-    if (state.status === "error" && paymentMethod === "cash" && cashConfirmed) {
+    if (submittedPaymentMethod === "cash") {
       const timeout = window.setTimeout(() => {
         setCashConfirmed(false);
         setCashSubmitting(false);
@@ -542,7 +555,7 @@ export function PosOrderWorkspace({
       }, 0);
       return () => window.clearTimeout(timeout);
     }
-    if (state.status === "error" && paymentMethod !== "cash" && paymentConfirmed) {
+    if (submittedPaymentMethod) {
       const timeout = window.setTimeout(() => {
         setPaymentConfirmed(false);
         setPaymentSubmitting(false);
@@ -552,7 +565,7 @@ export function PosOrderWorkspace({
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [cashConfirmed, paymentConfirmed, paymentMethod, printSelection, router, state.order, state.status, state.stockShortages]);
+  }, [state]);
 
   const categories = useMemo(() => {
     const unique = new Map<string, string>();
@@ -1276,6 +1289,7 @@ export function PosOrderWorkspace({
   function confirmNonCashPayment() {
     if (cashSubmitLockRef.current) return;
     cashSubmitLockRef.current = true;
+    submittedPaymentMethodRef.current = paymentMethod;
     setPaymentConfirmed(true);
     setPaymentSubmitting(true);
     setPaymentConfirmModalOpen(false);
@@ -1285,6 +1299,7 @@ export function PosOrderWorkspace({
     if (received < total) return;
     if (cashSubmitLockRef.current) return;
     cashSubmitLockRef.current = true;
+    submittedPaymentMethodRef.current = "cash";
     setCashReceived(String(received));
     setCashConfirmed(true);
     setCashSubmitting(true);
@@ -1299,6 +1314,7 @@ export function PosOrderWorkspace({
     setCashConfirmed(false);
     setCashSubmitting(false);
     setCashSelectedOption(null);
+    submittedPaymentMethodRef.current = null;
     cashSubmitLockRef.current = false;
   }
 
@@ -1306,6 +1322,7 @@ export function PosOrderWorkspace({
     setPaymentConfirmModalOpen(false);
     setPaymentConfirmed(false);
     setPaymentSubmitting(false);
+    submittedPaymentMethodRef.current = null;
     cashSubmitLockRef.current = false;
   }
 

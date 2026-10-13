@@ -8456,6 +8456,24 @@ a {
   font-size: 1.16em;
 }
 
+.print-template-element .kitchen-ticket-header,
+.print-template-element .customer-receipt-header,
+.print-template-element .customer-receipt-order {
+  text-align: inherit;
+}
+
+.print-template-element[data-print-bold="true"] * {
+  font-weight: 700 !important;
+}
+
+.print-template-element[data-print-bold="false"] * {
+  font-weight: 400 !important;
+}
+
+.print-template-element[data-print-font-size] :is(strong, b, small, span) {
+  font-size: inherit !important;
+}
+
 .print-template-separator {
   border-top: 1px dashed #111;
   height: 0;

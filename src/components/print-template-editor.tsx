@@ -60,7 +60,7 @@ function PreviewField({ field, kind }: { field: string; kind: PrintTemplateKind 
 
 function TemplatePreview({ template, printRef }: { template: PrintTemplate; printRef?: React.Ref<HTMLElement> }) {
   const articleClass = template.kind === "kitchen" ? "kitchen-ticket thermal kitchen-ticket-58" : "customer-receipt thermal receipt-58";
-  return <article className={articleClass} data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
+  return <article className={articleClass} data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-line-spacing={template.line_spacing} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
     <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
     {template.elements.map((element) => element.type === "field"
       ? <PrintTemplateElementFrame element={element} key={element.id}><PreviewField field={element.field ?? ""} kind={template.kind} /></PrintTemplateElementFrame>

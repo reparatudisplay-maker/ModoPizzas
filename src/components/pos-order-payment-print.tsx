@@ -62,7 +62,7 @@ export function CustomerReceiptDocument({ receipt, printRef, template = defaultP
   };
 
   return (
-    <article className="customer-receipt thermal receipt-58" data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
+    <article className="customer-receipt thermal receipt-58" data-thermal-leading-blank-lines={template.leading_blank_lines} data-thermal-line-spacing={template.line_spacing} data-thermal-trailing-blank-lines={template.trailing_blank_lines} ref={printRef} style={{ lineHeight: template.line_spacing, paddingInline: `${template.margin_mm}mm` }}>
       <PrintTemplateBlankLines lines={template.leading_blank_lines} position="start" />
       {template.elements.map((element) => element.type === "field"
         ? <PrintTemplateElementFrame element={element} key={element.id}>{fields[element.field ?? ""]}</PrintTemplateElementFrame>

@@ -17,6 +17,10 @@ const thermalDocumentStyles = `
   .print-template-element { display: block; }
   .print-template-element[data-print-font-size="small"] { font-size: .82em; }
   .print-template-element[data-print-font-size="large"] { font-size: 1.16em; }
+  .print-template-element .kitchen-ticket-header, .print-template-element .customer-receipt-header, .print-template-element .customer-receipt-order { text-align: inherit; }
+  .print-template-element[data-print-bold="true"] * { font-weight: 700; }
+  .print-template-element[data-print-bold="false"] * { font-weight: 400; }
+  .print-template-element[data-print-font-size] :is(strong, b, small, span) { font-size: inherit; }
   .print-template-separator { border-top: 1px dashed #111; height: 0; width: 100%; }
   .print-template-blank-lines { display: block; width: 100%; }
   .kitchen-ticket-header, .customer-receipt-header { display: grid; gap: 1px; padding-bottom: 5px; border-bottom: 2px solid #111; text-align: left; }
