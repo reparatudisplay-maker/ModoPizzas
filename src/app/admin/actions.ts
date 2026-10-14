@@ -627,6 +627,27 @@ async function relationCount(supabase: Awaited<ReturnType<typeof createServerSup
   return count ?? 0;
 }
 
+const PHYSICAL_COUNT_QUERY_PAGE_SIZE = 1000;
+
+type PhysicalCountPagedQueryResult<T> = {
+  data: T[] | null;
+  error: { message: string } | null;
+};
+
+async function fetchAllPhysicalCountRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<PhysicalCountPagedQueryResult<T>>
+): Promise<PhysicalCountPagedQueryResult<T>> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PHYSICAL_COUNT_QUERY_PAGE_SIZE) {
+    const result = await fetchPage(from, from + PHYSICAL_COUNT_QUERY_PAGE_SIZE - 1);
+    if (result.error) return { data: null, error: result.error };
+
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < PHYSICAL_COUNT_QUERY_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
 async function physicalCountSourceStockBase(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sourceKind: "inventory_item" | "preparation",
@@ -636,10 +657,14 @@ async function physicalCountSourceStockBase(
   let stock = 0;
 
   if (sourceKind === "inventory_item") {
-    const { data: purchaseItems, error } = await supabase
-      .from("purchase_items")
-      .select("id, quantity, unit")
-      .eq("inventory_item_id", sourceId);
+    const { data: purchaseItems, error } = await fetchAllPhysicalCountRows((from, to) =>
+      supabase
+        .from("purchase_items")
+        .select("id, quantity, unit")
+        .eq("inventory_item_id", sourceId)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
     if (error) throw new Error(error.message);
 
     const itemIds = (purchaseItems ?? []).map((item) => item.id);
@@ -647,15 +672,23 @@ async function physicalCountSourceStockBase(
 
     if (itemIds.length > 0) {
       const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
-        supabase
-          .from("production_consumption_allocations")
-          .select("quantity_base, base_unit")
-          .in("purchase_item_id", itemIds),
-        supabase
-          .from("pos_order_consumption_allocations")
-          .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-          .in("purchase_item_id", itemIds)
-          .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        fetchAllPhysicalCountRows((from, to) =>
+          supabase
+            .from("production_consumption_allocations")
+            .select("quantity_base, base_unit")
+            .in("purchase_item_id", itemIds)
+            .order("id", { ascending: true })
+            .range(from, to)
+        ),
+        fetchAllPhysicalCountRows((from, to) =>
+          supabase
+            .from("pos_order_consumption_allocations")
+            .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+            .in("purchase_item_id", itemIds)
+            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       ]);
       if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
       if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
@@ -665,10 +698,14 @@ async function physicalCountSourceStockBase(
       );
     }
   } else {
-    const { data: batches, error } = await supabase
-      .from("production_batches")
-      .select("id, initial_quantity_base, base_unit")
-      .eq("preparation_id", sourceId);
+    const { data: batches, error } = await fetchAllPhysicalCountRows((from, to) =>
+      supabase
+        .from("production_batches")
+        .select("id, initial_quantity_base, base_unit")
+        .eq("preparation_id", sourceId)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
     if (error) throw new Error(error.message);
 
     const batchIds = (batches ?? []).map((batch) => batch.id);
@@ -676,15 +713,23 @@ async function physicalCountSourceStockBase(
 
     if (batchIds.length > 0) {
       const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
-        supabase
-          .from("production_consumption_allocations")
-          .select("quantity_base, base_unit")
-          .in("production_batch_id", batchIds),
-        supabase
-          .from("pos_order_consumption_allocations")
-          .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-          .in("production_batch_id", batchIds)
-          .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        fetchAllPhysicalCountRows((from, to) =>
+          supabase
+            .from("production_consumption_allocations")
+            .select("quantity_base, base_unit")
+            .in("production_batch_id", batchIds)
+            .order("id", { ascending: true })
+            .range(from, to)
+        ),
+        fetchAllPhysicalCountRows((from, to) =>
+          supabase
+            .from("pos_order_consumption_allocations")
+            .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+            .in("production_batch_id", batchIds)
+            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       ]);
       if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
       if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
@@ -696,11 +741,15 @@ async function physicalCountSourceStockBase(
   }
 
   const countColumn = sourceKind === "inventory_item" ? "inventory_item_id" : "source_preparation_id";
-  const { data: counts, error: countsError } = await supabase
-    .from("physical_inventory_counts")
-    .select("difference_quantity_base, base_unit")
-    .eq(countColumn, sourceId)
-    .is("voided_at", null);
+  const { data: counts, error: countsError } = await fetchAllPhysicalCountRows((from, to) =>
+    supabase
+      .from("physical_inventory_counts")
+      .select("difference_quantity_base, base_unit")
+      .eq(countColumn, sourceId)
+      .is("voided_at", null)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
   if (countsError) throw new Error(countsError.message);
 
   stock += (counts ?? []).reduce((sum, count) => sum + convertStockQuantity(Number(count.difference_quantity_base ?? 0), count.base_unit, baseUnit), 0);

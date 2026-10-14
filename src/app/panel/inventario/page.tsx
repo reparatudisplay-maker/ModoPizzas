@@ -92,6 +92,27 @@ type ProductionOutboundRow = {
   } | null;
 };
 
+const INVENTORY_QUERY_PAGE_SIZE = 1000;
+
+type PagedQueryResult<T> = {
+  data: T[] | null;
+  error: { message: string } | null;
+};
+
+async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<PagedQueryResult<T>>
+): Promise<PagedQueryResult<T>> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += INVENTORY_QUERY_PAGE_SIZE) {
+    const result = await fetchPage(from, from + INVENTORY_QUERY_PAGE_SIZE - 1);
+    if (result.error) return { data: null, error: result.error };
+
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < INVENTORY_QUERY_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
 function firstRelation<T>(value: T | T[] | null | undefined) {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
@@ -200,24 +221,42 @@ export default async function InventoryPage() {
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "inventario");
 
   const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult] = await Promise.all([
-    supabase
-      .from("purchase_items")
-      .select(
-        "id, purchase_id, inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, unit_cost_cop, line_total_cop, landed_total_cop, expiration_date, inventory_items(id, sku, name, image_url, unit, item_kind, purchase_mode, brand_id, category_id, presentation_quantity, presentation_unit, is_active), purchases(id, supplier_id, brand_id, purchased_at)"
-      )
-      .order("expiration_date", { ascending: true, nullsFirst: false })
-      .limit(1000),
-    supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").not("purchase_item_id", "is", null),
-    supabase
-      .from("pos_order_consumption_allocations")
-      .select("purchase_item_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-      .not("purchase_item_id", "is", null)
-      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
-    supabase
-      .from("physical_inventory_counts")
-      .select("id, source_kind, inventory_item_id, source_preparation_id, theoretical_quantity_base, physical_quantity_base, difference_quantity_base, base_unit, average_cost_cop, adjustment_kind, reason, created_at, created_by, inventory_items(name), preparations(name)")
-      .is("voided_at", null)
-      .order("created_at", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("purchase_items")
+        .select(
+          "id, purchase_id, inventory_item_id, purchased_quantity, quantity, unit, presentation_quantity, presentation_unit, unit_cost_cop, line_total_cop, landed_total_cop, expiration_date, inventory_items(id, sku, name, image_url, unit, item_kind, purchase_mode, brand_id, category_id, presentation_quantity, presentation_unit, is_active), purchases(id, supplier_id, brand_id, purchased_at)"
+        )
+        .order("expiration_date", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_consumption_allocations")
+        .select("id, purchase_item_id, quantity_base, base_unit, created_at, production_consumptions!inner(productions!inner(code))")
+        .not("purchase_item_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("pos_order_consumption_allocations")
+        .select("id, purchase_item_id, quantity_base, base_unit, created_at, pos_order_consumptions!inner(order_item_id, pos_orders!inner(code, status), pos_order_items!inner(product_name_snapshot, quantity))")
+        .not("purchase_item_id", "is", null)
+        .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("physical_inventory_counts")
+        .select("id, source_kind, inventory_item_id, source_preparation_id, theoretical_quantity_base, physical_quantity_base, difference_quantity_base, base_unit, average_cost_cop, adjustment_kind, reason, created_at, created_by, inventory_items(name), preparations(name)")
+        .is("voided_at", null)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
     supabase.from("inventory_items").select("id, name, image_url, item_kind").is("presentation_quantity", null),
     supabase.from("brands").select("id, name").order("name"),
     supabase.from("suppliers").select("id, name").order("name"),
@@ -237,8 +276,8 @@ export default async function InventoryPage() {
     profilesResult.error;
   const purchaseLines = (purchaseLinesResult.data ?? []) as unknown as PurchaseLineRow[];
   const purchaseAllocations = [
-    ...((purchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[]),
-    ...((posPurchaseAllocationsResult.data ?? []) as PurchaseAllocationRow[])
+    ...((purchaseAllocationsResult.data ?? []) as unknown as PurchaseAllocationRow[]),
+    ...((posPurchaseAllocationsResult.data ?? []) as unknown as PurchaseAllocationRow[])
   ];
   const physicalCounts = (physicalCountsResult.data ?? []) as unknown as PhysicalInventoryCountRow[];
   const masterItems = (masterItemsResult.data ?? []) as Array<{ id: string; name: string; image_url: string | null; item_kind: ItemKind | null }>;
@@ -271,27 +310,61 @@ export default async function InventoryPage() {
   const imageSrcById = new Map(signedImageEntries);
 
   const [productionBatchesResult, productionAllocationsResult, posProductionAllocationsResult, productionConsumptionsResult, productionTraceAllocationsResult, posProductionOutboundResult, productionOutboundResult, productionItemsResult, productionPreparationsResult] = await Promise.all([
-    supabase
-      .from("production_batches")
-      .select("id, production_id, preparation_id, initial_quantity_base, base_unit, unit_cost_cop, expiration_date, elaborated_at, production_number, productions(id, code, storage_method, total_cost_cop, unit_cost_cop, created_by), preparations(id, name, image_url, unit_kind, base_unit, is_active)")
-      .order("expiration_date", { ascending: true }),
-    supabase.from("production_consumption_allocations").select("production_batch_id, quantity_base, base_unit"),
-    supabase
-      .from("pos_order_consumption_allocations")
-      .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-      .not("production_batch_id", "is", null)
-      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
-    supabase.from("production_consumptions").select("id, production_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, cost_cop"),
-    supabase.from("production_consumption_allocations").select("consumption_id, purchase_item_id, production_batch_id, quantity_base, base_unit, cost_cop"),
-    supabase
-      .from("pos_order_consumption_allocations")
-      .select("id, production_batch_id, quantity_base, base_unit, created_at, pos_order_consumptions!inner(order_item_id, order_item_addition_id, pos_orders!inner(code, status), pos_order_items!inner(product_name_snapshot, quantity))")
-      .not("production_batch_id", "is", null)
-      .neq("pos_order_consumptions.pos_orders.status", "cancelled"),
-    supabase
-      .from("production_consumption_allocations")
-      .select("id, production_batch_id, quantity_base, base_unit, created_at, production_consumptions!inner(productions!inner(code))")
-      .not("production_batch_id", "is", null),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_batches")
+        .select("id, production_id, preparation_id, initial_quantity_base, base_unit, unit_cost_cop, expiration_date, elaborated_at, production_number, productions(id, code, storage_method, total_cost_cop, unit_cost_cop, created_by), preparations(id, name, image_url, unit_kind, base_unit, is_active)")
+        .order("expiration_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_consumption_allocations")
+        .select("production_batch_id, quantity_base, base_unit")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("pos_order_consumption_allocations")
+        .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+        .not("production_batch_id", "is", null)
+        .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_consumptions")
+        .select("id, production_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, cost_cop")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_consumption_allocations")
+        .select("consumption_id, purchase_item_id, production_batch_id, quantity_base, base_unit, cost_cop")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("pos_order_consumption_allocations")
+        .select("id, production_batch_id, quantity_base, base_unit, created_at, pos_order_consumptions!inner(order_item_id, order_item_addition_id, pos_orders!inner(code, status), pos_order_items!inner(product_name_snapshot, quantity))")
+        .not("production_batch_id", "is", null)
+        .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("production_consumption_allocations")
+        .select("id, production_batch_id, quantity_base, base_unit, created_at, production_consumptions!inner(productions!inner(code))")
+        .not("production_batch_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
     supabase.from("inventory_items").select("id, name"),
     supabase.from("preparations").select("id, name, image_url")
   ]);

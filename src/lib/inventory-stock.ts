@@ -5,6 +5,27 @@ import { convertStockQuantity, type StockUnit } from "@/lib/units";
 type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 type AdminSupabaseClient = NonNullable<ReturnType<typeof createSupabaseAdminClient>>;
 type StockSupabaseClient = ServerSupabaseClient | AdminSupabaseClient;
+type PagedQueryResult<T> = {
+  data: T[] | null;
+  error: { message: string } | null;
+};
+
+const STOCK_QUERY_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<PagedQueryResult<T>>
+): Promise<PagedQueryResult<T>> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += STOCK_QUERY_PAGE_SIZE) {
+    const result = await fetchPage(from, from + STOCK_QUERY_PAGE_SIZE - 1);
+    if (result.error) return { data: null, error: result.error };
+
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < STOCK_QUERY_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
 type Allocation = {
   purchase_item_id?: string | null;
   production_batch_id?: string | null;
@@ -68,30 +89,49 @@ export async function getAdjustedSourceStock(
   unit: StockUnit
 ) {
   if (sourceKind === "inventory_item") {
-    const { data: lots, error: lotsError } = await supabase
-      .from("purchase_items")
-      .select("id, quantity, unit, expiration_date, purchases(purchased_at)")
-      .eq("inventory_item_id", sourceId);
+    const { data: lots, error: lotsError } = await fetchAllRows((from, to) =>
+      supabase
+        .from("purchase_items")
+        .select("id, quantity, unit, expiration_date, purchases(purchased_at)")
+        .eq("inventory_item_id", sourceId)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
     if (lotsError) throw new Error(lotsError.message);
 
     const ids = (lots ?? []).map((lot) => lot.id);
     const [productionResult, posResult, countsResult] = await Promise.all([
       ids.length
-        ? supabase.from("production_consumption_allocations").select("purchase_item_id, quantity_base, base_unit").in("purchase_item_id", ids)
+        ? fetchAllRows((from, to) =>
+            supabase
+              .from("production_consumption_allocations")
+              .select("purchase_item_id, quantity_base, base_unit")
+              .in("purchase_item_id", ids)
+              .order("id", { ascending: true })
+              .range(from, to)
+          )
         : Promise.resolve({ data: [], error: null }),
       ids.length
-        ? supabase
-            .from("pos_order_consumption_allocations")
-            .select("purchase_item_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-            .in("purchase_item_id", ids)
-            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+        ? fetchAllRows((from, to) =>
+            supabase
+              .from("pos_order_consumption_allocations")
+              .select("purchase_item_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+              .in("purchase_item_id", ids)
+              .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+              .order("id", { ascending: true })
+              .range(from, to)
+          )
         : Promise.resolve({ data: [], error: null }),
-      supabase
-        .from("physical_inventory_counts")
-        .select("difference_quantity_base, base_unit, created_at")
-        .eq("inventory_item_id", sourceId)
-        .is("voided_at", null)
-        .order("created_at", { ascending: true })
+      fetchAllRows((from, to) =>
+        supabase
+          .from("physical_inventory_counts")
+          .select("difference_quantity_base, base_unit, created_at")
+          .eq("inventory_item_id", sourceId)
+          .is("voided_at", null)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to)
+      )
     ]);
     if (productionResult.error) throw new Error(productionResult.error.message);
     if (posResult.error) throw new Error(posResult.error.message);
@@ -132,30 +172,49 @@ export async function getAdjustedSourceStock(
     );
   }
 
-  const { data: batches, error: batchesError } = await supabase
-    .from("production_batches")
-    .select("id, initial_quantity_base, base_unit, expiration_date, elaborated_at, production_number")
-    .eq("preparation_id", sourceId);
+  const { data: batches, error: batchesError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("production_batches")
+      .select("id, initial_quantity_base, base_unit, expiration_date, elaborated_at, production_number")
+      .eq("preparation_id", sourceId)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
   if (batchesError) throw new Error(batchesError.message);
 
   const ids = (batches ?? []).map((batch) => batch.id);
   const [productionResult, posResult, countsResult] = await Promise.all([
     ids.length
-      ? supabase.from("production_consumption_allocations").select("production_batch_id, quantity_base, base_unit").in("production_batch_id", ids)
+      ? fetchAllRows((from, to) =>
+          supabase
+            .from("production_consumption_allocations")
+            .select("production_batch_id, quantity_base, base_unit")
+            .in("production_batch_id", ids)
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       : Promise.resolve({ data: [], error: null }),
     ids.length
-      ? supabase
-          .from("pos_order_consumption_allocations")
-          .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-          .in("production_batch_id", ids)
-          .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+      ? fetchAllRows((from, to) =>
+          supabase
+            .from("pos_order_consumption_allocations")
+            .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+            .in("production_batch_id", ids)
+            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       : Promise.resolve({ data: [], error: null }),
-    supabase
-      .from("physical_inventory_counts")
-      .select("difference_quantity_base, base_unit, created_at")
-      .eq("source_preparation_id", sourceId)
-      .is("voided_at", null)
-      .order("created_at", { ascending: true })
+    fetchAllRows((from, to) =>
+      supabase
+        .from("physical_inventory_counts")
+        .select("difference_quantity_base, base_unit, created_at")
+        .eq("source_preparation_id", sourceId)
+        .is("voided_at", null)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    )
   ]);
   if (productionResult.error) throw new Error(productionResult.error.message);
   if (posResult.error) throw new Error(posResult.error.message);
