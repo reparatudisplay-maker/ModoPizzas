@@ -47,6 +47,11 @@ export type PhysicalStockAdjustment = {
   created_at: string;
 };
 
+export type AppliedPhysicalStockAdjustment = {
+  occurred_at: string;
+  quantity: number;
+};
+
 // Mirrors app_private.inventory_source_lots: adjustments are distributed only
 // across origins that already existed when the physical count was recorded.
 export function applyPhysicalStockAdjustments(
@@ -55,6 +60,14 @@ export function applyPhysicalStockAdjustments(
   unit: StockUnit
 ) {
   const stockByOrigin = new Map(origins.map((origin) => [origin.id, origin.available]));
+  const adjustmentsByOrigin = new Map<string, AppliedPhysicalStockAdjustment[]>();
+  const recordAdjustment = (originId: string, quantity: number, occurredAt: string) => {
+    if (quantity === 0) return;
+    adjustmentsByOrigin.set(originId, [
+      ...(adjustmentsByOrigin.get(originId) ?? []),
+      { occurred_at: occurredAt, quantity }
+    ]);
+  };
   const orderedCounts = [...counts].sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const count of orderedCounts) {
     const adjustment = convertStockQuantity(
@@ -71,15 +84,18 @@ export function applyPhysicalStockAdjustments(
         const current = stockByOrigin.get(origin.id) ?? 0;
         const waste = Math.min(current, pending);
         stockByOrigin.set(origin.id, Math.max(0, current - waste));
+        recordAdjustment(origin.id, -waste, count.created_at);
         pending -= waste;
       }
     } else if (adjustment > 0 && eligible[0]) {
-      stockByOrigin.set(eligible[0].id, (stockByOrigin.get(eligible[0].id) ?? 0) + adjustment);
+      const origin = eligible[0];
+      stockByOrigin.set(origin.id, (stockByOrigin.get(origin.id) ?? 0) + adjustment);
+      recordAdjustment(origin.id, adjustment, count.created_at);
     }
   }
 
   const stock = [...stockByOrigin.values()].reduce((sum, value) => sum + value, 0);
-  return { stock: Number(stock.toFixed(6)), originStock: stockByOrigin };
+  return { stock: Number(stock.toFixed(6)), originStock: stockByOrigin, adjustmentsByOrigin };
 }
 
 export async function getAdjustedSourceStock(

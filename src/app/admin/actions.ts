@@ -627,132 +627,13 @@ async function relationCount(supabase: Awaited<ReturnType<typeof createServerSup
   return count ?? 0;
 }
 
-const PHYSICAL_COUNT_QUERY_PAGE_SIZE = 1000;
-
-type PhysicalCountPagedQueryResult<T> = {
-  data: T[] | null;
-  error: { message: string } | null;
-};
-
-async function fetchAllPhysicalCountRows<T>(
-  fetchPage: (from: number, to: number) => PromiseLike<PhysicalCountPagedQueryResult<T>>
-): Promise<PhysicalCountPagedQueryResult<T>> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += PHYSICAL_COUNT_QUERY_PAGE_SIZE) {
-    const result = await fetchPage(from, from + PHYSICAL_COUNT_QUERY_PAGE_SIZE - 1);
-    if (result.error) return { data: null, error: result.error };
-
-    const page = result.data ?? [];
-    rows.push(...page);
-    if (page.length < PHYSICAL_COUNT_QUERY_PAGE_SIZE) return { data: rows, error: null };
-  }
-}
-
 async function physicalCountSourceStockBase(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sourceKind: "inventory_item" | "preparation",
   sourceId: string,
-  baseUnit: string
+  baseUnit: StockUnit
 ) {
-  let stock = 0;
-
-  if (sourceKind === "inventory_item") {
-    const { data: purchaseItems, error } = await fetchAllPhysicalCountRows((from, to) =>
-      supabase
-        .from("purchase_items")
-        .select("id, quantity, unit")
-        .eq("inventory_item_id", sourceId)
-        .order("id", { ascending: true })
-        .range(from, to)
-    );
-    if (error) throw new Error(error.message);
-
-    const itemIds = (purchaseItems ?? []).map((item) => item.id);
-    stock = (purchaseItems ?? []).reduce((sum, item) => sum + convertStockQuantity(Number(item.quantity ?? 0), item.unit, baseUnit), 0);
-
-    if (itemIds.length > 0) {
-      const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
-        fetchAllPhysicalCountRows((from, to) =>
-          supabase
-            .from("production_consumption_allocations")
-            .select("quantity_base, base_unit")
-            .in("purchase_item_id", itemIds)
-            .order("id", { ascending: true })
-            .range(from, to)
-        ),
-        fetchAllPhysicalCountRows((from, to) =>
-          supabase
-            .from("pos_order_consumption_allocations")
-            .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-            .in("purchase_item_id", itemIds)
-            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
-            .order("id", { ascending: true })
-            .range(from, to)
-        )
-      ]);
-      if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
-      if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
-      stock -= [...(productionAllocationsResult.data ?? []), ...(posAllocationsResult.data ?? [])].reduce(
-        (sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit),
-        0
-      );
-    }
-  } else {
-    const { data: batches, error } = await fetchAllPhysicalCountRows((from, to) =>
-      supabase
-        .from("production_batches")
-        .select("id, initial_quantity_base, base_unit")
-        .eq("preparation_id", sourceId)
-        .order("id", { ascending: true })
-        .range(from, to)
-    );
-    if (error) throw new Error(error.message);
-
-    const batchIds = (batches ?? []).map((batch) => batch.id);
-    stock = (batches ?? []).reduce((sum, batch) => sum + convertStockQuantity(Number(batch.initial_quantity_base ?? 0), batch.base_unit, baseUnit), 0);
-
-    if (batchIds.length > 0) {
-      const [productionAllocationsResult, posAllocationsResult] = await Promise.all([
-        fetchAllPhysicalCountRows((from, to) =>
-          supabase
-            .from("production_consumption_allocations")
-            .select("quantity_base, base_unit")
-            .in("production_batch_id", batchIds)
-            .order("id", { ascending: true })
-            .range(from, to)
-        ),
-        fetchAllPhysicalCountRows((from, to) =>
-          supabase
-            .from("pos_order_consumption_allocations")
-            .select("quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
-            .in("production_batch_id", batchIds)
-            .neq("pos_order_consumptions.pos_orders.status", "cancelled")
-            .order("id", { ascending: true })
-            .range(from, to)
-        )
-      ]);
-      if (productionAllocationsResult.error) throw new Error(productionAllocationsResult.error.message);
-      if (posAllocationsResult.error) throw new Error(posAllocationsResult.error.message);
-      stock -= [...(productionAllocationsResult.data ?? []), ...(posAllocationsResult.data ?? [])].reduce(
-        (sum, allocation) => sum + convertStockQuantity(Number(allocation.quantity_base ?? 0), allocation.base_unit, baseUnit),
-        0
-      );
-    }
-  }
-
-  const countColumn = sourceKind === "inventory_item" ? "inventory_item_id" : "source_preparation_id";
-  const { data: counts, error: countsError } = await fetchAllPhysicalCountRows((from, to) =>
-    supabase
-      .from("physical_inventory_counts")
-      .select("difference_quantity_base, base_unit")
-      .eq(countColumn, sourceId)
-      .is("voided_at", null)
-      .order("id", { ascending: true })
-      .range(from, to)
-  );
-  if (countsError) throw new Error(countsError.message);
-
-  stock += (counts ?? []).reduce((sum, count) => sum + convertStockQuantity(Number(count.difference_quantity_base ?? 0), count.base_unit, baseUnit), 0);
+  const { stock } = await getAdjustedSourceStock(supabase, sourceKind, sourceId, baseUnit);
   return Number(stock.toFixed(3));
 }
 
@@ -3139,7 +3020,7 @@ export async function updatePhysicalInventoryCount(
 
   try {
     const { count, sourceId } = await getEditablePhysicalCount(supabase, countId);
-    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, count.base_unit);
+    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, getStockUnitFromValue(count.base_unit));
     const previousDifference = Number(count.difference_quantity_base ?? 0);
     const revertedStock = Number((currentStock - previousDifference).toFixed(3));
     if (revertedStock < 0) {
@@ -3196,7 +3077,7 @@ export async function voidPhysicalInventoryCount(
 
   try {
     const { count, sourceId } = await getEditablePhysicalCount(supabase, countId);
-    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, count.base_unit);
+    const currentStock = await physicalCountSourceStockBase(supabase, count.source_kind, sourceId, getStockUnitFromValue(count.base_unit));
     const revertedStock = Number((currentStock - Number(count.difference_quantity_base ?? 0)).toFixed(3));
     if (revertedStock < 0) {
       return { status: "error", message: "No se puede eliminar este ajuste porque la reversion dejaria stock negativo." };
@@ -3340,6 +3221,36 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     message: "Pedido confirmado correctamente.",
     order
   };
+}
+
+export async function acceptPublicOrderRequest(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const requestId = getString(formData, "request_id");
+  if (!requestId) return { status: "error", message: "Selecciona una solicitud válida." };
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc("accept_public_order_request", { p_request_id: requestId });
+    if (error) return { status: "error", message: error.message };
+    revalidatePath("/panel/pedidos");
+    revalidateInventory();
+    return { status: "success", message: "Solicitud aceptada y convertida en pedido." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No fue posible aceptar la solicitud." };
+  }
+}
+
+export async function rejectPublicOrderRequest(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const requestId = getString(formData, "request_id");
+  const reason = getString(formData, "reason");
+  if (!requestId) return { status: "error", message: "Selecciona una solicitud válida." };
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase.rpc("reject_public_order_request", { p_request_id: requestId, p_reason: reason || null });
+    if (error) return { status: "error", message: error.message };
+    revalidatePath("/panel/pedidos");
+    return { status: "success", message: "Solicitud rechazada." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No fue posible rechazar la solicitud." };
+  }
 }
 
 export async function cancelPosOrder(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -3895,11 +3806,12 @@ export async function savePublicBusinessSettings(_previousState: FormActionState
   const legalPayload = {
     ...basePayload,
     public_email: getOptionalString(formData, "public_email"),
-    legal_contact_email: getOptionalString(formData, "legal_contact_email")
+    legal_contact_email: getOptionalString(formData, "legal_contact_email"),
+    public_direct_ordering_enabled: formData.get("public_direct_ordering_enabled") === "on"
   };
 
   const { error } = await supabase.from("site_settings").update(legalPayload).eq("id", true);
-  if (error && /public_email|legal_contact_email|schema cache/i.test(error.message)) {
+  if (error && /public_email|legal_contact_email|public_direct_ordering_enabled|schema cache/i.test(error.message)) {
     const { error: retryError } = await supabase.from("site_settings").update(basePayload).eq("id", true);
     if (retryError) return { status: "error", message: retryError.message };
   } else if (error) {

@@ -1,4 +1,4 @@
-import { InventoryWorkspace, type InventoryCountHistoryRow, type InventoryListItem, type InventoryPurchaseLine } from "@/components/inventory-workspace";
+import { InventoryWorkspace, type InventoryCountHistoryRow, type InventoryListItem, type InventoryLotMovement, type InventoryPurchaseLine } from "@/components/inventory-workspace";
 import { PanelShell } from "@/components/panel-shell";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionLotOutboundInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
 import { requirePanelAccess } from "@/lib/panel-auth";
@@ -44,9 +44,19 @@ type PurchaseLineRow = {
 };
 
 type PurchaseAllocationRow = {
+  id: string;
   purchase_item_id: string | null;
   quantity_base: number;
   base_unit: StockUnit;
+  created_at: string;
+  production_consumptions?: {
+    productions: { code: string } | { code: string }[] | null;
+  } | null;
+  pos_order_consumptions?: {
+    order_item_id: string;
+    pos_orders: { code: string } | { code: string }[] | null;
+    pos_order_items: { product_name_snapshot: string; quantity: number } | { product_name_snapshot: string; quantity: number }[] | null;
+  } | null;
 };
 
 type PhysicalInventoryCountRow = {
@@ -190,6 +200,18 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
         const lineUnitCost = line.quantity > 0 ? line.line_total_cop / line.quantity : 0;
         line.quantity = Number(Math.max(0, line.quantity - takeLineUnit).toFixed(3));
         line.line_total_cop = Number(Math.max(0, line.line_total_cop - takeLineUnit * lineUnitCost).toFixed(2));
+        line.movements = [
+          ...line.movements,
+          {
+            id: `count-${count.id}-${line.id}`,
+            kind: "adjustment",
+            occurred_at: count.created_at,
+            quantity_base: -takeBase,
+            base_unit: baseUnit,
+            reference: "Conteo físico",
+            detail: count.reason
+          }
+        ];
         pendingBase = Number(Math.max(0, pendingBase - takeBase).toFixed(3));
       }
       continue;
@@ -203,13 +225,27 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
       purchase_id: count.id,
       quantity,
       purchased_quantity: quantity,
+      initial_quantity: quantity,
       unit: baseUnit,
+      presentation_quantity: null,
+      presentation_unit: null,
       unit_cost_cop: Number(count.average_cost_cop ?? 0),
       line_total_cop: Number((quantity * Number(count.average_cost_cop ?? 0)).toFixed(2)),
       expiration_date: null,
       purchased_at: count.created_at,
       supplier_name: "Conteo fisico",
-      lot_code: `AJ-${count.id.slice(0, 6).toUpperCase()}`
+      lot_code: `AJ-${count.id.slice(0, 6).toUpperCase()}`,
+      movements: [
+        {
+          id: `count-${count.id}`,
+          kind: "adjustment",
+          occurred_at: count.created_at,
+          quantity_base: deltaBase,
+          base_unit: baseUnit,
+          reference: "Conteo físico",
+          detail: count.reason
+        }
+      ]
     });
   }
 
@@ -438,10 +474,35 @@ export default async function InventoryPage() {
   });
 
   const purchaseAllocatedByLine = new Map<string, number>();
+  const purchaseMovementsByLine = new Map<string, InventoryLotMovement[]>();
   for (const allocation of purchaseAllocations) {
     if (!allocation.purchase_item_id) continue;
     const current = purchaseAllocatedByLine.get(allocation.purchase_item_id) ?? 0;
     purchaseAllocatedByLine.set(allocation.purchase_item_id, current + Number(allocation.quantity_base ?? 0));
+
+    const production = firstRelation(allocation.production_consumptions?.productions);
+    const order = firstRelation(allocation.pos_order_consumptions?.pos_orders);
+    const orderItem = firstRelation(allocation.pos_order_consumptions?.pos_order_items);
+    const movement: InventoryLotMovement = production
+      ? {
+          id: allocation.id,
+          kind: "production",
+          occurred_at: allocation.created_at,
+          quantity_base: Number(allocation.quantity_base ?? 0),
+          base_unit: allocation.base_unit,
+          reference: production.code,
+          detail: "Consumo para producción"
+        }
+      : {
+          id: allocation.id,
+          kind: "sale",
+          occurred_at: allocation.created_at,
+          quantity_base: Number(allocation.quantity_base ?? 0),
+          base_unit: allocation.base_unit,
+          reference: order?.code ?? "Pedido",
+          detail: orderItem ? `${orderItem.product_name_snapshot} · ${orderItem.quantity} ${Number(orderItem.quantity) === 1 ? "unidad" : "unidades"}` : "Consumo en pedido"
+        };
+    purchaseMovementsByLine.set(allocation.purchase_item_id, [...(purchaseMovementsByLine.get(allocation.purchase_item_id) ?? []), movement]);
   }
 
   const baseLineItems: InventoryPurchaseLine[] = purchaseLines
@@ -471,6 +532,7 @@ export default async function InventoryPage() {
       const availableQuantity = Math.max(0, originalQuantity - allocatedQuantity);
       const landedTotal = Number(line.landed_total_cop ?? line.line_total_cop ?? 0);
       const unitCost = originalQuantity > 0 ? landedTotal / originalQuantity : 0;
+      const availableTotal = originalQuantity > 0 ? Number((landedTotal * availableQuantity / originalQuantity).toFixed(2)) : 0;
       return {
         id: line.id,
         purchase_id: line.purchase_id,
@@ -481,19 +543,23 @@ export default async function InventoryPage() {
         item_kind: item.item_kind,
         purchase_mode: item.purchase_mode ?? "total_weight",
         purchased_quantity: line.purchased_quantity,
+        initial_quantity: originalQuantity,
         unit: line.unit,
         quantity: availableQuantity,
         presentation_quantity: line.presentation_quantity,
         presentation_unit: line.presentation_unit,
+        product_presentation_quantity: item.presentation_quantity,
+        product_presentation_unit: item.presentation_unit,
         unit_cost_cop: unitCost,
-        line_total_cop: landedTotal,
+        line_total_cop: availableTotal,
         expiration_date: line.expiration_date,
         purchased_at: purchase.purchased_at,
         supplier_name: purchase.supplier_id ? supplierById.get(purchase.supplier_id) ?? null : null,
         brand_name: purchaseBrand ?? productBrand,
         category_name: item.category_id ? categoryById.get(item.category_id) ?? null : null,
         lot_code: lotCode(line.id),
-        is_active: item.is_active
+        is_active: item.is_active,
+        movements: purchaseMovementsByLine.get(line.id) ?? []
       };
     });
   const lineItems = applyPhysicalCountsToPurchaseLines(baseLineItems, physicalCounts);
@@ -509,6 +575,8 @@ export default async function InventoryPage() {
         image_src: line.image_src,
         item_kind: line.item_kind,
         unit: line.unit,
+        presentation_quantity: line.product_presentation_quantity,
+        presentation_unit: line.product_presentation_unit,
         stock: line.quantity,
         total_cost_cop: line.line_total_cop,
         average_cost_cop: line.quantity > 0 ? line.line_total_cop / line.quantity : 0,

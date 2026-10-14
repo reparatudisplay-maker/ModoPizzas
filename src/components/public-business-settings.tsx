@@ -22,6 +22,7 @@ export type PublicBusinessSettingsData = {
   public_facebook_url: string | null;
   public_email?: string | null;
   legal_contact_email?: string | null;
+  public_direct_ordering_enabled?: boolean;
 };
 
 const days = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
@@ -58,6 +59,7 @@ export function PublicBusinessSettings({ settings }: { settings: PublicBusinessS
         <label className="span-2">Texto comercial<input defaultValue={settings.public_info_text ?? ""} name="public_info_text" placeholder="Un mensaje corto para quienes visitan la pizzeria." /></label>
       </div>
       <section className="public-hours-editor"><div><span>HORARIOS</span><h3>Atencion semanal</h3></div>{hours.map((hour, index) => <div className="public-hour-row" key={hour.day}><strong>{hour.day}</strong><label><input checked={hour.is_open} onChange={(event) => updateHour(index, { is_open: event.target.checked })} type="checkbox"/> Abierto</label><input aria-label={`Apertura ${hour.day}`} disabled={!hour.is_open} onChange={(event) => updateHour(index, { opens_at: event.target.value })} type="time" value={hour.opens_at}/><span>a</span><input aria-label={`Cierre ${hour.day}`} disabled={!hour.is_open} onChange={(event) => updateHour(index, { closes_at: event.target.value })} type="time" value={hour.closes_at}/></div>)}</section>
+      <section className="public-hours-editor"><div><span>CANAL DE PEDIDOS</span><h3>Pedido directo</h3><p>Cuando está desactivado, la web mantiene WhatsApp como canal principal.</p></div><label><input defaultChecked={settings.public_direct_ordering_enabled ?? false} name="public_direct_ordering_enabled" type="checkbox"/> Permitir solicitudes directas autenticadas</label></section>
       <div className="form-actions"><SaveButton /></div>
     </form>
   );

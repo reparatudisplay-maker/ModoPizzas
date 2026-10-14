@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { signIn, signUp } from "@/app/auth/actions";
+import { signIn } from "@/app/auth/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -17,15 +17,14 @@ export default async function LoginPage({
           <Link className="ghost-button" href="/">
             Volver
           </Link>
-          <h1 className="section-title">Entrar a ModoPizzas</h1>
+          <h1 className="section-title">Acceso interno</h1>
           <p className="section-copy">
-            Usa una cuenta para acceder al panel interno. La pizzeria no requiere confirmacion por correo; si Supabase la
-            pide, falta apagar esa opcion en Auth.
+            Este acceso es exclusivo para el equipo de Modo Pizzas. Las cuentas de clientes se crean e inician desde la tienda pública.
           </p>
           {message ? <p className="alert">{message}</p> : null}
         </div>
 
-        <div className="auth-grid">
+        <div className="auth-grid auth-grid-single">
           <form action={signIn} className="form-panel">
             <h2>Iniciar sesion</h2>
             <div className="field">
@@ -41,29 +40,8 @@ export default async function LoginPage({
             </button>
           </form>
 
-          <form action={signUp} className="form-panel">
-            <h2>Crear cuenta</h2>
-            <div className="field">
-              <label htmlFor="signup-name">Nombre</label>
-              <input id="signup-name" name="full_name" required />
-            </div>
-            <div className="field">
-              <label htmlFor="signup-phone">Telefono</label>
-              <input id="signup-phone" name="phone" />
-            </div>
-            <div className="field">
-              <label htmlFor="signup-email">Correo</label>
-              <input id="signup-email" name="email" required type="email" />
-            </div>
-            <div className="field">
-              <label htmlFor="signup-password">Contrasena</label>
-              <input id="signup-password" minLength={6} name="password" required type="password" />
-            </div>
-            <button className="primary-button" type="submit">
-              Crear cuenta
-            </button>
-          </form>
         </div>
+        <p className="section-copy">¿Buscas pedir? <Link href="/">Ingresa o crea tu cuenta desde la tienda.</Link></p>
       </section>
     </main>
   );

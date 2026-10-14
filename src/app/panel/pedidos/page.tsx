@@ -1,5 +1,6 @@
 import { PanelShell } from "@/components/panel-shell";
 import { PosOrdersList, type PosOrderListRow } from "@/components/pos-orders-list";
+import { PublicOrderRequests, type PublicOrderRequestRow } from "@/components/public-order-requests";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 
@@ -76,7 +77,7 @@ export default async function PedidosPage() {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "pedidos");
 
-  const { data, error } = await supabase
+  const [{ data, error }, publicRequestsResult] = await Promise.all([supabase
     .from("pos_orders")
     .select(`
       id, code, kind, status, customer_name, subtotal_cop, combo_price_adjustment_cop, discount_cop, delivery_cop, discount_type, discount_value, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, ordered_at, created_at,
@@ -93,7 +94,14 @@ export default async function PedidosPage() {
       )
     `)
     .order("ordered_at", { ascending: false })
-    .limit(80);
+    .limit(80),
+    supabase
+      .from("public_order_requests")
+      .select("id, channel, status, kind, customer_name, customer_phone, delivery_address, notes, items, total_cop, created_at")
+      .in("status", ["pending", "whatsapp_opened"])
+      .order("created_at", { ascending: true })
+      .limit(30)
+  ]);
 
   const rawOrders = (data ?? []) as unknown as OrderRow[];
   const profileIds = [...new Set(rawOrders.flatMap((order) => [order.created_by, order.cancelled_by, ...(order.pos_order_items ?? []).map((item) => item.base_replaced_by)]).filter((id): id is string => Boolean(id)))];
@@ -166,6 +174,7 @@ export default async function PedidosPage() {
   return (
     <PanelShell active="pedidos-listado" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Pedidos" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
+      <PublicOrderRequests requests={((publicRequestsResult.data ?? []) as unknown as PublicOrderRequestRow[]).map((request) => ({ ...request, total_cop: Number(request.total_cop ?? 0), items: Array.isArray(request.items) ? request.items : [] }))}/>
       <PosOrdersList
         canDeleteForTests={roleNames.includes("gerente") || roleNames.includes("admin_sistema")}
         canEditOperationalDate={roleNames.includes("gerente") || roleNames.includes("admin_sistema")}

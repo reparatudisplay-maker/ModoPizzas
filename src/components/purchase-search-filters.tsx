@@ -68,7 +68,8 @@ export function PurchaseSearchFilters({
   function applySearch(value: string) {
     setSearch(value);
     setActiveIndex(0);
-    updateParams({ q: value.trim() });
+    const normalizedValue = value.trim();
+    updateParams(normalizedValue ? { q: normalizedValue } : { q: "", tipo: "" });
   }
 
   function pickSuggestion(value: string) {

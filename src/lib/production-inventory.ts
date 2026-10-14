@@ -78,6 +78,12 @@ export type ProductionLotOutbound = Omit<ProductionLotOutboundInput, "quantity_b
   balance_after_base: number;
 };
 
+export type ProductionLotAdjustment = {
+  occurred_at: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+};
+
 export type ProductionTraceSource = {
   id: string;
   source_kind: ProductionSourceKind;
@@ -116,6 +122,7 @@ export type ProductionInventoryLot = {
   created_by: string | null;
   ingredients_consumed: ProductionTraceSource[];
   outbound_consumptions: ProductionLotOutbound[];
+  physical_adjustments: ProductionLotAdjustment[];
 };
 
 export type ProductionInventoryItem = {
@@ -184,6 +191,7 @@ export function buildProductionInventory({
   imageSrcByPreparationId?: Map<string, string | null>;
 }) {
   const adjustedStockByBatch = new Map<string, number>();
+  const adjustmentsByBatch = new Map<string, ProductionLotAdjustment[]>();
   const batchesByPreparation = new Map<string, ProductionBatchInput[]>();
   for (const batch of batches) {
     batchesByPreparation.set(batch.preparation_id, [...(batchesByPreparation.get(batch.preparation_id) ?? []), batch]);
@@ -191,7 +199,7 @@ export function buildProductionInventory({
   for (const [preparationId, preparationBatches] of batchesByPreparation) {
     const unit = preparationBatches[0]?.base_unit;
     if (!unit) continue;
-    const { originStock } = applyPhysicalStockAdjustments(
+    const { originStock, adjustmentsByOrigin } = applyPhysicalStockAdjustments(
       preparationBatches
         .map((batch) => ({
           id: batch.id,
@@ -205,6 +213,16 @@ export function buildProductionInventory({
       unit
     );
     for (const [batchId, stock] of originStock) adjustedStockByBatch.set(batchId, stock);
+    for (const [batchId, adjustments] of adjustmentsByOrigin) {
+      adjustmentsByBatch.set(
+        batchId,
+        adjustments.map((adjustment) => ({
+          occurred_at: adjustment.occurred_at,
+          quantity_base: adjustment.quantity,
+          base_unit: unit
+        }))
+      );
+    }
   }
 
   const traceAllocationsByConsumption = new Map<string, ProductionTraceAllocationInput[]>();
@@ -314,7 +332,8 @@ export function buildProductionInventory({
         inventory_value_cop: stock * unitCost,
         created_by: batch.productions!.created_by,
         ingredients_consumed: consumptionsByProduction.get(batch.production_id!) ?? [],
-        outbound_consumptions: lotOutbounds
+        outbound_consumptions: lotOutbounds,
+        physical_adjustments: adjustmentsByBatch.get(batch.id) ?? []
       } satisfies ProductionInventoryLot;
     })
     .sort((a, b) => {

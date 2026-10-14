@@ -45,6 +45,7 @@ type Purchase = {
   suppliers: { name: string } | null;
   brands: { name: string } | null;
   purchase_items: Array<{
+    id: string;
     inventory_item_id: string;
     brand_id: string | null;
     purchased_quantity: number | null;
@@ -244,7 +245,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   let purchasesQuery = supabase
     .from("purchases")
     .select(
-      "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))"
+       "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))"
     )
     .order("purchased_at", { ascending: false })
     .limit(historyLimit);
@@ -337,7 +338,19 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     const productName = getPurchaseProduct(purchase);
     const productLines = purchase.purchase_items.map((purchaseLine) => {
       const linePurchase = { ...purchase, purchase_items: [purchaseLine] };
-      return `${getPurchaseProduct(linePurchase)} - ${getPurchaseQuantity(linePurchase)}`;
+      const lineItem = purchaseLine.inventory_items;
+      const lineProduct = getPurchaseProduct(linePurchase);
+      const lineMaster = lineItem
+        ? masterByKey.get(`${lineItem.item_kind ?? ""}:${lineProduct.toUpperCase()}`) ?? masterByKey.get(masterKey(lineItem))
+        : null;
+      return {
+        id: purchaseLine.id,
+        product: lineProduct,
+        presentation: getPurchasePresentation(linePurchase, lineMaster),
+        quantity: getPurchaseQuantity(linePurchase),
+        unit_cost: formatPurchaseUnitCost(linePurchase),
+        total_cop: Number(purchaseLine.line_total_cop ?? 0)
+      };
     });
     const masterItem = item ? masterByKey.get(`${item.item_kind ?? ""}:${productName.toUpperCase()}`) ?? masterByKey.get(masterKey(item)) : null;
     const imageItem = masterItem?.image_url ? masterItem : item;
@@ -345,7 +358,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       id: purchase.id,
       image_src: imageItem ? imageSrcById.get(imageItem.id) ?? null : null,
       sku: purchase.purchase_items.length > 1 ? `${purchase.purchase_items.length} líneas` : getPurchaseSku(purchase),
-      product: productName,
+      product: purchase.purchase_items.length > 1 ? "Factura multiproducto" : productName,
       product_lines: productLines,
       presentation: purchase.purchase_items.length > 1 ? "Factura multiproducto" : getPurchasePresentation(purchase, masterItem),
       quantity: purchase.purchase_items.length > 1 ? `${purchase.purchase_items.length} productos` : getPurchaseQuantity(purchase),

@@ -2,18 +2,27 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Pencil, Settings, X } from "lucide-react";
+import { ChevronDown, Pencil, Settings, X } from "lucide-react";
 import { PurchaseDeleteButton } from "@/components/purchase-delete-button";
 import { formatCop } from "@/lib/format";
+
+type PurchaseLineSummary = {
+  id: string;
+  product: string;
+  presentation: string;
+  quantity: string;
+  unit_cost: string;
+  total_cop: number;
+};
 
 type PurchaseListRow = {
   id: string;
   image_src: string | null;
   sku: string;
   product: string;
-  product_lines: string[];
+  product_lines: PurchaseLineSummary[];
   presentation: string;
   quantity: string;
   supplier: string;
@@ -80,6 +89,7 @@ function productImage(src: string | null, name: string) {
 export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRow[] }) {
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(readColumns);
   const [showSettings, setShowSettings] = useState(false);
+  const [expandedPurchaseIds, setExpandedPurchaseIds] = useState<Set<string>>(() => new Set());
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -100,6 +110,17 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
     nextParams.set("edit", id);
     return `${pathname}?${nextParams.toString()}`;
   }
+
+  function togglePurchase(id: string) {
+    setExpandedPurchaseIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const visibleColumnCount = allColumns.filter(showColumn).length;
 
   return (
     <>
@@ -128,8 +149,12 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
             </tr>
           </thead>
           <tbody>
-            {purchases.map((purchase) => (
-              <tr key={purchase.id}>
+            {purchases.map((purchase) => {
+              const isMultiproduct = purchase.product_lines.length > 1;
+              const isExpanded = expandedPurchaseIds.has(purchase.id);
+              return (
+                <Fragment key={purchase.id}>
+              <tr>
                 {showColumn("photo") ? <td>{productImage(purchase.image_src, purchase.product)}</td> : null}
                 {showColumn("actions") ? (
                   <td>
@@ -137,6 +162,17 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                       <Link className="icon-button" href={editHref(purchase.id)} title="Editar compra">
                         <Pencil size={16} />
                       </Link>
+                      {isMultiproduct ? (
+                        <button
+                          aria-expanded={isExpanded}
+                          className={`icon-button ${isExpanded ? "active-icon-button" : ""}`}
+                          onClick={() => togglePurchase(purchase.id)}
+                          title={isExpanded ? "Contraer líneas" : "Ver líneas de la factura"}
+                          type="button"
+                        >
+                          <ChevronDown size={16} style={{ transform: isExpanded ? "rotate(180deg)" : undefined }} />
+                        </button>
+                      ) : null}
                       <PurchaseDeleteButton id={purchase.id} />
                     </span>
                   </td>
@@ -145,13 +181,7 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                 {showColumn("product") ? (
                   <td>
                     <strong>{purchase.product}</strong>
-                    {purchase.product_lines.length > 1 ? (
-                      <span className="purchase-line-summary">
-                        {purchase.product_lines.slice(1).map((line) => (
-                          <span key={line}>{line}</span>
-                        ))}
-                      </span>
-                    ) : null}
+                    {isMultiproduct ? <small>{purchase.product_lines.length} líneas registradas</small> : null}
                   </td>
                 ) : null}
                 {showColumn("presentation") ? <td>{purchase.presentation}</td> : null}
@@ -163,7 +193,26 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                 {showColumn("date") ? <td>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</td> : null}
                 {showColumn("notes") ? <td>{purchase.notes}</td> : null}
               </tr>
-            ))}
+              {isMultiproduct && isExpanded ? (
+                <tr className="purchase-expanded-row" key={`${purchase.id}-lines`}>
+                  <td colSpan={visibleColumnCount}>
+                    <div className="purchase-expanded-lines" aria-label={`Líneas de la factura ${purchase.id}`}>
+                      {purchase.product_lines.map((line) => (
+                        <div className="purchase-expanded-line" key={line.id}>
+                          <strong>{line.product}</strong>
+                          <span>{line.quantity}</span>
+                          <span>{line.presentation}</span>
+                          <span>{line.unit_cost}</span>
+                          <strong>{formatCop(line.total_cop)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
         {purchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}

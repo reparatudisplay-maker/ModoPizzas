@@ -3,10 +3,12 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, MapPin, MessageCircle, Minus, Phone, Plus, Search, ShoppingBag, Star, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, LogOut, MapPin, MessageCircle, Minus, Moon, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, UserRound, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
 import type { PosComboOption } from "@/components/pos-order-workspace";
+import { PublicAuthModal } from "@/components/public-auth-modal";
+import { createClient } from "@/lib/supabase-browser";
 
 type Ingredient = { source_kind: "inventory_item" | "preparation"; source_id: string; name: string };
 export type PublicPizzaPrice = { id: string; flavor_id: string; flavor_name: string; commercial_description: string | null; image_url: string | null; allows_half_and_half: boolean; category_id: string | null; category_name: string; size_id: string; size_name: string; diameter_cm: number | null; slices_count: number | null; sort_order: number; sale_price_cop: number; available: boolean; ingredients: Ingredient[] };
@@ -16,6 +18,7 @@ type Promotion = { id: string; name: string; image_url: string | null; main_text
 type OpeningHour = { day: string; is_open: boolean; opens_at: string; closes_at: string };
 export type PublicBusinessInfo = { business_name: string; phone: string; whatsapp_number: string; address: string | null; neighborhood: string | null; city: string | null; weekday_hours: string | null; weekend_hours: string | null; opening_hours: OpeningHour[]; maps_url: string | null; info_text: string | null; instagram_url: string | null; facebook_url: string | null; email?: string | null; legal_contact_email?: string | null };
 export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; promotions: Promotion[]; combos: PosComboOption[]; business: PublicBusinessInfo };
+export type PublicCustomer = { id: string; full_name: string; phone: string; email: string };
 type CartAddition = Addition & { quantity: number; scope: "whole" | "left" | "right"; scope_label: string | null };
 type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secondary_id?: string | null; name: string; secondary_name?: string | null; size_name?: string | null; image_url: string | null; quantity: number; unit_price_cop: number; additions: CartAddition[]; removed_components: Ingredient[]; presentation?: string | null; combo_instance_id?: string | null; combo_name?: string | null; combo_variant_name?: string | null; combo_unit_price_cop?: number; combo_normal_price_cop?: number; combo_savings_cop?: number; combo_is_primary?: boolean };
 type PizzaGroup = { id: string; price: PublicPizzaPrice; prices: PublicPizzaPrice[] };
@@ -31,7 +34,7 @@ function formatTime(value: string) { const [hour, minute] = value.split(":").map
 function businessAddress(business: PublicBusinessInfo) { return [business.address, business.neighborhood, business.city].filter(Boolean).join(", "); }
 function publicBusinessName(value: string | null | undefined) { return value?.trim().replace(/\bModoPizzas\b/gi, "Modo Pizzas") || "Modo Pizzas"; }
 
-export function PublicStorefront({ catalog, catalogUnavailable = false }: { catalog: PublicCatalog; catalogUnavailable?: boolean }) {
+export function PublicStorefront({ catalog, catalogUnavailable = false, customer, directOrderingEnabled = false }: { catalog: PublicCatalog; catalogUnavailable?: boolean; customer?: PublicCustomer | null; directOrderingEnabled?: boolean }) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedPizza, setSelectedPizza] = useState<PublicPizzaPrice | null>(null);
   const [editing, setEditing] = useState<PizzaDraft | null>(null);
@@ -40,6 +43,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
   const [category, setCategory] = useState("PIZZAS");
   const [heroIndex, setHeroIndex] = useState(0);
   const [selectedCombo, setSelectedCombo] = useState<PosComboOption | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
   const pizzaGroups = useMemo(() => groupPizzas(catalog.pizzas), [catalog.pizzas]);
   const heroGroups = useMemo(() => pizzaGroups.filter((group) => group.price.image_url).slice(0, 6), [pizzaGroups]);
   useEffect(() => { if (heroGroups.length < 2) return; const timer = window.setInterval(() => setHeroIndex((current) => (current + 1) % heroGroups.length), 5000); return () => window.clearInterval(timer); }, [heroGroups.length]);
@@ -89,6 +93,11 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
     setCartOpen(true);
   }
 
+  async function signOut() {
+    await createClient().auth.signOut();
+    window.location.assign("/");
+  }
+
   useEffect(() => {
     const handleHash = () => {
       if (window.location.hash !== "#promos") return;
@@ -100,8 +109,38 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
     return () => window.removeEventListener("hashchange", handleHash);
   }, []);
 
+  useEffect(() => {
+    const raw = localStorage.getItem("modopizzas-public-reorder");
+    if (!raw) return;
+    localStorage.removeItem("modopizzas-public-reorder");
+    try {
+      const items = JSON.parse(raw) as Array<{ kind?: string; id?: string; secondary_id?: string | null; quantity?: number; additions?: Array<{ id?: string; quantity?: number; scope?: "whole" | "left" | "right"; scope_label?: string | null }>; removed_components?: Ingredient[] }>;
+      const restored = items.flatMap<CartLine>((item) => {
+        const quantity = Math.max(1, Number(item.quantity ?? 1));
+        if (item.kind === "pizza") {
+          const pizza = catalog.pizzas.find((candidate) => candidate.id === item.id && candidate.available);
+          if (!pizza) return [];
+          const secondary = item.secondary_id ? catalog.pizzas.find((candidate) => candidate.id === item.secondary_id && candidate.available) : null;
+          const additions = (item.additions ?? []).flatMap<CartAddition>((choice) => {
+            const addition = catalog.additions.find((candidate) => candidate.id === choice.id && candidate.size_id === pizza.size_id);
+            return addition ? [{ ...addition, quantity: Math.max(1, Number(choice.quantity ?? 1)), scope: choice.scope ?? "whole", scope_label: choice.scope_label ?? null }] : [];
+          });
+          return [{ key: cartKey("reorder:pizza"), kind: "pizza", id: pizza.id, secondary_id: secondary?.id ?? null, name: pizza.flavor_name, secondary_name: secondary?.flavor_name ?? null, size_name: pizza.size_name, image_url: pizza.image_url, quantity, unit_price_cop: secondary ? Math.max(pizza.sale_price_cop, secondary.sale_price_cop) : pizza.sale_price_cop, additions, removed_components: item.removed_components ?? [] }];
+        }
+        if (item.kind === "sale_product") {
+          const product = catalog.products.find((candidate) => candidate.id === item.id && candidate.available);
+          return product ? [{ key: cartKey("reorder:product"), kind: "sale_product", id: product.id, name: product.name, image_url: product.image_url, quantity, unit_price_cop: product.sale_price_cop, additions: [], removed_components: [], presentation: presentation(product) }] : [];
+        }
+        return [];
+      });
+      if (restored.length) { setCart(restored); setCartOpen(true); }
+    } catch {
+      // An invalid local draft cannot affect the active cart.
+    }
+  }, [catalog.additions, catalog.pizzas, catalog.products]);
+
   return <main className="public-site">
-    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a className={category === "PROMOS" ? "active" : ""} href="#promos" onClick={() => { setCategory("PROMOS"); window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}>Promociones</a><a href="#informacion">Información</a></nav><div><a className="public-login" href="/login">Ingresar</a><button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
+    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a className={category === "PROMOS" ? "active" : ""} href="#promos" onClick={() => { setCategory("PROMOS"); window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}>Promociones</a><a href="#informacion">Información</a></nav><div className="public-account-actions">{customer ? <><Link className="public-login" href="/mi-cuenta"><UserRound size={16}/>Mi cuenta</Link><button aria-label="Cerrar sesión" className="public-account-signout" onClick={signOut} type="button"><LogOut size={16}/></button></> : <button className="public-login" onClick={() => setAuthOpen(true)} type="button">Ingresar</button>}<button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
     <section className="public-hero" id="inicio">
       <div className="public-hero-copy">
         <span className="public-eyebrow">PIZZA HORNEADA AL MOMENTO</span>
@@ -122,6 +161,15 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
         {heroGroups.length > 1 ? <div className="public-hero-controls"><button aria-label="Sabor anterior" onClick={() => setHeroIndex((current) => (current - 1 + heroGroups.length) % heroGroups.length)} type="button"><ChevronLeft size={18}/></button><span>{heroGroups.map((group, index) => <i className={index === activeHeroIndex ? "active" : ""} key={group.id}/>)}</span><button aria-label="Siguiente sabor" onClick={() => setHeroIndex((current) => (current + 1) % heroGroups.length)} type="button"><ChevronRight size={18}/></button></div> : null}
       </div>
     </section>
+    <section className="public-halloween-banner" aria-labelledby="halloween-title">
+      <div className="public-halloween-symbols" aria-hidden="true"><Moon size={28}/><span>🎃</span><Sparkles size={24}/></div>
+      <div>
+        <span>ESPECIAL DE TEMPORADA</span>
+        <h2 id="halloween-title">Halloween llego a Modo Pizzas</h2>
+        <p>Activa tu antojo con pizzas recien horneadas y una experiencia tematica especial.</p>
+      </div>
+      <a className="public-halloween-cta" href="#menu">Explorar el menu <ChevronRight size={17}/></a>
+    </section>
     {catalog.promotions.length ? <section className="public-promos" aria-label="Promociones destacadas"><div className="public-section-heading"><span>SELECCION DEL DIA</span><h2>PROMOS ACTIVADAS</h2></div><div className="public-promo-grid">{catalog.promotions.map((promo) => <article className="public-promo-card" key={promo.id}>{promo.image_url ? <img alt={promo.name} src={promo.image_url}/> : <div className="public-promo-pattern"/>}<div><span>{promo.name}</span><h3>{promo.main_text}</h3>{promo.secondary_text ? <p>{promo.secondary_text}</p> : null}{promo.promo_price_cop ? <strong>{promo.normal_price_cop ? <del>{formatCop(promo.normal_price_cop)}</del> : null}{formatCop(promo.promo_price_cop)}</strong> : null}</div></article>)}</div></section> : null}
     <section className={`public-menu${category === "PROMOS" ? " public-promos-menu" : ""}`} id="menu"><span aria-hidden="true" className="public-promo-anchor" id="promos"/><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>{category === "PROMOS" ? "COMBOS PARA COMPARTIR" : "ELIGE TU FAVORITA"}</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => { setCategory(item); if (item === "PROMOS") window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PROMOS" ? <div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PROMOS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
     <BusinessSection business={catalog.business} />
@@ -130,7 +178,8 @@ export function PublicStorefront({ catalog, catalogUnavailable = false }: { cata
     {cart.length ? <button className="public-mobile-cart" onClick={() => setCartOpen(true)} type="button"><span>{itemCount} {itemCount === 1 ? "producto" : "productos"} · {formatCop(total)}</span><strong>Ver pedido</strong></button> : null}
     {selectedPizza ? <PizzaConfigurator catalog={catalog} existing={editing?.line ?? null} initial={selectedPizza} onAdd={addLine} onClose={() => { setSelectedPizza(null); setEditing(null); }} /> : null}
     {selectedCombo ? <PublicFlavorComboWizard catalog={catalog} combo={selectedCombo} onAdd={addCombo} onClose={() => setSelectedCombo(null)} /> : null}
-    {cartOpen ? <CartDrawer business={catalog.business} cart={cart} onAddProduct={addProduct} onClose={() => setCartOpen(false)} onEditPizza={editPizza} onQuantity={setLineQuantity} products={catalog.products.filter((product) => product.available)} total={total} /> : null}
+    {cartOpen ? <CartDrawer business={catalog.business} cart={cart} customer={customer ?? null} directOrderingEnabled={directOrderingEnabled} onAddProduct={addProduct} onClose={() => setCartOpen(false)} onEditPizza={editPizza} onQuantity={setLineQuantity} onSubmitted={() => { setCart([]); setCartOpen(false); }} products={catalog.products.filter((product) => product.available)} total={total} /> : null}
+    {authOpen ? <PublicAuthModal onClose={() => setAuthOpen(false)} /> : null}
   </main>;
 }
 
@@ -347,7 +396,78 @@ function PizzaConfigurator({ catalog, existing, initial, onAdd, onClose }: { cat
   return <div className="public-overlay"><section aria-label="Configura tu pizza" aria-modal="true" className="public-configurator" role="dialog"><header><div><span>Paso {step} de {totalSteps}</span><h2>{title}</h2></div><button aria-label="Cerrar" onClick={onClose} type="button"><X/></button></header><div className="public-step-progress">{Array.from({ length: totalSteps }, (_, index) => <i className={index < step ? "active" : ""} key={index}/>)}</div>{summary}<div className="public-config-body">{renderStep()}</div><footer>{step > 1 ? <button className="public-secondary public-back" onClick={previousStep} type="button">Atras</button> : <span/>}{isReview ? <button className="public-primary" onClick={finishPizza} type="button">Agregar al carrito · {formatCop(totalToCart)}</button> : <button className="public-primary" disabled={mode === "half" && step === 3 && !second} onClick={nextStep} type="button">Continuar <ChevronRight size={18}/></button>}</footer></section></div>;
 }
 
-function CartDrawer({ business, cart, products, total, onClose, onQuantity, onAddProduct, onEditPizza }: { business: PublicBusinessInfo; cart: CartLine[]; products: PublicProduct[]; total: number; onClose: () => void; onQuantity: (key: string, quantity: number) => void; onAddProduct: (product: PublicProduct) => void; onEditPizza: (line: CartLine) => void }) {
+function CartDrawer({ business, cart, customer, directOrderingEnabled, products, total, onClose, onQuantity, onAddProduct, onEditPizza, onSubmitted }: { business: PublicBusinessInfo; cart: CartLine[]; customer: PublicCustomer | null; directOrderingEnabled: boolean; products: PublicProduct[]; total: number; onClose: () => void; onQuantity: (key: string, quantity: number) => void; onAddProduct: (product: PublicProduct) => void; onEditPizza: (line: CartLine) => void; onSubmitted: () => void }) {
+  const [kind, setKind] = useState<"pickup" | "delivery">("pickup");
+  const [customerName, setCustomerName] = useState(customer?.full_name ?? "");
+  const [phone, setPhone] = useState(customer?.phone ?? "");
+  const [address, setAddress] = useState("");
+  const [complement, setComplement] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submissionError, setSubmissionError] = useState("");
+  const [submitting, setSubmitting] = useState<"whatsapp" | "direct" | null>(null);
+  const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const ready = Boolean(customerName.trim() && phone.trim() && (kind === "pickup" || address.trim()));
+  const whatsapp = business.whatsapp_number.replace(/\D/g, "");
+  const message = buildWhatsAppMessage({ cart, total, kind, customerName, phone, address, complement, notes });
+  const hasPizza = cart.some((line) => line.kind === "pizza");
+  const hasDrink = cart.some((line) => line.kind === "sale_product");
+  const directSupportsCart = !cart.some((line) => line.combo_instance_id);
+  const suggestions = products.filter((product) => !cart.some((line) => line.kind === "sale_product" && line.id === product.id)).slice(0, 5);
+
+  function validateCheckout() {
+    if (!customerName.trim()) { setSubmissionError("Escribe tu nombre para continuar."); return false; }
+    if (!phone.trim()) { setSubmissionError("Escribe tu teléfono para continuar."); return false; }
+    if (kind === "delivery" && !address.trim()) { setSubmissionError("Escribe la dirección para domicilio."); return false; }
+    return true;
+  }
+
+  async function saveRequest(channel: "whatsapp" | "direct") {
+    if (!customer || !validateCheckout()) return false;
+    setSubmitting(channel);
+    setSubmissionError("");
+    const { error } = await createClient().rpc("create_public_order_request", {
+      p_channel: channel,
+      p_kind: kind,
+      p_customer_name: customerName,
+      p_customer_phone: phone,
+      p_delivery_address: kind === "delivery" ? address : null,
+      p_delivery_complement: kind === "delivery" ? complement : null,
+      p_notes: notes,
+      p_items: cart.map((line) => ({
+        kind: line.kind,
+        id: line.id,
+        secondary_id: line.secondary_id ?? null,
+        quantity: line.quantity,
+        additions: line.additions.map((addition) => ({ id: addition.id, quantity: addition.quantity, scope: addition.scope, scope_label: addition.scope_label })),
+        removed_components: line.removed_components,
+        combo_instance_id: line.combo_instance_id ?? null,
+        combo_config_id: null,
+        combo_variant_id: null,
+        combo_is_primary: line.combo_is_primary ?? false
+      })),
+      p_client_request_id: crypto.randomUUID()
+    });
+    setSubmitting(null);
+    if (error) { setSubmissionError(error.message); return false; }
+    return true;
+  }
+
+  async function sendWhatsapp() {
+    if (!validateCheckout()) return;
+    if (customer && !(await saveRequest("whatsapp"))) return;
+    if (!whatsapp) { setSubmissionError("WhatsApp no está configurado todavía."); return; }
+    window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
+  }
+
+  async function sendDirect() {
+    if (!(await saveRequest("direct"))) return;
+    onSubmitted();
+  }
+
+  return <div className="public-overlay public-cart-overlay"><aside aria-label="Tu pedido" className="public-cart-drawer"><header><div><span>Tu pedido</span><h2>{itemCount} {itemCount === 1 ? "producto" : "productos"}</h2></div><button aria-label="Cerrar carrito" onClick={onClose} type="button"><X/></button></header><div className="public-cart-body"><section className="public-cart-order"><div className="public-cart-section-title"><h3>Tu pedido</h3><span>Revisa y ajusta tus productos</span></div><div className="public-cart-lines">{cart.map((line) => <article key={line.key}><div>{line.image_url ? <img alt="" src={line.image_url}/> : <span>MP</span>}</div><section><h3>{line.name}{line.secondary_name ? ` / ${line.secondary_name}` : ""}</h3><p>{line.size_name ?? line.presentation}{line.removed_components.length ? ` · Sin ${line.removed_components.map((item) => item.name).join(", ")}` : ""}</p>{line.additions.map((addition) => <small key={`${addition.id}:${addition.scope}`}>+ {addition.name} x{addition.quantity}{addition.scope_label ? ` (${addition.scope_label})` : ""}</small>)}<div className="public-line-controls"><button aria-label="Restar unidad" onClick={() => onQuantity(line.key, line.quantity - 1)} type="button"><Minus size={15}/></button><b>{line.quantity}</b><button aria-label="Sumar unidad" onClick={() => onQuantity(line.key, line.quantity + 1)} type="button"><Plus size={15}/></button>{line.kind === "pizza" ? <button aria-label="Editar pizza" className="public-edit-line" onClick={() => onEditPizza(line)} type="button"><Edit3 size={14}/></button> : null}<button aria-label={`Eliminar ${line.name}`} className="public-remove-line" onClick={() => onQuantity(line.key, 0)} type="button"><Trash2 size={14}/></button><strong>{formatCop(lineTotal(line))}</strong></div></section></article>)}</div>{hasPizza && !hasDrink && suggestions.length ? <section className="public-cross-sell"><div><span>COMPLETA TU PEDIDO</span><h3>¿Agregar algo más?</h3></div>{suggestions.map((product) => <button key={product.id} onClick={() => onAddProduct(product)} type="button">{product.image_url ? <img alt="" src={product.image_url}/> : <span>+</span>}<span>{product.name}<small>{presentation(product)} · {formatCop(product.sale_price_cop)}</small></span><Plus size={16}/></button>)}</section> : null}<button className="public-continue-shopping" onClick={onClose} type="button"><Plus size={17}/>Seguir comprando</button></section><section className="public-whatsapp-form"><div className="public-cart-section-title"><h3>Entrega</h3><span>Elige como recibes tu pedido</span></div><div className="public-choice-grid"><button className={kind === "pickup" ? "selected" : ""} onClick={() => setKind("pickup")} type="button">Recoger</button><button className={kind === "delivery" ? "selected" : ""} onClick={() => setKind("delivery")} type="button">Domicilio</button></div><div className="public-cart-section-title"><h3>Datos del cliente</h3><span>Los usamos para preparar tu pedido</span></div><label>Nombre<input id="customer-name" onChange={(event) => { setCustomerName(event.target.value); setSubmissionError(""); }} placeholder="Tu nombre" value={customerName}/></label><label>Teléfono<input id="customer-phone" inputMode="tel" onChange={(event) => { setPhone(event.target.value); setSubmissionError(""); }} placeholder="Tu teléfono" value={phone}/></label>{kind === "delivery" ? <><label>Dirección<input id="customer-address" onChange={(event) => { setAddress(event.target.value); setSubmissionError(""); }} placeholder="Dirección completa" value={address}/></label><label>Complemento<input onChange={(event) => setComplement(event.target.value)} placeholder="Apartamento, piso o referencia" value={complement}/></label></> : null}<div className="public-cart-section-title public-notes-title"><h3>Observaciones</h3></div><label>Indicaciones<input onChange={(event) => setNotes(event.target.value)} placeholder="Observaciones para tu pedido" value={notes}/></label>{submissionError ? <p className="public-checkout-error" role="alert">{submissionError}</p> : null}</section></div><footer><span>Total<strong>{formatCop(total)}</strong></span><div className="public-checkout-actions"><button className="public-primary" disabled={!ready || !whatsapp || submitting !== null} onClick={sendWhatsapp} type="button">{submitting === "whatsapp" ? "Guardando..." : "Enviar por WhatsApp"}<ChevronRight size={18}/></button>{customer && directOrderingEnabled && directSupportsCart ? <button className="public-direct-order" disabled={!ready || submitting !== null} onClick={sendDirect} type="button">{submitting === "direct" ? "Enviando..." : "Enviar pedido directo"}</button> : null}{customer && directOrderingEnabled && !directSupportsCart ? <small className="public-direct-order-note">Los combos se envían por WhatsApp por ahora.</small> : null}</div></footer></aside></div>;
+}
+
+/* Retained source removed: checkout rendering is consolidated in CartDrawer above.
   const [kind, setKind] = useState<"pickup" | "delivery">("pickup"); const [customerName, setCustomerName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState(""); const [complement, setComplement] = useState(""); const [notes, setNotes] = useState("");
   const [submissionError, setSubmissionError] = useState("");
   const hasPizza = cart.some((line) => line.kind === "pizza"); const hasDrink = cart.some((line) => line.kind === "sale_product"); const suggestions = products.filter((product) => !cart.some((line) => line.kind === "sale_product" && line.id === product.id)).slice(0, 5);
@@ -356,6 +476,7 @@ function CartDrawer({ business, cart, products, total, onClose, onQuantity, onAd
   return <div className="public-overlay public-cart-overlay"><aside aria-label="Tu pedido" className="public-cart-drawer"><header><div><span>Tu pedido</span><h2>{itemCount} {itemCount === 1 ? "producto" : "productos"}</h2></div><button aria-label="Cerrar carrito" onClick={onClose} type="button"><X/></button></header><div className="public-cart-body"><section className="public-cart-order"><div className="public-cart-section-title"><h3>Tu pedido</h3><span>Revisa y ajusta tus productos</span></div><div className="public-cart-lines">{cart.map((line) => <article key={line.key}><div>{line.image_url ? <img alt="" src={line.image_url}/> : <span>MP</span>}</div><section><h3>{line.name}{line.secondary_name ? ` / ${line.secondary_name}` : ""}</h3><p>{line.size_name ?? line.presentation}{line.removed_components.length ? ` · Sin ${line.removed_components.map((item) => item.name).join(", ")}` : ""}</p>{line.additions.map((addition) => <small key={`${addition.id}:${addition.scope}`}>+ {addition.name} x{addition.quantity}{addition.scope_label ? ` (${addition.scope_label})` : ""}</small>)}<div className="public-line-controls"><button aria-label="Restar unidad" onClick={() => onQuantity(line.key, line.quantity - 1)} type="button"><Minus size={15}/></button><b>{line.quantity}</b><button aria-label="Sumar unidad" onClick={() => onQuantity(line.key, line.quantity + 1)} type="button"><Plus size={15}/></button>{line.kind === "pizza" ? <button aria-label="Editar pizza" className="public-edit-line" onClick={() => onEditPizza(line)} type="button"><Edit3 size={14}/></button> : null}<button aria-label={`Eliminar ${line.name}`} className="public-remove-line" onClick={() => onQuantity(line.key, 0)} type="button"><Trash2 size={14}/></button><strong>{formatCop(lineTotal(line))}</strong></div></section></article>)}</div>{hasPizza && !hasDrink && suggestions.length ? <section className="public-cross-sell"><div><span>COMPLETA TU PEDIDO</span><h3>¿Agregar algo más?</h3></div>{suggestions.map((product) => <button key={product.id} onClick={() => onAddProduct(product)} type="button">{product.image_url ? <img alt="" src={product.image_url}/> : <span>+</span>}<span>{product.name}<small>{presentation(product)} · {formatCop(product.sale_price_cop)}</small></span><Plus size={16}/></button>)}</section> : null}<button className="public-continue-shopping" onClick={onClose} type="button"><Plus size={17}/>Seguir comprando</button></section><section className="public-whatsapp-form"><div className="public-cart-section-title"><h3>Entrega</h3><span>Elige como recibes tu pedido</span></div><div className="public-choice-grid"><button className={kind === "pickup" ? "selected" : ""} onClick={() => setKind("pickup")} type="button">Recoger</button><button className={kind === "delivery" ? "selected" : ""} onClick={() => setKind("delivery")} type="button">Domicilio</button></div><div className="public-cart-section-title"><h3>Datos del cliente</h3><span>Los usamos para preparar tu pedido</span></div><label>Nombre<input id="customer-name" onChange={(event) => { setCustomerName(event.target.value); setSubmissionError(""); }} placeholder="Tu nombre" value={customerName}/></label><label>Telefono<input id="customer-phone" inputMode="tel" onChange={(event) => { setPhone(event.target.value); setSubmissionError(""); }} placeholder="Tu telefono" value={phone}/></label>{kind === "delivery" ? <><label>Direccion<input id="customer-address" onChange={(event) => { setAddress(event.target.value); setSubmissionError(""); }} placeholder="Direccion completa" value={address}/></label><label>Complemento<input onChange={(event) => setComplement(event.target.value)} placeholder="Apartamento, piso o referencia" value={complement}/></label></> : null}<div className="public-cart-section-title public-notes-title"><h3>Observaciones</h3></div><label>Indicaciones<input onChange={(event) => setNotes(event.target.value)} placeholder="Observaciones para tu pedido" value={notes}/></label>{submissionError ? <p className="public-checkout-error" role="alert">{submissionError}</p> : null}</section></div><footer><span>Total<strong>{formatCop(total)}</strong></span><a aria-disabled={!ready || !whatsapp} className={["public-primary", ready && whatsapp ? "" : "disabled"].join(" ")} href={ready && whatsapp ? `https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}` : undefined} onClick={(event) => { if (!ready) { event.preventDefault(); validateCheckout(); } }} rel="noreferrer" target="_blank">Enviar pedido por WhatsApp <ChevronRight size={18}/></a></footer></aside></div>;
 }
 
+*/
 function BusinessSection({ business }: { business: PublicBusinessInfo }) { const hours = business.opening_hours ?? []; return <section className="public-business" id="informacion"><div><span className="public-eyebrow">VISITANOS</span><h2>Una buena pizza merece verse de cerca.</h2><p>{business.info_text || "Encuentra la ruta, horarios y la forma más rápida de escribirnos."}</p><div className="public-map-card"> <MapPin size={28}/><div><strong>{business.address || "Ubicacion por confirmar"}</strong><span>{[business.neighborhood, business.city].filter(Boolean).join(", ")}</span></div>{business.maps_url ? <a href={business.maps_url} rel="noreferrer" target="_blank">Abrir en Google Maps <ChevronRight size={16}/></a> : null}</div></div><dl><div><dt><MessageCircle size={18}/>WhatsApp</dt><dd>{business.phone || business.whatsapp_number || "No configurado"}</dd></div><div><dt><Clock3 size={18}/>Horarios</dt><dd className="public-hours-list">{hours.length ? hours.map((hour) => <span key={hour.day}><b>{hour.day}</b>{hour.is_open ? `${formatTime(hour.opens_at)} - ${formatTime(hour.closes_at)}` : "Cerrado"}</span>) : "Horarios por confirmar."}</dd></div><div><dt><Phone size={18}/>Contacto</dt><dd>{business.phone || business.whatsapp_number || "No configurado"}</dd></div></dl></section>; }
 
 function PublicFooter({ business }: { business: PublicBusinessInfo }) {

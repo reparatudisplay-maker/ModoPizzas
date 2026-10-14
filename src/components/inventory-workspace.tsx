@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Edit3, Eye, Settings, Trash2, X } from "lucide-react";
+import { Edit3, Eye, History, Settings, Trash2, X } from "lucide-react";
 import { recordPhysicalInventoryCount, updatePhysicalInventoryCount, voidPhysicalInventoryCount, type PhysicalInventoryActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { type ProductionInventoryItem, type ProductionInventoryLot, productionItemStatus, productionLotStatus } from "@/lib/production-inventory";
@@ -27,10 +27,13 @@ export type InventoryPurchaseLine = {
   item_kind: ItemKind | null;
   purchase_mode: "total_weight" | "packages" | null;
   purchased_quantity: number | null;
+  initial_quantity: number;
   unit: StockUnit;
   quantity: number;
   presentation_quantity: number | null;
   presentation_unit: StockUnit | null;
+  product_presentation_quantity: number | null;
+  product_presentation_unit: StockUnit | null;
   unit_cost_cop: number;
   line_total_cop: number;
   expiration_date: string | null;
@@ -40,6 +43,17 @@ export type InventoryPurchaseLine = {
   category_name: string | null;
   lot_code: string;
   is_active: boolean;
+  movements: InventoryLotMovement[];
+};
+
+export type InventoryLotMovement = {
+  id: string;
+  kind: "sale" | "production" | "adjustment";
+  occurred_at: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  reference: string;
+  detail: string;
 };
 
 export type InventoryListItem = {
@@ -49,6 +63,8 @@ export type InventoryListItem = {
   image_src: string | null;
   item_kind: ItemKind | null;
   unit: StockUnit;
+  presentation_quantity: number | null;
+  presentation_unit: StockUnit | null;
   stock: number;
   total_cost_cop: number;
   average_cost_cop: number;
@@ -103,6 +119,8 @@ type InventoryRow = {
   image_src: string | null;
   item_kind: ItemKind | null;
   unit: StockUnit;
+  presentation_quantity: number | null;
+  presentation_unit: StockUnit | null;
   stock: number;
   average_cost: number;
   purchase_price: number;
@@ -166,7 +184,7 @@ const defaultProductionColumns: ProductionColumnKey[] = ["photo", "unitKind", "s
 function compatibleColumnsForMode(mode: ViewMode): ColumnKey[] {
   return mode === "consolidated"
     ? allColumns.filter((column) => column !== "unitPrice")
-    : allColumns.filter((column) => column !== "detail" && column !== "cost");
+    : allColumns.filter((column) => column !== "cost");
 }
 
 function defaultColumnsForMode(mode: ViewMode) {
@@ -195,7 +213,7 @@ function columnLabel(column: ColumnKey, mode: ViewMode) {
     supplier: "Proveedor",
     brand: "Marca",
     lastPurchase: "Ultima compra",
-    detail: "Detalle"
+    detail: mode === "decentralized" ? "Acciones" : "Detalle"
   };
   return labels[column];
 }
@@ -339,7 +357,7 @@ function productImage(src: string | null, name: string) {
 }
 
 function unitPriceForLine(line: InventoryPurchaseLine) {
-  const purchasedQuantity = Number(line.purchased_quantity ?? line.quantity ?? 0);
+  const purchasedQuantity = Number(line.initial_quantity ?? line.quantity ?? 0);
   const packagePurchase = Boolean(line.presentation_quantity && line.presentation_unit && Number(line.presentation_quantity) !== purchasedQuantity);
   if (packagePurchase) return { value: purchasedQuantity > 0 ? line.line_total_cop / purchasedQuantity : 0, unit: "PAQUETE" };
 
@@ -351,6 +369,11 @@ function unitPriceForLine(line: InventoryPurchaseLine) {
 
 function formatUnitPrice(value: number, unit: string) {
   return `${formatCop(value)} / ${unit}`;
+}
+
+function presentationLabel(quantity: number | null, unit: StockUnit | null) {
+  if (!quantity || !unit) return null;
+  return formatStockQuantity(Number(quantity), unit);
 }
 
 function isInventoryAdjustmentInRow(row: InventoryRow) {
@@ -418,6 +441,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
   const visibleColumns = columnsByMode[viewMode];
   const [showSettings, setShowSettings] = useState(false);
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [openPurchaseLotId, setOpenPurchaseLotId] = useState<string | null>(null);
   const [preparationQuery, setPreparationQuery] = useState("");
   const [preparationStatus, setPreparationStatus] = useState("");
   const [preparationUnitKind, setPreparationUnitKind] = useState("");
@@ -563,6 +587,8 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
       image_src: item.image_src,
       item_kind: item.item_kind,
       unit: item.unit,
+      presentation_quantity: item.presentation_quantity,
+      presentation_unit: item.presentation_unit,
       stock: item.stock,
       average_cost: item.average_cost_cop,
       purchase_price: 0,
@@ -589,6 +615,8 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
         image_src: line.image_src,
         item_kind: line.item_kind,
         unit: line.unit,
+        presentation_quantity: line.presentation_quantity,
+        presentation_unit: line.presentation_unit,
         stock: line.quantity,
         average_cost: line.unit_cost_cop,
         purchase_price: line.unit_cost_cop,
@@ -676,11 +704,13 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
     setStockFilter("all");
     setShowOutOfStock(true);
     setOpenItemId(null);
+    setOpenPurchaseLotId(null);
   }
 
   function handleViewModeChange(nextMode: ViewMode) {
     setViewMode(nextMode);
     setOpenItemId(null);
+    setOpenPurchaseLotId(null);
     if (nextMode === "decentralized" && (sort === "cost_desc" || sort === "cost_asc")) {
       setSort("value_desc");
     }
@@ -694,10 +724,12 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
   }
 
   function showColumn(column: ColumnKey) {
+    if (viewMode === "decentralized" && column === "detail") return true;
     return compatibleColumns.includes(column) && visibleColumns.includes(column);
   }
 
-  const openItem = openItemId && viewMode === "consolidated" ? filteredRows.find((row) => row.id === openItemId) : null;
+  const openItem = openItemId ? allRows.find((row) => row.id === openItemId) ?? null : null;
+  const openPurchaseLot = openPurchaseLotId ? purchaseLines.find((line) => line.id === openPurchaseLotId) ?? null : null;
   const filteredPreparationItems = useMemo(() => {
     const normalizedQuery = normalizeSearch(preparationQuery);
     const today = new Date();
@@ -938,19 +970,23 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                 {showColumn("supplier") ? <th>Proveedor</th> : null}
                 {showColumn("brand") ? <th>Marca</th> : null}
                 {showColumn("lastPurchase") ? <th>Ultima compra</th> : null}
-                {showColumn("detail") ? <th>Detalle</th> : null}
+                {showColumn("detail") ? <th>{columnLabel("detail", viewMode)}</th> : null}
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((row) => {
                 const currentStatus = stockStatus(row.stock);
                 const currentExpiration = expirationStatus(row.expiration_date);
+                const presentation = presentationLabel(row.presentation_quantity, row.presentation_unit);
                 return (
                   <tr key={row.id}>
                     {showColumn("photo") ? <td>{productImage(row.image_src, row.product_name)}</td> : null}
                     {showColumn("product") ? (
                       <td>
-                        <strong>{row.product_name}</strong>
+                        <span className="inventory-product-label">
+                          <strong>{row.product_name}</strong>
+                          {presentation ? <small>{presentation}</small> : null}
+                        </span>
                       </td>
                     ) : null}
                     {showColumn("sku") ? <td>{row.sku ?? "-"}</td> : null}
@@ -985,14 +1021,26 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                     {showColumn("lastPurchase") ? <td>{dateLabel(row.last_purchase)}</td> : null}
                     {showColumn("detail") ? (
                       <td>
-                        <button
-                          className={`icon-button ${openItemId === row.id ? "active-icon-button" : ""}`}
-                          onClick={() => setOpenItemId((current) => (current === row.id ? null : row.id))}
-                          title={openItemId === row.id ? "Cerrar detalle" : "Ver detalle"}
-                          type="button"
-                        >
-                          <Eye size={16} />
-                        </button>
+                        <span className="row-actions">
+                          <button
+                            className={`icon-button ${openItemId === row.id ? "active-icon-button" : ""}`}
+                            onClick={() => setOpenItemId((current) => (current === row.id ? null : row.id))}
+                            title={openItemId === row.id ? "Cerrar detalle" : viewMode === "decentralized" ? "Ver detalle del lote" : "Ver detalle"}
+                            type="button"
+                          >
+                            <Eye size={16} />
+                          </button>
+                          {viewMode === "decentralized" ? (
+                            <button
+                              className={`icon-button ${openPurchaseLotId === row.id ? "active-icon-button" : ""}`}
+                              onClick={() => setOpenPurchaseLotId((current) => (current === row.id ? null : row.id))}
+                              title={openPurchaseLotId === row.id ? "Cerrar movimientos" : "Ver movimientos del lote"}
+                              type="button"
+                            >
+                              <History size={16} />
+                            </button>
+                          ) : null}
+                        </span>
                       </td>
                     ) : null}
                   </tr>
@@ -1009,7 +1057,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
           <div className="section-title-row">
             <div>
               <h2>{openItem.product_name}</h2>
-              <p className="muted">Detalle calculado desde compras registradas.</p>
+              <p className="muted">{viewMode === "decentralized" ? "Detalle del lote y su origen registrado." : "Detalle calculado desde compras registradas."}</p>
             </div>
             <button className="icon-button" onClick={() => setOpenItemId(null)} title="Cerrar detalle" type="button">
               <X size={16} />
@@ -1052,6 +1100,8 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
           </div>
         </section>
       ) : null}
+
+      {openPurchaseLot ? <PurchaseLotMovementDetail line={openPurchaseLot} onClose={() => setOpenPurchaseLotId(null)} onOpenPurchase={() => router.push(`/panel/compras?edit=${openPurchaseLot.purchase_id}`)} /> : null}
 
       {showSettings ? (
         <div className="modal-backdrop" role="presentation">
@@ -1764,6 +1814,58 @@ function DeleteCountButton() {
   );
 }
 
+function PurchaseLotMovementDetail({ line, onClose, onOpenPurchase }: { line: InventoryPurchaseLine; onClose: () => void; onOpenPurchase: () => void }) {
+  const purchasedQuantity = Number(line.purchased_quantity ?? line.quantity ?? 0);
+  const consumedQuantity = line.movements
+    .filter((movement) => movement.kind === "sale" || movement.kind === "production")
+    .reduce((sum, movement) => sum + Number(movement.quantity_base ?? 0), 0);
+
+  return (
+    <section className="form-panel inventory-detail-panel">
+      <div className="section-title-row">
+        <div>
+          <h2>Movimientos del lote {line.lot_code}</h2>
+          <p className="muted">{line.product_name}</p>
+        </div>
+        <span className="row-actions">
+          {!line.id.startsWith("count-") ? <button className="ghost-button" onClick={onOpenPurchase} type="button">Abrir compra</button> : null}
+          <button className="icon-button" onClick={onClose} title="Cerrar movimientos" type="button">
+            <X size={16} />
+          </button>
+        </span>
+      </div>
+      <div className="inventory-detail-grid">
+        <article className="compact-card"><small>Entrada registrada</small><strong>{formatStockQuantity(purchasedQuantity, line.unit)}</strong><span>{dateLabel(line.purchased_at)}</span></article>
+        <article className="compact-card"><small>Consumido registrado</small><strong>{formatStockQuantity(consumedQuantity, canonicalStockUnit(line.unit))}</strong><span>Pedidos y producción</span></article>
+        <article className="compact-card"><small>Stock restante</small><strong>{formatStockQuantity(line.quantity, line.unit)}</strong><span>{line.supplier_name ?? "Sin proveedor"}</span></article>
+      </div>
+      <div className="data-table-wrap">
+        <table className="data-table compact-data-table">
+          <thead>
+            <tr><th>Fecha / hora</th><th>Movimiento</th><th>Origen</th><th>Referencia</th><th>Cantidad</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{dateLabel(line.purchased_at)}</td><td><span className="stock-pill ok">Entrada</span></td><td>Compra</td><td>{line.lot_code}</td><td>{formatStockQuantity(purchasedQuantity, line.unit)}</td>
+            </tr>
+            {line.movements
+              .slice()
+              .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+              .map((movement) => (
+                <tr key={movement.id}>
+                  <td>{dateTimeLabel(movement.occurred_at)}</td>
+                  <td><span className={`stock-pill ${movement.kind === "adjustment" ? "warning" : "neutral"}`}>{movement.kind === "sale" ? "Consumo en pedido" : movement.kind === "production" ? "Consumo en producción" : "Ajuste físico"}</span></td>
+                  <td>{movement.detail}</td><td><strong>{movement.reference}</strong></td><td>{formatStockQuantity(movement.quantity_base, movement.base_unit)}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+        {line.movements.length === 0 ? <p className="muted">No hay salidas ni ajustes vinculados a este lote.</p> : null}
+      </div>
+    </section>
+  );
+}
+
 function ProductionInventorySection({
   filteredItems,
   filteredLots,
@@ -1806,6 +1908,14 @@ function ProductionInventorySection({
   showProductionColumn: (column: ProductionColumnKey) => boolean;
 }) {
   const isConsolidated = productionViewMode === "consolidated";
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [selectedLotView, setSelectedLotView] = useState<"detail" | "trace">("detail");
+  const selectedLot = selectedLotId ? filteredLots.find((lot) => lot.id === selectedLotId) ?? null : null;
+
+  function openLot(lot: ProductionInventoryLot, view: "detail" | "trace") {
+    setSelectedLotId(lot.id);
+    setSelectedLotView(view);
+  }
   return (
     <>
       <section className="form-panel inventory-module-panel">
@@ -1913,7 +2023,18 @@ function ProductionInventorySection({
                     {showProductionColumn("expiration") ? <td><span className={`stock-pill ${expiration.className}`}>{dateLabel(lot.expiration_date)}</span></td> : null}
                     {showProductionColumn("lots") ? <td>{lot.code}</td> : null}
                     {showProductionColumn("status") ? <td><span className={`stock-pill ${status.className}`}>{status.label}</span></td> : null}
-                    {showProductionColumn("actions") ? <td>-</td> : null}
+                    {showProductionColumn("actions") ? (
+                      <td>
+                        <span className="row-actions">
+                          <button className={`icon-button ${selectedLotId === lot.id && selectedLotView === "detail" ? "active-icon-button" : ""}`} onClick={() => openLot(lot, "detail")} title="Ver detalle del lote" type="button">
+                            <Eye size={16} />
+                          </button>
+                          <button className={`icon-button ${selectedLotId === lot.id && selectedLotView === "trace" ? "active-icon-button" : ""}`} onClick={() => openLot(lot, "trace")} title="Ver trazabilidad del consumo" type="button">
+                            <History size={16} />
+                          </button>
+                        </span>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -1923,7 +2044,82 @@ function ProductionInventorySection({
         </div>
       </section>
       {openPreparation ? <ProductionInventoryDetail item={openPreparation} onClose={() => setOpenPreparationId(null)} /> : null}
+      {selectedLot ? <ProductionLotTraceDetail lot={selectedLot} view={selectedLotView} onClose={() => setSelectedLotId(null)} /> : null}
     </>
+  );
+}
+
+function ProductionLotTraceDetail({ lot, onClose, view }: { lot: ProductionInventoryLot; onClose: () => void; view: "detail" | "trace" }) {
+  const consumedQuantity = lot.outbound_consumptions.reduce((sum, outbound) => sum + Number(outbound.quantity_base ?? 0), 0);
+  const adjustmentQuantity = lot.physical_adjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity_base ?? 0), 0);
+  const movements = [
+    { id: `entry-${lot.id}`, occurred_at: lot.elaborated_at, kind: "entry" as const, origin: "Producción", reference: lot.code, quantity_base: lot.initial_quantity_base, base_unit: lot.base_unit },
+    ...lot.outbound_consumptions.map((outbound) => ({
+      id: outbound.id,
+      occurred_at: outbound.occurred_at,
+      kind: "consumption" as const,
+      origin: outbound.kind === "sale" ? outbound.pizza_name ?? "Pedido" : "Producción",
+      reference: outbound.kind === "sale" ? outbound.order_code ?? "Pedido" : outbound.production_code ?? "Producción",
+      quantity_base: outbound.quantity_base,
+      base_unit: outbound.base_unit
+    })),
+    ...lot.physical_adjustments.map((adjustment, index) => ({
+      id: `adjustment-${adjustment.occurred_at}-${index}`,
+      occurred_at: adjustment.occurred_at,
+      kind: "adjustment" as const,
+      origin: "Conteo físico",
+      reference: "-",
+      quantity_base: adjustment.quantity_base,
+      base_unit: adjustment.base_unit
+    }))
+  ].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+
+  return (
+    <section className="form-panel inventory-detail-panel">
+      <div className="section-title-row">
+        <div>
+          <h2>{view === "trace" ? "Trazabilidad del consumo" : "Detalle del lote"} {lot.code}</h2>
+          <p className="muted">{lot.preparation_name} · Producción {lot.code}</p>
+        </div>
+        <button className="icon-button" onClick={onClose} title="Cerrar detalle" type="button"><X size={16} /></button>
+      </div>
+      <div className="inventory-detail-grid">
+        <article className="compact-card"><small>Cantidad producida</small><strong>{formatStockQuantity(lot.initial_quantity_base, lot.base_unit)}</strong><span>{dateLabel(lot.elaborated_at)}</span></article>
+        <article className="compact-card"><small>Consumida</small><strong>{formatStockQuantity(consumedQuantity, lot.base_unit)}</strong><span>{lot.outbound_consumptions.length} movimientos</span></article>
+        <article className="compact-card"><small>Restante</small><strong>{formatStockQuantity(lot.stock_base, lot.base_unit)}</strong><span>Vence {dateLabel(lot.expiration_date)}</span></article>
+      </div>
+      {view === "detail" ? (
+        <div className="inventory-detail-grid">
+          <article className="compact-card"><small>Costo total</small><strong>{formatCop(lot.total_cost_cop, { decimals: true })}</strong><span>{storageMethodLabel(lot.storage_method)}</span></article>
+          <article className="compact-card"><small>Costo unitario</small><strong>{formatCop(lot.unit_cost_cop, { decimals: true })}</strong><span>{unitLabel(lot.base_unit)}</span></article>
+          <article className="compact-card"><small>Ajustes reflejados</small><strong>{adjustmentQuantity === 0 ? "Sin ajustes" : formatStockQuantity(adjustmentQuantity, lot.base_unit)}</strong><span>Conteos físicos, si existen</span></article>
+        </div>
+      ) : null}
+      <div className="data-table-wrap">
+        <table className="data-table compact-data-table">
+          <thead><tr><th>Fecha / hora</th><th>Movimiento</th><th>Origen</th><th>Referencia</th><th>Cantidad</th></tr></thead>
+          <tbody>
+            {movements.map((movement) => (
+              <tr key={movement.id}>
+                <td>{movement.kind === "entry" ? dateLabel(movement.occurred_at) : dateTimeLabel(movement.occurred_at)}</td><td><span className={`stock-pill ${movement.kind === "entry" ? "ok" : movement.kind === "adjustment" ? "warning" : "neutral"}`}>{movement.kind === "entry" ? "Entrada" : movement.kind === "adjustment" ? "Ajuste físico" : "Consumo"}</span></td><td>{movement.origin}</td><td><strong>{movement.reference}</strong></td><td>{formatStockQuantity(movement.quantity_base, movement.base_unit)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {lot.outbound_consumptions.length === 0 && lot.physical_adjustments.length === 0 ? <p className="muted">El lote no tiene consumos ni ajustes registrados.</p> : null}
+      </div>
+      {view === "trace" ? (
+        <div className="inventory-detail-grid production-trace-grid">
+          {lot.ingredients_consumed.map((ingredient) => (
+            <article className="compact-card" key={ingredient.id}>
+              <strong>{ingredient.source_name}</strong>
+              <span>{formatStockQuantity(ingredient.quantity_base, ingredient.base_unit)}</span>
+              {ingredient.allocations.map((allocation) => <small key={allocation.id}>{allocation.origin_label} · {formatStockQuantity(allocation.quantity_base, allocation.base_unit)}</small>)}
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

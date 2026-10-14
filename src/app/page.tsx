@@ -76,15 +76,21 @@ async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupab
 export default async function HomePage() {
   const supabase = await createServerSupabaseClient();
   const publicCatalogClient = createSupabaseAdminClient() ?? supabase;
-  const [{ data, error }, businessResult, combosResult] = await Promise.all([
+  const [{ data, error }, businessResult, combosResult, userResult, directOrdersResult] = await Promise.all([
     supabase.rpc("get_public_menu_catalog"),
     supabase.rpc("get_public_business_information"),
     publicCatalogClient
       .from("combo_configs")
       .select("id, sku, name, description, image_url, sale_price_cop, is_active, starts_at, ends_at, sort_order, combo_variants(id, name, sale_price_cop, sort_order, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active, sort_order, pizza_flavors(id, name, image_url), inventory_items(id, name, image_url, sale_price_cop, sale_is_enabled))))")
       .eq("is_active", true)
-      .order("sort_order", { ascending: true })
+      .order("sort_order", { ascending: true }),
+    supabase.auth.getUser(),
+    supabase.from("site_settings").select("public_direct_ordering_enabled").eq("id", true).maybeSingle()
   ]);
+  const user = userResult.data.user;
+  const profileResult = user
+    ? await supabase.from("profiles").select("full_name, phone, account_type, is_active").eq("id", user.id).maybeSingle()
+    : { data: null };
   // The storefront remains available while its public catalog migration is pending.
   // This avoids exposing a server implementation error to visitors.
   const catalogUnavailable = Boolean(error && /get_public_menu_catalog/i.test(error.message));
@@ -158,5 +164,14 @@ export default async function HomePage() {
   }
   const signed = new Map(await Promise.all([...imagePaths].map(async (path) => [path, await signedImage(supabase, path)] as const)));
   const withSignedImage = <T extends { image_url: string | null }>(items: T[]) => items.map((item) => ({ ...item, image_url: item.image_url ? signed.get(item.image_url) ?? null : null }));
-  return <PublicStorefront catalog={{ ...catalog, combos, pizzas: withSignedImage(catalog.pizzas), products: withSignedImage(catalog.products), additions: withSignedImage(catalog.additions), promotions: withSignedImage(catalog.promotions) }} catalogUnavailable={catalogUnavailable} />;
+  const customer = user && profileResult.data?.account_type === "client" && profileResult.data.is_active !== false
+    ? {
+        id: user.id,
+        full_name: profileResult.data.full_name ?? user.user_metadata.full_name ?? "",
+        phone: profileResult.data.phone ?? user.user_metadata.phone ?? "",
+        email: user.email ?? ""
+      }
+    : null;
+
+  return <PublicStorefront catalog={{ ...catalog, combos, pizzas: withSignedImage(catalog.pizzas), products: withSignedImage(catalog.products), additions: withSignedImage(catalog.additions), promotions: withSignedImage(catalog.promotions) }} catalogUnavailable={catalogUnavailable} customer={customer} directOrderingEnabled={Boolean(directOrdersResult.data?.public_direct_ordering_enabled)} />;
 }
