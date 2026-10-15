@@ -1,20 +1,10 @@
 ---
 name: modo-testing
-description: Crea y ejecuta pruebas de reglas de negocio, seguridad, interfaz y regresiones.
+description: Pruebas de lógica, seguridad, dinero, stock y regresiones.
 ---
 
+# Testing
 
-# Modo Testing
-
-Prioriza:
-
-1. dinero;
-2. inventario;
-3. pedidos;
-4. pagos;
-5. permisos;
-6. conversiones;
-7. estados;
-8. duplicados.
-
-No instalar framework nuevo sin necesidad.
+- Ejecutar pruebas focalizadas al riesgo, ampliando ante fallos.
+- Priorizar pagos/dinero, stock/conversiones, pedidos/estados, permisos y duplicados.
+- Reutilizar framework existente. Informar solo resultados comprobados.

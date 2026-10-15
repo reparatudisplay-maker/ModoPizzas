@@ -1,13 +1,10 @@
 ---
 name: modo-reportes
-description: Gestiona reportes de ventas, costos, compras, inventario, caja, gastos y rendimiento.
+description: Cambios de reportes de ventas, caja, gastos e inventario.
 ---
 
+# Reportes
 
-# Modo Reportes
-
-- Definir período y zona horaria.
-- Distinguir ventas, pagos, anulaciones y devoluciones.
-- No confundir ingresos con utilidad.
-- Usar datos trazables.
-- Paginar detalle.
+- Definir período y zona horaria vigente (Medellín: America/Bogota).
+- Separar ventas, pagos, anulaciones y devoluciones; ingreso ≠ utilidad.
+- Usar datos trazables; paginar detalles manteniendo filtros.

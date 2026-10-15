@@ -1,15 +1,11 @@
 ---
 name: modo-pedidos
-description: Implementa y revisa creación, edición, confirmación, estados y prevención de duplicados en pedidos.
+description: Crear, editar o cambiar estados, precios y totales de pedidos.
 ---
 
+# Pedidos
 
-# Modo Pedidos
-
-- Mostrar producto, tamaño, sabor, cantidad, cambios, precio y subtotal.
-- Actualizar total inmediatamente.
-- Diferenciar local, recoger y domicilio.
-- Evitar doble envío.
-- Conservar pedido ante errores recuperables.
-- Confirmar con identificador.
-- Validar transiciones de estado.
+- Mostrar producto, tamaño, sabor, cantidad, modificaciones, precio y subtotal; recalcular total.
+- Distinguir local, recoger y domicilio según flujo vigente.
+- Evitar duplicados; preservar borrador tras error y devolver identificador.
+- Validar transiciones e integración con caja, cocina e inventario; no recalcular importes históricos.

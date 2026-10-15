@@ -205,7 +205,7 @@ function columnLabel(column: ColumnKey, mode: ViewMode) {
     stock: "Stock actual",
     unit: "Unidad",
     cost: "Costo promedio",
-    unitPrice: "Precio unitario",
+    unitPrice: "Costo unitario",
     inventoryValue: mode === "consolidated" ? "Valor inventario" : "Costo del lote",
     status: "Estado",
     expiration: "Vencimiento mas proximo",
@@ -357,18 +357,17 @@ function productImage(src: string | null, name: string) {
 }
 
 function unitPriceForLine(line: InventoryPurchaseLine) {
-  const purchasedQuantity = Number(line.initial_quantity ?? line.quantity ?? 0);
-  const packagePurchase = Boolean(line.presentation_quantity && line.presentation_unit && Number(line.presentation_quantity) !== purchasedQuantity);
-  if (packagePurchase) return { value: purchasedQuantity > 0 ? line.line_total_cop / purchasedQuantity : 0, unit: "PAQUETE" };
+  const canonicalUnit = canonicalStockUnit(line.unit);
+  const conversionFactor = line.unit === "kg" || line.unit === "l" ? 1000 : 1;
 
-  const sourceUnit = line.presentation_unit ?? line.unit;
-  if (sourceUnit === "g") return { value: purchasedQuantity > 0 ? line.line_total_cop / (purchasedQuantity / 1000) : 0, unit: "KG" };
-  if (sourceUnit === "ml") return { value: purchasedQuantity > 0 ? line.line_total_cop / (purchasedQuantity / 1000) : 0, unit: "L" };
-  return { value: purchasedQuantity > 0 ? line.line_total_cop / purchasedQuantity : 0, unit: unitLabel(sourceUnit) };
+  return {
+    value: Number(line.unit_cost_cop ?? 0) / conversionFactor,
+    unit: unitLabel(canonicalUnit)
+  };
 }
 
 function formatUnitPrice(value: number, unit: string) {
-  return `${formatCop(value)} / ${unit}`;
+  return `${formatCop(value, { decimals: true })} / ${unit}`;
 }
 
 function presentationLabel(quantity: number | null, unit: StockUnit | null) {
@@ -615,8 +614,8 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
         image_src: line.image_src,
         item_kind: line.item_kind,
         unit: line.unit,
-        presentation_quantity: line.presentation_quantity,
-        presentation_unit: line.presentation_unit,
+        presentation_quantity: line.product_presentation_quantity ?? line.presentation_quantity,
+        presentation_unit: line.product_presentation_unit ?? line.presentation_unit,
         stock: line.quantity,
         average_cost: line.unit_cost_cop,
         purchase_price: line.unit_cost_cop,
@@ -962,7 +961,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                 {showColumn("stock") ? <th>Stock actual</th> : null}
                 {showColumn("unit") ? <th>Unidad</th> : null}
                 {showColumn("cost") ? <th>{columnLabel("cost", viewMode)}</th> : null}
-                {showColumn("unitPrice") ? <th>Precio unitario</th> : null}
+                {showColumn("unitPrice") ? <th>{columnLabel("unitPrice", viewMode)}</th> : null}
                 {showColumn("inventoryValue") ? <th>{columnLabel("inventoryValue", viewMode)}</th> : null}
                 {showColumn("status") ? <th>Estado</th> : null}
                 {showColumn("expiration") ? <th>Vencimiento</th> : null}
@@ -1070,7 +1069,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                   <th>Fecha compra</th>
                   <th>Lote</th>
                   <th>Cantidad</th>
-                  <th>Precio unitario</th>
+                  <th>Costo unitario</th>
                   <th>Total</th>
                   <th>Vence</th>
                   <th>Proveedor</th>

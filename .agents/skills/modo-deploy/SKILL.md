@@ -1,17 +1,10 @@
 ---
 name: modo-deploy
-description: Prepara GitHub, Vercel, variables de entorno, builds y despliegues.
+description: Cambios de build, GitHub, Vercel o despliegue de ModoPizzas.
 ---
 
+# Deploy
 
-# Modo Deploy
-
-No ejecutar acciones remotas sin solicitud explícita.
-
-Antes de desplegar:
-
-1. revisar diff;
-2. ejecutar verificaciones;
-3. revisar variables;
-4. revisar migraciones;
-5. definir rollback.
+- Permitir comprobaciones locales pertinentes.
+- No hacer `commit`, `push`, `deploy` o cambios remotos sin permiso explícito.
+- Antes de publicar: diff, pruebas, variables, migraciones y rollback; proteger secretos.

@@ -1,14 +1,10 @@
 ---
 name: modo-caja
-description: Gestiona cobros, métodos de pago, cambio, anulaciones, devoluciones y cierres.
+description: Cambios de cobros, pagos, cambio y cierre de caja.
 ---
 
+# Caja
 
-# Modo Caja
-
-- Total, recibido y cambio visibles.
-- Evitar cobros duplicados.
-- Operaciones críticas atómicas.
-- Anulaciones trazables.
-- No borrar movimientos.
-- Mantener históricos.
+- Mostrar total, recibido y cambio.
+- Cobros atómicos e idempotentes; impedir doble registro.
+- Anulaciones/devoluciones trazables; no borrar movimientos ni histórico.

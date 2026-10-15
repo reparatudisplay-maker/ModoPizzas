@@ -1,18 +1,11 @@
 ---
 name: modo-core
-description: Coordina trabajo transversal de ModoPizzas y divide tareas grandes entre módulos especializados.
+description: Cambios de ModoPizzas que afectan varios módulos a la vez.
 ---
 
+# Core
 
-# Modo Core
-
-Úsalo cuando una tarea afecte varios módulos.
-
-## Flujo
-
-1. Mapear estado actual.
-2. Identificar módulos afectados.
-3. Cargar solo documentación necesaria.
-4. Proponer plan breve.
-5. Evitar cambios masivos.
-6. Delegar reglas específicas a otros skills.
+- Identificar flujos, contratos y módulos afectados; inspección focalizada.
+- Cargar solo Skills especializados necesarios.
+- Ordenar cambios y validaciones; preservar compatibilidad e históricos.
+- No convertir una tarea acotada en una refactorización general.

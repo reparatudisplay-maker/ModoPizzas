@@ -1,69 +1,12 @@
 ---
 name: modo-trabajo
-description: Reglas permanentes de trabajo para ModoPizzas.
+description: Criterios de alcance, comunicación y entrega en tareas de ModoPizzas.
 ---
 
-# Modo de trabajo
+# Trabajo
 
-## Comunicación
-
-- Trabaja en silencio.
-- No describas el proceso.
-- No expliques qué vas a hacer.
-- No narres los archivos que lees.
-- No envíes mensajes de progreso.
-- No repitas el contexto del proyecto.
-
-Solo interrumpe si:
-
-- necesitas una decisión funcional;
-- existe un bloqueo real;
-- una acción puede provocar pérdida de datos.
-
-## Respuesta final
-
-Al terminar responde únicamente con:
-
-- Cambios realizados.
-- Archivos modificados.
-- Migraciones aplicadas.
-- Pruebas ejecutadas.
-- Errores corregidos.
-- Pendientes reales.
-
-Mantén la respuesta breve.
-
-## Desarrollo
-
-- Reutiliza código existente.
-- No dupliques lógica.
-- Mantén una única fuente de verdad.
-- Corrige la causa raíz, no los síntomas.
-- Respeta la arquitectura existente.
-
-## Seguridad
-
-Nunca hagas:
-
-- commit
-- push
-- deploy
-
-salvo autorización explícita.
-
-## Contexto
-
-Asume continuidad del proyecto ModoPizzas.
-
-No vuelvas a explicar módulos existentes salvo que sea necesario para justificar un cambio.
-
-## Rendimiento
-
-Para cambios pequeños:
-
-- No modificar documentación.
-- No actualizar estándares.
-- No editar AGENTS.
-- No buscar archivos de configuración.
-- No realizar refactorizaciones no solicitadas.
-- Limitar la búsqueda únicamente a los archivos relacionados con la tarea.
+- Resolver con el menor cambio seguro; reutilizar código y corregir la causa raíz.
+- Buscar solo lo pertinente; ampliar si es necesario. No refactorizar ni editar docs/`AGENTS.md` en tareas pequeñas sin motivo.
+- No narrar el proceso; preguntar solo por bloqueo, decisión funcional o riesgo de datos.
+- Respuesta final breve: cambios, pruebas, migraciones y pendientes **si aplican**.
+- Sin `commit`, `push`, `deploy` ni migraciones remotas sin permiso explícito.

@@ -1,14 +1,11 @@
 ---
 name: modo-recetas
-description: Gestiona recetas, ingredientes, tamaños, sabores, unidades, costos y merma.
+description: Cambios de Preparaciones, recetas, tamaños, merma y costos.
 ---
 
+# Recetas
 
-# Modo Recetas
-
-- Centralizar conversiones g/kg y ml/l.
-- No mezclar masa y volumen sin regla explícita.
-- Evitar doble aplicación de merma.
-- Merma editable con valor esperado de 5% cuando corresponda.
-- Preservar costos históricos.
-- Verificar redondeo.
+- Preparaciones centraliza recetas base, sin duplicar módulos.
+- Reutilizar g↔kg y ml↔l; no equiparar masa y volumen sin regla.
+- Aplicar merma una sola vez; 5 % solo donde ya esté configurado.
+- Respetar cantidades por tamaño, redondeo y costos históricos congelados.

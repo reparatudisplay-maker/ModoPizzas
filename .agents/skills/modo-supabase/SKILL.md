@@ -1,17 +1,12 @@
 ---
 name: modo-supabase
-description: Gestiona migraciones, RLS, funciones SQL, tipos y acceso Supabase.
+description: Cambios de migraciones, SQL, RLS y acceso Supabase.
 ---
 
+# Supabase
 
-# Modo Supabase
-
-Consulta:
-
-- `.agents/architecture/database.md`
-- `.agents/standards/sql.md`
-
-- No aplicar remoto sin autorización.
-- No usar service role en cliente.
-- Probar acceso permitido y denegado.
-- Usar funciones SQL cuando se requiera atomicidad.
+- Si cambias esquema, consultar **si existen** `.agents/architecture/database.md` y `.agents/standards/sql.md`.
+- Migraciones versionadas y compatibles con datos históricos.
+- RLS/validación en servidor y BD; jamás `service_role` en cliente.
+- SQL/transacciones para atomicidad; probar permisos permitidos/denegados.
+- No aplicar cambios remotos sin autorización.

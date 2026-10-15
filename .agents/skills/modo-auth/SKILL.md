@@ -1,14 +1,10 @@
 ---
 name: modo-auth
-description: Gestiona usuarios, autenticación, roles, permisos, sesiones y autorización.
+description: Cambios de usuarios, login, sesiones, roles y permisos.
 ---
 
+# Auth
 
-# Modo Auth
-
-- Ocultar botones no es seguridad.
-- Autorizar también en servidor y base de datos.
-- No confiar en rol del cliente.
-- Aplicar mínimo privilegio.
-- Revisar creación, edición y eliminación de usuarios.
-- Evitar escalamiento de permisos.
+- Ocultar UI no es autorización; validar en servidor y BD/RLS.
+- No confiar en roles del cliente; aplicar mínimo privilegio.
+- Evitar escalamiento en altas, cambios y bajas de usuarios.

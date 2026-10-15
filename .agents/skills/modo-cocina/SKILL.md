@@ -1,14 +1,10 @@
 ---
 name: modo-cocina
-description: Trabaja pantalla y flujo de cocina, pedidos activos, tiempos, estados y tiempo real.
+description: Cambios de pantalla de cocina, estados, tiempos y eventos.
 ---
 
+# Cocina
 
-# Modo Cocina
-
-- Legibilidad a distancia.
-- Tiempo transcurrido visible.
-- Cantidades y modificaciones destacadas.
-- Acciones grandes.
-- Evitar información administrativa.
-- Manejar reconexión y eventos duplicados.
+- Legible a distancia: tiempos, cantidades y cambios destacados; acciones grandes.
+- Omitir información administrativa.
+- Manejar reconexión y eventos duplicados sin alterar el estado.

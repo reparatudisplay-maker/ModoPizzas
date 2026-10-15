@@ -1,13 +1,11 @@
 ---
 name: modo-compras
-description: Gestiona proveedores, compras, recepción de insumos, costos y lotes.
+description: Cambios en compras, proveedores, recepción, costos o lotes.
 ---
 
+# Compras
 
-# Modo Compras
-
-- Separar compra, recepción y pago si el modelo lo contempla.
-- Evitar recepción duplicada.
-- Registrar ingreso de inventario.
-- Preservar costos históricos.
-- Validar unidades.
+- Respetar distinción entre compra, recepción y pago donde exista.
+- Ingreso de stock trazable e idempotente; evitar recepción doble.
+- Validar unidades, conversiones, lotes, vencimientos y costos.
+- Conservar historial de compras y costos.

@@ -1,4 +1,6 @@
-# ModoPizzas — reglas permanentes para Codex
+# Reglas generales de ModoPizzas (para integrar en AGENTS.md)
+
+Proyecto: Next.js App Router, TypeScript y Supabase. Cambia solo lo necesario, reutiliza implementaciones y lee únicamente contexto pertinente. No hagas `commit`, `push`, `deploy` ni apliques migraciones remotas sin autorización explícita. No alteres datos históricos sin solicitud. Prioriza seguridad de pagos, inventario, permisos e idempotencia. Ejecuta pruebas enfocadas cuando apliquen. Responde de forma breve con cambios y pruebas; sin narración del proceso. Los detalles por módulo están en los Skills, que se activan solo cuando corresponda.
 
 Estas instrucciones aplican únicamente al repositorio ModoPizzas.
 
