@@ -12,8 +12,15 @@ import type { StockUnit } from "@/lib/units";
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
 const profileImageBucket = "profile-images";
+const purchaseInvoiceBucket = "purchase-invoices";
 const productImageMaxSize = 400 * 1024;
+const purchaseInvoiceMaxSize = 4 * 1024 * 1024;
 const productImageTypes = new Map([
+  ["image/webp", "webp"]
+]);
+const purchaseInvoiceTypes = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
   ["image/webp", "webp"]
 ]);
 
@@ -533,8 +540,7 @@ async function insertReferenceWithUniqueSku(
 }
 
 function getFormFile(formData: FormData, key: string) {
-  const value = formData.get(key);
-  return value instanceof File && value.size > 0 ? value : null;
+  return formData.getAll(key).find((value): value is File => value instanceof File && value.size > 0) ?? null;
 }
 
 function getFlavorIngredientInputs(formData: FormData) {
@@ -577,6 +583,21 @@ async function uploadProfileImage(supabase: Awaited<ReturnType<typeof createServ
 
   const path = `profiles/${userId}/${crypto.randomUUID()}.${extension}`;
   const { error } = await supabase.storage.from(profileImageBucket).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false
+  });
+  if (error) throw new Error(error.message);
+  return path;
+}
+
+async function uploadPurchaseInvoicePhoto(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File, userId: string) {
+  const extension = purchaseInvoiceTypes.get(file.type);
+  if (!extension) throw new Error("La foto de factura debe ser JPG, PNG o WEBP.");
+  if (file.size > purchaseInvoiceMaxSize) throw new Error("La foto de factura no puede superar 4 MB.");
+
+  const path = `purchases/${userId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabase.storage.from(purchaseInvoiceBucket).upload(path, file, {
     cacheControl: "3600",
     contentType: file.type,
     upsert: false
@@ -2322,6 +2343,13 @@ export async function registerPurchase(_previousState: FormActionState, formData
   const purchaseDate = getString(formData, "purchase_date");
   const transportCost = getInteger(formData, "transport_cost_cop", 0);
   const rawLines = getString(formData, "purchase_lines_json");
+  const invoicePhoto = getFormFile(formData, "invoice_photo");
+  const requestedInvoicePhotoAction = getString(formData, "invoice_photo_action");
+  const invoicePhotoAction = invoicePhoto
+    ? "replace"
+    : requestedInvoicePhotoAction === "remove"
+      ? "remove"
+      : "keep";
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
@@ -2329,6 +2357,9 @@ export async function registerPurchase(_previousState: FormActionState, formData
 
   if (!user) return { status: "error", message: "Debes iniciar sesion." };
   if (transportCost < 0) return { status: "error", message: "El domicilio no puede ser negativo." };
+  if (requestedInvoicePhotoAction === "replace" && !invoicePhoto) {
+    return { status: "error", message: "Selecciona una foto de factura para reemplazar la actual." };
+  }
 
   let submittedLines: Array<Record<string, unknown>>;
   try {
@@ -2339,7 +2370,16 @@ export async function registerPurchase(_previousState: FormActionState, formData
     return { status: "error", message: error instanceof Error ? error.message : "No se pudieron leer las líneas de la compra." };
   }
 
+  let photoWarning = "";
   try {
+    let previousInvoicePhotoPath: string | null = null;
+    if (purchaseId && invoicePhotoAction !== "keep") {
+      const { data, error } = await supabase.from("purchases").select("invoice_photo_path").eq("id", purchaseId).maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error("La compra que deseas editar no existe.");
+      previousInvoicePhotoPath = data.invoice_photo_path ?? null;
+    }
+
     const resolvedLines = [];
     for (const rawLine of submittedLines) {
       const inventoryItemId = String(rawLine.inventory_item_id ?? "");
@@ -2407,7 +2447,10 @@ export async function registerPurchase(_previousState: FormActionState, formData
         expiration_date: rawLine.expiration_date || null
       });
     }
-    const { error } = await supabase.rpc("save_purchase_with_items", {
+    const uploadedInvoicePhotoPath = invoicePhotoAction === "replace" && invoicePhoto
+      ? await uploadPurchaseInvoicePhoto(supabase, invoicePhoto, user.id)
+      : null;
+    const { data: savedPurchaseId, error } = await supabase.rpc("save_purchase_with_items", {
       p_purchase_id: purchaseId || null,
       p_supplier_id: getOptionalString(formData, "supplier_id"),
       p_notes: upperText(getOptionalString(formData, "notes")),
@@ -2415,13 +2458,33 @@ export async function registerPurchase(_previousState: FormActionState, formData
       p_transport_cost_cop: transportCost,
       p_lines: resolvedLines
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (uploadedInvoicePhotoPath) await supabase.storage.from(purchaseInvoiceBucket).remove([uploadedInvoicePhotoPath]);
+      throw new Error(error.message);
+    }
+    if (!savedPurchaseId) {
+      if (uploadedInvoicePhotoPath) await supabase.storage.from(purchaseInvoiceBucket).remove([uploadedInvoicePhotoPath]);
+      throw new Error("No se pudo identificar la compra guardada.");
+    }
+
+    if (invoicePhotoAction !== "keep") {
+      const { error: photoUpdateError } = await supabase
+        .from("purchases")
+        .update({ invoice_photo_path: invoicePhotoAction === "remove" ? null : uploadedInvoicePhotoPath })
+        .eq("id", savedPurchaseId);
+      if (photoUpdateError) {
+        if (uploadedInvoicePhotoPath) await supabase.storage.from(purchaseInvoiceBucket).remove([uploadedInvoicePhotoPath]);
+        photoWarning = " La compra se guardo, pero no fue posible asociar la foto.";
+      } else if (previousInvoicePhotoPath && previousInvoicePhotoPath !== uploadedInvoicePhotoPath) {
+        await supabase.storage.from(purchaseInvoiceBucket).remove([previousInvoicePhotoPath]);
+      }
+    }
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo guardar la compra." };
   }
 
   revalidateInventory();
-  return { status: "success", message: purchaseId ? "Compra actualizada correctamente." : "Compra registrada correctamente." };
+  return { status: "success", message: `${purchaseId ? "Compra actualizada correctamente." : "Compra registrada correctamente."}${photoWarning}` };
 }
 
 export async function deletePurchase(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -2435,8 +2498,13 @@ export async function deletePurchase(_previousState: FormActionState, formData: 
   if (!user) return { status: "error", message: "Debes iniciar sesion." };
 
   try {
+    const { data: purchase, error: purchaseError } = await supabase.from("purchases").select("invoice_photo_path").eq("id", purchaseId).maybeSingle();
+    if (purchaseError && !purchaseError.message.includes("invoice_photo_path")) {
+      return { status: "error", message: purchaseError.message };
+    }
     const { error } = await supabase.rpc("delete_purchase_safely", { p_purchase_id: purchaseId });
     if (error) return { status: "error", message: error.message };
+    if (!purchaseError && purchase?.invoice_photo_path) await supabase.storage.from(purchaseInvoiceBucket).remove([purchase.invoice_photo_path]);
     revalidateInventory();
     return { status: "success", message: "Compra eliminada y stock revertido correctamente." };
   } catch (error) {

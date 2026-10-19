@@ -41,6 +41,7 @@ type Purchase = {
   merchandise_subtotal_cop: number | null;
   total_cop: number;
   notes: string | null;
+  invoice_photo_path: string | null;
   purchased_at: string;
   suppliers: { name: string } | null;
   brands: { name: string } | null;
@@ -239,14 +240,14 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const periodStart = getPeriodStart(periodFilter);
   const query = params.q?.trim() ?? "";
   const supabase = await createServerSupabaseClient();
-  const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "compras");
+  const { roleNames, moduleKeys } = await requirePanelAccess(supabase, "compras");
 
   const historyLimit = query || brandFilter ? 1000 : 60;
+  const purchaseSelect = "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, invoice_photo_path, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))";
+  const purchaseSelectWithoutInvoicePhoto = "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))";
   let purchasesQuery = supabase
     .from("purchases")
-    .select(
-       "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))"
-    )
+    .select(purchaseSelect)
     .order("purchased_at", { ascending: false })
     .limit(historyLimit);
 
@@ -268,10 +269,25 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     supabase.from("brands").select("id, name, is_active").eq("is_active", true).order("name"),
     purchasesQuery
   ]);
+  let purchaseData = purchasesResult.data;
+  let purchasesError = purchasesResult.error;
+  if (purchasesResult.error?.message.includes("invoice_photo_path")) {
+    let fallbackPurchasesQuery = supabase
+      .from("purchases")
+      .select(purchaseSelectWithoutInvoicePhoto)
+      .order("purchased_at", { ascending: false })
+      .limit(historyLimit);
+    if (supplierFilter) fallbackPurchasesQuery = fallbackPurchasesQuery.eq("supplier_id", supplierFilter);
+    if (periodStart) fallbackPurchasesQuery = fallbackPurchasesQuery.gte("purchased_at", periodStart);
+    const fallbackResult = await fallbackPurchasesQuery;
+    purchaseData = fallbackResult.data?.map((purchase) => ({ ...purchase, invoice_photo_path: null })) ?? null;
+    purchasesError = fallbackResult.error;
+  }
+
   const items = (itemsResult.data ?? []) as InventoryItem[];
   const suppliers = (suppliersResult.data ?? []) as Supplier[];
   const brands = (brandsResult.data ?? []) as Brand[];
-  const purchases = (purchasesResult.data ?? []) as unknown as Purchase[];
+  const purchases = (purchaseData ?? []) as unknown as Purchase[];
   const masterItems = items.filter((item) => item.presentation_quantity === null);
   const masterByKey = new Map(masterItems.map((item) => [masterKey(item), item]));
   const imagePaths = new Map<string, string | null>();
@@ -284,6 +300,15 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     })
   );
   const imageSrcById = new Map(signedImageEntries);
+  const invoicePhotoUrlByPurchaseId = new Map(
+    await Promise.all(
+      purchases.map(async (purchase) => {
+        if (!purchase.invoice_photo_path) return [purchase.id, null] as const;
+        const { data } = await supabase.storage.from("purchase-invoices").createSignedUrl(purchase.invoice_photo_path, 60 * 60);
+        return [purchase.id, data?.signedUrl ?? null] as const;
+      })
+    )
+  );
   const editPurchaseSource = purchases.find((purchase) => purchase.id === editId);
   const editPurchase: EditablePurchase | null =
     editPurchaseSource && editPurchaseSource.purchase_items.length
@@ -293,6 +318,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
           notes: editPurchaseSource.notes,
           purchase_date: new Date(editPurchaseSource.purchased_at).toISOString().slice(0, 10),
           transport_cost_cop: Number(editPurchaseSource.transport_cost_cop ?? 0),
+          invoice_photo_url: invoicePhotoUrlByPurchaseId.get(editPurchaseSource.id) ?? null,
           lines: editPurchaseSource.purchase_items.map((line) => {
             const itemRecord = line.inventory_items;
             const productName = itemRecord ? getPurchaseProduct({ ...editPurchaseSource, purchase_items: [line] }) : "";
@@ -314,7 +340,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
         }
       : null;
   const editPurchaseError = editId && !editPurchase ? "No se pudo cargar la compra seleccionada. Revisa que tenga una linea de compra y producto relacionado." : "";
-  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesResult.error;
+  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError;
   const normalizedQuery = query.toLowerCase();
   const searchedPurchases = normalizedQuery
     ? purchases.filter((purchase) =>
@@ -357,6 +383,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     return {
       id: purchase.id,
       image_src: imageItem ? imageSrcById.get(imageItem.id) ?? null : null,
+      invoice_photo_url: invoicePhotoUrlByPurchaseId.get(purchase.id) ?? null,
       sku: purchase.purchase_items.length > 1 ? `${purchase.purchase_items.length} líneas` : getPurchaseSku(purchase),
       product: purchase.purchase_items.length > 1 ? "Factura multiproducto" : productName,
       product_lines: productLines,
@@ -403,10 +430,10 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   return (
     <PanelShell
       active="compras"
+      hideHeader
       moduleKeys={moduleKeys} roleNames={roleNames}
-      subtitle="Registra compras de insumos. Esta operacion aumenta stock y recalcula costo promedio."
-      title="Compras"
-      userEmail={user.email ?? "usuario"}
+      title=""
+      userEmail=""
     >
       {error ? <p className="alert">{error.message}</p> : null}
       {editPurchaseError ? <p className="alert">{editPurchaseError}</p> : null}

@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Plus, Search, Trash2, X } from "lucide-react";
+import { Camera, ChevronDown, Plus, Search, Trash2, Upload, X, ZoomIn } from "lucide-react";
 import { registerPurchase, type FormActionState } from "@/app/admin/actions";
 import { normalizeColombianDecimalInput } from "@/lib/number-format";
 
@@ -13,10 +14,12 @@ type PurchaseMode = "total_weight" | "packages";
 type InventoryItem = { id: string; name: string; sku?: string | null; unit: StockUnit; item_kind?: PurchaseKind; purchase_mode?: PurchaseMode | null; brand_id?: string | null; presentation_quantity: number | null; presentation_unit: StockUnit | null; is_active: boolean };
 type LookupOption = { id: string; name: string; is_active: boolean };
 type EditablePurchaseLine = { inventory_item_id: string; brand_id: string | null; purchased_quantity: number; quantity: number; unit: StockUnit; presentation_quantity: number | null; presentation_unit: StockUnit | null; merchandise_total_cop: number; expiration_date: string | null };
-export type EditablePurchase = { id: string; supplier_id: string | null; notes: string | null; purchase_date: string; transport_cost_cop: number; lines: EditablePurchaseLine[] };
+export type EditablePurchase = { id: string; supplier_id: string | null; notes: string | null; purchase_date: string; transport_cost_cop: number; invoice_photo_url: string | null; lines: EditablePurchaseLine[] };
 type DraftLine = { key: string; inventory_item_id: string; brand_id: string; purchase_kind: PurchaseKind | ""; purchase_mode: PurchaseMode; quantity: string; package_content_quantity: string; presentation_unit: StockUnit; presentation_quantity: string; merchandise_total_cop: string; expiration_date: string; reference_sku: string };
 
 const initialFormActionState: FormActionState = { status: "idle", message: "" };
+const purchaseInvoicePhotoMaxSize = 4 * 1024 * 1024;
+const purchaseInvoicePhotoTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const newKey = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const moneyFormatter = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 2 });
 const formatInteger = (value: string | number) => String(value).replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -149,6 +152,84 @@ function transportAllocations(lines: DraftLine[], transportCost: number) {
   return lines.map((line, index) => { if (!subtotal || !transportCost) return 0; if (index === lines.length - 1) return transportCost - allocated; const amount = Math.floor(transportCost * (parseMoney(line.merchandise_total_cop) / subtotal)); allocated += amount; return amount; });
 }
 
+function InvoicePhotoField({ initialUrl }: { initialUrl: string | null }) {
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const hasInitialPhoto = Boolean(initialUrl);
+  const [previewUrl, setPreviewUrl] = useState(initialUrl);
+  const [photoAction, setPhotoAction] = useState<"keep" | "replace" | "remove">("keep");
+  const [error, setError] = useState("");
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
+  useEffect(() => () => {
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  function clearInputs() {
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
+  }
+
+  function chooseFile(file: File | null, source: "camera" | "upload") {
+    if (!file) return;
+    if (!purchaseInvoicePhotoTypes.has(file.type)) {
+      setError("La foto debe ser JPG, PNG o WEBP.");
+      return;
+    }
+    if (file.size > purchaseInvoicePhotoMaxSize) {
+      setError("La foto no puede superar 4 MB.");
+      return;
+    }
+    if (source === "camera" && uploadInputRef.current) uploadInputRef.current.value = "";
+    if (source === "upload" && cameraInputRef.current) cameraInputRef.current.value = "";
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(URL.createObjectURL(file));
+    setPhotoAction("replace");
+    setError("");
+  }
+
+  function removePhoto() {
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+    clearInputs();
+    setPreviewUrl(null);
+    setPhotoAction(hasInitialPhoto ? "remove" : "keep");
+    setError("");
+  }
+
+  return (
+    <div className="field purchase-invoice-photo-field">
+      <label>Foto de factura <span>(Opcional)</span></label>
+      <input name="invoice_photo_action" type="hidden" value={photoAction} />
+      <input accept="image/jpeg,image/png,image/webp" className="purchase-invoice-file-input" name="invoice_photo" onChange={(event) => chooseFile(event.target.files?.[0] ?? null, "camera")} ref={cameraInputRef} type="file" capture="environment" />
+      <input accept="image/jpeg,image/png,image/webp" className="purchase-invoice-file-input" name="invoice_photo" onChange={(event) => chooseFile(event.target.files?.[0] ?? null, "upload")} ref={uploadInputRef} type="file" />
+      <div className="purchase-invoice-photo-actions">
+        <button className="ghost-button icon-text-button" onClick={() => cameraInputRef.current?.click()} type="button"><Camera size={16} /> Tomar foto</button>
+        <button className="ghost-button icon-text-button" onClick={() => uploadInputRef.current?.click()} type="button"><Upload size={16} /> Subir imagen</button>
+      </div>
+      {previewUrl ? (
+        <div className="purchase-invoice-photo-preview">
+          <button aria-label="Ampliar foto de factura" className="purchase-invoice-photo-thumbnail" onClick={() => setIsViewerOpen(true)} type="button">
+            <Image alt="Vista previa de la factura" height={160} src={previewUrl} unoptimized width={220} />
+          </button>
+          <div>
+            <button className="ghost-button icon-text-button" onClick={() => setIsViewerOpen(true)} type="button"><ZoomIn size={16} /> Ampliar</button>
+            <button className="ghost-button danger-button icon-text-button" onClick={removePhoto} type="button"><Trash2 size={16} /> Eliminar foto</button>
+          </div>
+        </div>
+      ) : <small className="muted">JPG, PNG o WEBP. Máximo 4 MB.</small>}
+      {error ? <small className="field-error">{error}</small> : null}
+      {isViewerOpen && previewUrl ? (
+        <div className="modal-backdrop nested-modal-backdrop" role="presentation">
+          <section aria-label="Foto de factura" aria-modal="true" className="modal-panel purchase-invoice-photo-viewer" role="dialog">
+            <header className="modal-header"><div><strong>Foto de factura</strong></div><button className="icon-button" onClick={() => setIsViewerOpen(false)} title="Cerrar" type="button"><X size={18} /></button></header>
+            <Image alt="Factura de compra" height={1200} src={previewUrl} unoptimized width={900} />
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PurchaseForm({ items, suppliers, brands, editPurchase, onSaved, onCancel }: { items: InventoryItem[]; suppliers: LookupOption[]; brands: LookupOption[]; editPurchase?: EditablePurchase | null; onSaved?: () => void; onCancel?: () => void }) {
   const [state, formAction] = useActionState(registerPurchase, initialFormActionState);
   const masters = useMemo(() => items.filter((item) => item.is_active && item.presentation_quantity === null), [items]);
@@ -162,7 +243,36 @@ export function PurchaseForm({ items, suppliers, brands, editPurchase, onSaved, 
   const total = merchandiseSubtotal + transportCost;
   const duplicateIds = new Set(lines.filter((line) => line.inventory_item_id).map((line) => line.inventory_item_id).filter((id, _, all) => all.filter((value) => value === id).length > 1));
   useEffect(() => { if (state.status !== "success") return; const timeout = window.setTimeout(() => onSaved?.(), 900); return () => window.clearTimeout(timeout); }, [onSaved, state.status]);
-  return <form action={formAction} className="purchase-form-layout">{editPurchase ? <input name="purchase_id" type="hidden" value={editPurchase.id} /> : null}<input name="purchase_lines_json" type="hidden" value={JSON.stringify(lines)} /><section className="purchase-invoice-details"><div className="form-grid"><div className="field"><label>Fecha de compra</label><input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" /></div><LookupSelect emptyLabel="Sin proveedor" label="Proveedor" name="supplier_id" onChange={setSupplierId} options={suppliers} value={supplierId} /><div className="field"><label>Domicilio o transporte COP</label><input inputMode="numeric" name="transport_cost_cop" onChange={(event) => setTransport(formatInteger(event.target.value))} placeholder="$ 0" type="text" value={transport} /></div><div className="field full"><label>Notas de factura</label><input name="notes" onChange={(event) => setNotes(event.target.value.toUpperCase())} placeholder="Factura, observaciones o referencia" value={notes} /></div></div></section><section className="purchase-lines-section"><div className="section-title-row"><div><h3>Productos de la factura</h3><p className="muted">Cada línea conserva su presentación, vencimiento, marca y costo de mercancía.</p></div><button className="ghost-button icon-text-button" onClick={() => setLines((current) => [...current, emptyLine()])} type="button"><Plus size={18} /> Agregar producto</button></div><div className="purchase-lines-list">{lines.map((line, index) => <PurchaseLineEditor brands={brands} canRemove={lines.length > 1} duplicate={duplicateIds.has(line.inventory_item_id)} index={index} items={masters} key={line.key} line={line} onChange={(next) => setLines((current) => current.map((candidate) => candidate.key === line.key ? next : candidate))} onRemove={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} transportAllocation={allocations[index]} />)}</div></section><section className="purchase-cost-summary" aria-label="Resumen de costos"><span>Mercancía <b>{moneyFormatter.format(merchandiseSubtotal)}</b></span><span>Domicilio <b>{moneyFormatter.format(transportCost)}</b></span><strong>Total factura <b>{moneyFormatter.format(total)}</b></strong><small>El domicilio se reparte proporcionalmente entre las líneas al guardar.</small></section>{state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}<div className="form-actions purchase-form-actions">{editPurchase ? <button className="ghost-button" onClick={onCancel} type="button">Cancelar</button> : null}<PurchaseSubmitButton disabled={!masters.length || lines.some((line) => !line.inventory_item_id)} isEditing={Boolean(editPurchase)} /></div></form>;
+  return (
+    <form action={formAction} className="purchase-form-layout" encType="multipart/form-data">
+      {editPurchase ? <input name="purchase_id" type="hidden" value={editPurchase.id} /> : null}
+      <input name="purchase_lines_json" type="hidden" value={JSON.stringify(lines)} />
+      <section className="purchase-invoice-details">
+        <div className="form-grid">
+          <div className="field"><label>Fecha de compra</label><input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" /></div>
+          <LookupSelect emptyLabel="Sin proveedor" label="Proveedor" name="supplier_id" onChange={setSupplierId} options={suppliers} value={supplierId} />
+          <div className="field"><label>Domicilio o transporte COP</label><input inputMode="numeric" name="transport_cost_cop" onChange={(event) => setTransport(formatInteger(event.target.value))} placeholder="$ 0" type="text" value={transport} /></div>
+          <InvoicePhotoField initialUrl={editPurchase?.invoice_photo_url ?? null} />
+          <div className="field full"><label>Notas de factura</label><input name="notes" onChange={(event) => setNotes(event.target.value.toUpperCase())} placeholder="Factura, observaciones o referencia" value={notes} /></div>
+        </div>
+      </section>
+      <section className="purchase-lines-section">
+        <div className="section-title-row">
+          <div><h3>Productos de la factura</h3><p className="muted">Cada línea conserva su presentación, vencimiento, marca y costo de mercancía.</p></div>
+          <button className="ghost-button icon-text-button" onClick={() => setLines((current) => [...current, emptyLine()])} type="button"><Plus size={18} /> Agregar producto</button>
+        </div>
+        <div className="purchase-lines-list">
+          {lines.map((line, index) => <PurchaseLineEditor brands={brands} canRemove={lines.length > 1} duplicate={duplicateIds.has(line.inventory_item_id)} index={index} items={masters} key={line.key} line={line} onChange={(next) => setLines((current) => current.map((candidate) => candidate.key === line.key ? next : candidate))} onRemove={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} transportAllocation={allocations[index]} />)}
+        </div>
+      </section>
+      <section className="purchase-cost-summary" aria-label="Resumen de costos"><span>Mercancía <b>{moneyFormatter.format(merchandiseSubtotal)}</b></span><span>Domicilio <b>{moneyFormatter.format(transportCost)}</b></span><strong>Total factura <b>{moneyFormatter.format(total)}</b></strong><small>El domicilio se reparte proporcionalmente entre las líneas al guardar.</small></section>
+      {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+      <div className="form-actions purchase-form-actions">
+        {editPurchase ? <button className="ghost-button" onClick={onCancel} type="button">Cancelar</button> : null}
+        <PurchaseSubmitButton disabled={!masters.length || lines.some((line) => !line.inventory_item_id)} isEditing={Boolean(editPurchase)} />
+      </div>
+    </form>
+  );
 }
 
 function PurchaseSubmitButton({ disabled, isEditing }: { disabled: boolean; isEditing: boolean }) { const { pending } = useFormStatus(); return <button className="primary-button" disabled={disabled || pending} type="submit">{pending ? "Guardando..." : isEditing ? "Actualizar factura" : "Registrar compra"}</button>; }

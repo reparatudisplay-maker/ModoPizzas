@@ -3495,6 +3495,62 @@ a {
   padding: 14px;
 }
 
+.purchase-invoice-file-input {
+  display: none;
+}
+
+.purchase-invoice-photo-field {
+  align-content: start;
+}
+
+.purchase-invoice-photo-field > label span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.purchase-invoice-photo-actions,
+.purchase-invoice-photo-preview,
+.purchase-invoice-photo-preview > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.purchase-invoice-photo-preview {
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.purchase-invoice-photo-thumbnail {
+  display: block;
+  width: 112px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 0;
+}
+
+.purchase-invoice-photo-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 76px;
+  object-fit: cover;
+}
+
+.purchase-invoice-photo-viewer {
+  width: min(980px, 100%);
+}
+
+.purchase-invoice-photo-viewer > img {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 150px);
+  object-fit: contain;
+  background: var(--panel-strong);
+}
+
 .purchase-lines-section {
   display: grid;
   gap: 12px;

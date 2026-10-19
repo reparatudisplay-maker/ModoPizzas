@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ChevronDown, Pencil, Settings, X } from "lucide-react";
+import { ChevronDown, Eye, Pencil, Settings, X } from "lucide-react";
 import { PurchaseDeleteButton } from "@/components/purchase-delete-button";
 import { formatCop } from "@/lib/format";
 
@@ -20,6 +20,7 @@ type PurchaseLineSummary = {
 type PurchaseListRow = {
   id: string;
   image_src: string | null;
+  invoice_photo_url: string | null;
   sku: string;
   product: string;
   product_lines: PurchaseLineSummary[];
@@ -90,6 +91,7 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(readColumns);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedPurchaseIds, setExpandedPurchaseIds] = useState<Set<string>>(() => new Set());
+  const [openInvoicePhotoId, setOpenInvoicePhotoId] = useState<string | null>(null);
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -121,6 +123,7 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
   }
 
   const visibleColumnCount = allColumns.filter(showColumn).length;
+  const openInvoicePhoto = purchases.find((purchase) => purchase.id === openInvoicePhotoId) ?? null;
 
   return (
     <>
@@ -162,6 +165,11 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
                       <Link className="icon-button" href={editHref(purchase.id)} title="Editar compra">
                         <Pencil size={16} />
                       </Link>
+                      {purchase.invoice_photo_url ? (
+                        <button className="icon-button" onClick={() => setOpenInvoicePhotoId(purchase.id)} title="Ver foto de factura" type="button">
+                          <Eye size={16} />
+                        </button>
+                      ) : null}
                       {isMultiproduct ? (
                         <button
                           aria-expanded={isExpanded}
@@ -217,6 +225,18 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
         </table>
         {purchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}
       </div>
+
+      {openInvoicePhoto?.invoice_photo_url ? (
+        <div className="modal-backdrop nested-modal-backdrop" role="presentation">
+          <section aria-label="Foto de factura" aria-modal="true" className="modal-panel purchase-invoice-photo-viewer" role="dialog">
+            <header className="modal-header">
+              <div><strong>Foto de factura</strong><span>{new Date(openInvoicePhoto.purchased_at).toLocaleDateString("es-CO")}</span></div>
+              <button className="icon-button" onClick={() => setOpenInvoicePhotoId(null)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <Image alt={`Factura de ${openInvoicePhoto.product}`} height={1200} src={openInvoicePhoto.invoice_photo_url} unoptimized width={900} />
+          </section>
+        </div>
+      ) : null}
 
       {showSettings ? (
         <div className="modal-backdrop" role="presentation">
