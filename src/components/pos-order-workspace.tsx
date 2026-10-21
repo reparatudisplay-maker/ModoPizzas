@@ -762,6 +762,7 @@ export function PosOrderWorkspace({
   const platformSubtotalCop = platformSettlementEntries.reduce((sum, line) => sum + line.original_cop, 0);
   const platformCommissionCop = platformSettlementEntries.reduce((sum, line) => sum + line.commission_cop, 0);
   const platformNetExpectedCop = platformSettlementEntries.reduce((sum, line) => sum + line.net_expected_cop, 0);
+  const registrationTotalCop = platformPayment ? platformNetExpectedCop : total;
   const hasInvalidPlatformPricing = Boolean(platformPayment && platformLineDrafts.some((line) => !Number.isFinite(line.final_unit_cop) || line.final_unit_cop < 0 || line.final_cop > line.original_cop));
   const platformLinePricingPayload = platformLineDrafts.map((line) => ({
     cart_line_key: line.cart_line_key,
@@ -2341,7 +2342,7 @@ export function PosOrderWorkspace({
               <button className="icon-button" onClick={closePaymentConfirmModal} title="Cerrar" type="button"><X size={18} /></button>
             </header>
             <div className="payment-confirmation-body">
-              <div className="cash-total-display"><span>Total a registrar</span><strong>{formatCop(total)}</strong></div>
+              <div className="cash-total-display"><span>{platformPayment ? "Total esperado" : "Total a registrar"}</span><strong>{formatCop(registrationTotalCop)}</strong></div>
               <div className="payment-confirmation-method"><span>Método de pago</span><strong>{paymentLabel(paymentMethod)}</strong></div>
             </div>
             <footer className="form-actions modal-form-actions cash-payment-footer">
