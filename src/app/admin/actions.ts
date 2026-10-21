@@ -1776,13 +1776,12 @@ async function expandComboItemsForPos(
     const variant = selectedPizzaSources.sort((left, right) => Number(right.candidate.sale_price_cop ?? 0) - Number(left.candidate.sale_price_cop ?? 0))[0]?.candidate;
     if (!variant) throw new Error("Selecciona las pizzas del combo.");
     const groups = Array.isArray(variant.combo_groups) ? variant.combo_groups : [];
-    const hasSinglePizzaSlot = groups.filter((group) => group.group_kind === "pizza" && group.is_required).length === 1;
     const expectedChoices: PosComboCartChoice[] = [];
     for (const group of groups) {
       const selected = group.group_kind === "pizza"
         ? choices.filter((choice) => allGroups.some(({ group: sourceGroup }) => sourceGroup.id === choice.group_id && sourceGroup.group_kind === "pizza" && Number(sourceGroup.sort_order ?? 0) === Number(group.sort_order ?? 0)))
         : choices.filter((choice) => choice.group_id === group.id);
-      const isHalfSelection = hasSinglePizzaSlot && group.group_kind === "pizza" && Number(group.quantity_to_choose ?? 1) === 1 && selected.length === 2 && selected.every((choice) => choice.is_half === true);
+      const isHalfSelection = group.group_kind === "pizza" && Number(group.quantity_to_choose ?? 1) === 1 && selected.length === 2 && selected.every((choice) => choice.is_half === true);
       const effectiveSelectedCount = isHalfSelection ? 1 : selected.length;
       if (group.is_required && effectiveSelectedCount !== Number(group.quantity_to_choose ?? 1)) throw new Error(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
       if (!isHalfSelection && selected.length > Number(group.quantity_to_choose ?? 1)) throw new Error(`Hay demasiadas opciones en ${group.name}.`);
@@ -2384,14 +2383,14 @@ export async function registerPurchase(_previousState: FormActionState, formData
     for (const rawLine of submittedLines) {
       const inventoryItemId = String(rawLine.inventory_item_id ?? "");
       let purchaseKind = String(rawLine.purchase_kind ?? "");
-      const enteredQuantity = Number(rawLine.quantity ?? 0);
+      const enteredQuantity = parseColombianDecimal(String(rawLine.quantity ?? "")) ?? 0;
       const submittedPurchaseMode = rawLine.purchase_mode === "packages" ? "packages" : "total_weight";
-      const packageContentQuantity = Number(rawLine.package_content_quantity ?? 0);
+      const packageContentQuantity = parseColombianDecimal(String(rawLine.package_content_quantity ?? "")) ?? 0;
       const rawPresentationUnit = String(rawLine.presentation_unit ?? "unit");
       const presentationUnit = rawPresentationUnit === "g" || rawPresentationUnit === "kg" || rawPresentationUnit === "ml" || rawPresentationUnit === "l" || rawPresentationUnit === "unit"
         ? rawPresentationUnit
         : "unit";
-      const presentationQuantity = Number(rawLine.presentation_quantity ?? 0);
+      const presentationQuantity = parseColombianDecimal(String(rawLine.presentation_quantity ?? "")) ?? 0;
       const merchandiseTotal = parseColombianInteger(String(rawLine.merchandise_total_cop ?? "")) ?? 0;
       if (!inventoryItemId || enteredQuantity <= 0 || merchandiseTotal <= 0) throw new Error("Cada línea requiere producto, cantidad y valor de mercancía.");
       if (!purchaseKind) {
@@ -3189,8 +3188,10 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const cashReceivedCop = getDecimal(formData, "cash_received_cop", 0);
   const cashChangeCop = getDecimal(formData, "cash_change_cop", 0);
   const notes = getString(formData, "notes");
-  const sourceChannel = getString(formData, "source_channel") || "direct";
-  const collectionParty = getString(formData, "collection_party") || "business";
+  const saleDate = getString(formData, "sale_date");
+  const sourceChannel = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : "direct";
+  const collectionParty = paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business";
+  const platformLinePricingRaw = getString(formData, "platform_line_pricing");
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
   if (!["cash", "card", "transfer", "mixed", "pending", "rappi", "didi"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
@@ -3210,6 +3211,56 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
   if (paymentMethod === "cash" && cashReceivedCop <= 0) return { status: "error", message: "Confirma el cobro en efectivo." };
 
+  let operationalSaleAt: string | null = null;
+  if (saleDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate)) return { status: "error", message: "La fecha de venta no es válida." };
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+    if (!user) return { status: "error", message: "Tu sesión expiró. Ingresa nuevamente." };
+    const { data: adminRole, error: adminRoleError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "admin_sistema")
+      .maybeSingle();
+    if (adminRoleError) return { status: "error", message: adminRoleError.message };
+    if (!adminRole) return { status: "error", message: "Solo el Administrador del sistema puede registrar una fecha de venta manual." };
+
+    const dateParts = saleDate.split("-").map(Number);
+    const calendarDate = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
+    if (calendarDate.getUTCFullYear() !== dateParts[0] || calendarDate.getUTCMonth() !== dateParts[1] - 1 || calendarDate.getUTCDate() !== dateParts[2]) {
+      return { status: "error", message: "La fecha de venta no es válida." };
+    }
+    const nowParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Bogota",
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).formatToParts(new Date());
+    const timePart = (type: Intl.DateTimeFormatPartTypes) => nowParts.find((part) => part.type === type)?.value ?? "00";
+    const currentBogotaDate = `${timePart("year")}-${timePart("month")}-${timePart("day")}`;
+    if (saleDate !== currentBogotaDate) {
+      operationalSaleAt = new Date(`${saleDate}T${timePart("hour")}:${timePart("minute")}:${timePart("second")}-05:00`).toISOString();
+      if (new Date(operationalSaleAt).getTime() > Date.now() + 5 * 60 * 1000) return { status: "error", message: "La fecha de venta no puede estar en el futuro." };
+    }
+  }
+
+  let platformLinePricing: unknown[] = [];
+  if (collectionParty === "platform") {
+    try {
+      const parsed = JSON.parse(platformLinePricingRaw);
+      if (!Array.isArray(parsed) || parsed.length === 0) return { status: "error", message: "Revisa los precios de plataforma del pedido." };
+      platformLinePricing = parsed;
+    } catch {
+      return { status: "error", message: "Revisa los precios de plataforma del pedido." };
+    }
+  }
+
   let rpcItems = items;
   let comboSnapshots: Awaited<ReturnType<typeof expandComboItemsForPos>>["snapshots"] = [];
   try {
@@ -3220,7 +3271,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el combo." };
   }
 
-  const { data, error } = await supabase.rpc("create_pos_order_with_platform_payment", {
+  const platformPaymentArgs = {
     p_kind: kind,
     p_customer_name: upperText(customerName),
     p_customer_phone: customerPhone,
@@ -3235,7 +3286,18 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     p_items: rpcItems,
     p_cash_received_cop: paymentMethod === "cash" ? cashReceivedCop : null,
     p_cash_change_cop: paymentMethod === "cash" ? cashChangeCop : null
-  });
+  };
+  let data: unknown;
+  let error: { code?: string; message: string; details?: string | null } | null;
+  if (collectionParty === "platform") {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_platform_line_pricing", {
+      ...platformPaymentArgs,
+      p_line_pricing: platformLinePricing
+    }));
+    if (error?.code === "PGRST202") return { status: "error", message: "La edición de precios por plataforma estará disponible cuando se aplique la actualización pendiente." };
+  } else {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_platform_payment", platformPaymentArgs));
+  }
 
   if (error) {
     const errorWithDetails = error as typeof error & { details?: string | null };
@@ -3264,6 +3326,13 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error.message };
   }
   const order = data as PosOrderActionState["order"];
+  if (order?.id && operationalSaleAt) {
+    const { error: operationalDateError } = await supabase.rpc("update_pos_order_operational_date", {
+      p_order_id: order.id,
+      p_ordered_at: operationalSaleAt
+    });
+    if (operationalDateError) return { status: "error", message: `Pedido ${order.code} creado, pero no se pudo aplicar la fecha de venta: ${operationalDateError.message}` };
+  }
   if (order?.id && comboSnapshots.length > 0) {
     const { error: snapshotError } = await supabase.from("pos_order_combo_snapshots").insert(
       comboSnapshots.map((snapshot) => ({
@@ -3284,6 +3353,11 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   }
 
   revalidateInventory();
+  if (operationalSaleAt) {
+    revalidatePath("/panel/pedidos");
+    revalidatePath("/panel/caja");
+    revalidatePath("/panel/reportes");
+  }
   return {
     status: "success",
     message: "Pedido confirmado correctamente.",
@@ -4193,10 +4267,15 @@ export async function savePlatformPaymentSettings(_previousState: FormActionStat
   const supabase = await createServerSupabaseClient();
   const platform = getString(formData, "platform");
   const commissionPercent = getDecimal(formData, "commission_percent", 0);
+  const commissionTaxPercent = getDecimal(formData, "commission_tax_percent", 0);
   const fixedFeeCop = getDecimal(formData, "fixed_fee_cop", 0);
   const dueDays = Math.round(getDecimal(formData, "settlement_due_days", 7));
-  if (!["rappi", "didi"].includes(platform) || commissionPercent < 0 || commissionPercent > 100 || fixedFeeCop < 0 || dueDays < 0 || dueDays > 60) return { status: "error", message: "La configuración de plataforma no es válida." };
-  const { error } = await supabase.from("platform_payment_settings").update({ commission_percent: commissionPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() }).eq("platform", platform);
+  if (!["rappi", "didi"].includes(platform) || commissionPercent < 0 || commissionPercent > 100 || commissionTaxPercent < 0 || commissionTaxPercent > 100 || fixedFeeCop < 0 || dueDays < 0 || dueDays > 60) return { status: "error", message: "La configuración de plataforma no es válida." };
+  const settingsUpdate = { commission_percent: commissionPercent, commission_tax_percent: commissionTaxPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() };
+  let { error } = await supabase.from("platform_payment_settings").update(settingsUpdate).eq("platform", platform);
+  if (error?.code === "PGRST204") {
+    ({ error } = await supabase.from("platform_payment_settings").update({ commission_percent: commissionPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() }).eq("platform", platform));
+  }
   if (error) return { status: "error", message: error.message };
   revalidateCashAndExpenses();
   return { status: "success", message: "Configuración de plataforma guardada." };

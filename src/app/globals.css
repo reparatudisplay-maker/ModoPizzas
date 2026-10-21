@@ -4758,6 +4758,10 @@ a {
     flex-direction: column;
   }
 
+  .pos-sale-date > div {
+    grid-template-columns: 1fr;
+  }
+
   .pos-search,
   .pos-client-grid,
   .pos-category-filter {
@@ -4899,8 +4903,11 @@ a {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow: visible;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: sticky;
+  scrollbar-gutter: stable;
   top: 16px;
 }
 
@@ -4929,6 +4936,29 @@ a {
   margin: 10px 0 0;
 }
 
+.pos-sale-date {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 10px;
+}
+
+.pos-sale-date > label {
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.pos-sale-date > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.pos-sale-date input {
+  min-width: 0;
+}
+
 .pos-platform-channel span {
   color: var(--muted);
   font-size: 0.82rem;
@@ -4938,6 +4968,109 @@ a {
 .pos-platform-channel select {
   min-height: 34px;
   width: auto;
+}
+
+.pos-platform-estimate {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 10px;
+}
+
+.pos-platform-estimate h2 {
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.pos-platform-table-wrap {
+  overflow-x: auto;
+}
+
+.pos-platform-table {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  min-width: 100%;
+  width: 100%;
+}
+
+.pos-platform-table th,
+.pos-platform-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 4px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.pos-platform-table th {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.pos-platform-table td:first-child {
+  min-width: 118px;
+}
+
+.pos-platform-table td:first-child small {
+  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.pos-platform-table td:nth-child(2),
+.pos-platform-table td:nth-child(3) {
+  min-width: 128px;
+}
+
+.pos-platform-unit-input {
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  min-width: 128px;
+  overflow: hidden;
+}
+
+.pos-platform-unit-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.pos-platform-unit-input > span {
+  align-items: center;
+  background: var(--surface-muted);
+  display: flex;
+  font-size: 1rem;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
+.pos-platform-unit-input input {
+  border: 0;
+  border-radius: 0;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  min-height: 44px;
+  min-width: 0;
+  padding: 6px 4px;
+  text-align: right;
+  width: 100%;
+}
+
+.pos-platform-unit-reset {
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  min-height: 44px;
+  min-width: 36px;
+}
+
+.pos-platform-table strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .cash-platform-totals {

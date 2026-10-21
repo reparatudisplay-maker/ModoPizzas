@@ -5,7 +5,7 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -14,7 +14,6 @@ import { PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection }
 
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending" | "rappi" | "didi";
-type SourceChannel = "direct" | "rappi" | "didi";
 type DiscountType = "percentage" | "amount";
 
 type AppliedDiscount = {
@@ -97,6 +96,13 @@ export type PosPizzaBaseOption = {
   unit: StockUnit;
   is_default: boolean;
   available_quantity: number;
+};
+
+export type PosPlatformPaymentSetting = {
+  platform: "rappi" | "didi";
+  commission_percent: number;
+  fixed_fee_cop: number;
+  commission_tax_percent: number;
 };
 
 type PizzaBaseOverride = Pick<PosPizzaBaseOption, "source_kind" | "source_id">;
@@ -270,6 +276,17 @@ function initialCardScale(storageKey: string) {
   return Math.min(maxCardScale, Math.max(minCardScale, Math.round(parsed)));
 }
 
+function todayBogota() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 function cashQuickSuggestions(total: number) {
   if (total <= 0) return [];
   const denominationValues = new Set(cashDenominations);
@@ -283,6 +300,20 @@ function cashQuickSuggestions(total: number) {
   }
 
   return suggestions;
+}
+
+function allocateCopAmount(total: number, amounts: number[]) {
+  const safeTotal = Math.max(0, Math.round(total));
+  const baseTotal = amounts.reduce((sum, amount) => sum + Math.max(0, amount), 0);
+  if (baseTotal <= 0) return amounts.map(() => 0);
+  let allocated = 0;
+  return amounts.map((amount, index) => {
+    const next = index === amounts.length - 1
+      ? safeTotal - allocated
+      : Math.round(safeTotal * Math.max(0, amount) / baseTotal);
+    allocated += next;
+    return Math.max(0, next);
+  });
 }
 
 function productKey(line: Omit<CartLine, "key" | "quantity" | "signature">) {
@@ -393,13 +424,19 @@ export function PosOrderWorkspace({
   additions,
   saleProducts,
   combos,
-  baseOptions
+  baseOptions,
+  platformPaymentSettings,
+  isSystemAdmin,
+  userId
 }: {
   pizzas: PosPizzaOption[];
   additions: PosAdditionOption[];
   saleProducts: PosSaleProductOption[];
   combos: PosComboOption[];
   baseOptions: PosPizzaBaseOption[];
+  platformPaymentSettings: PosPlatformPaymentSetting[];
+  isSystemAdmin: boolean;
+  userId: string;
 }) {
   const [state, action] = useActionState(createPosOrder, initialState);
   const [tab, setTab] = useState<CatalogTab>("pizzas");
@@ -412,7 +449,9 @@ export function PosOrderWorkspace({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
-  const [sourceChannel, setSourceChannel] = useState<SourceChannel>("direct");
+  const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
+  const [saleDate, setSaleDate] = useState(todayBogota);
+  const [saleDateReady, setSaleDateReady] = useState(!isSystemAdmin);
   const [delivery, setDelivery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -456,6 +495,7 @@ export function PosOrderWorkspace({
   const router = useRouter();
   const normalizedQuery = normalizeMasterText(query);
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
+  const saleDateStorageKey = `modo-pos-sale-date:${userId}`;
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -482,6 +522,25 @@ export function PosOrderWorkspace({
     setPrintSelection(readPrintSelection());
     setPrintPreferencesReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    try {
+      const saved = window.localStorage.getItem(saleDateStorageKey);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(saved ?? "") && saved! <= todayBogota()) setSaleDate(saved!);
+    } finally {
+      setSaleDateReady(true);
+    }
+  }, [isSystemAdmin, saleDateStorageKey]);
+
+  useEffect(() => {
+    if (!isSystemAdmin || !saleDateReady) return;
+    try {
+      window.localStorage.setItem(saleDateStorageKey, saleDate);
+    } catch {
+      // The order remains usable when browser preferences are unavailable.
+    }
+  }, [isSystemAdmin, saleDate, saleDateReady, saleDateStorageKey]);
 
   useEffect(() => {
     if (!printPreferencesReady) return;
@@ -514,6 +573,7 @@ export function PosOrderWorkspace({
       setNotes("");
       setOrderKind("local");
       setPaymentMethod("cash");
+      setPlatformLineUnitPriceOverrides({ rappi: {}, didi: {} });
       setDiscount(null);
       setDiscountInput("");
       setDiscountModalOpen(false);
@@ -647,6 +707,71 @@ export function PosOrderWorkspace({
   const rawDiscountCop = discount?.type === "percentage" ? Math.round(subtotal * discount.value / 100) : discount?.amount_cop ?? 0;
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
   const total = Math.max(0, subtotal - discountCop + deliveryValue);
+  const platformPayment = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : null;
+  const platformPaymentSetting = platformPayment
+    ? platformPaymentSettings.find((setting) => setting.platform === platformPayment) ?? null
+    : null;
+  const platformLineBases = cart.map((line) => {
+    const additionsCop = line.additions.reduce((sum, addition) => sum + addition.quantity * addition.unit_price_cop, 0);
+    const componentPriceCop = line.combo_instance_id ? line.combo_component_normal_price_cop ?? line.unit_price_cop : line.unit_price_cop;
+    const comboAdjustmentCop = line.combo_is_primary ? (line.combo_price_adjustment_cop ?? 0) * line.quantity : 0;
+    return {
+      cart_line_key: line.key,
+      name: line.combo_instance_id ? `${line.combo_name ?? "Combo"}: ${line.name}` : line.name,
+      detail: line.additions.length > 0 ? line.additions.map((addition) => `${addition.quantity > 1 ? `${addition.quantity} × ` : ""}${addition.name}`).join(" · ") : null,
+      quantity: line.quantity,
+      original_cop: Math.max(0, Math.round(line.quantity * (componentPriceCop + additionsCop) + comboAdjustmentCop))
+    };
+  });
+  const platformFixedFeeAllocations = allocateCopAmount(
+    platformPaymentSetting?.fixed_fee_cop ?? 0,
+    platformLineBases.map((line) => line.original_cop)
+  );
+  const platformLineOverrides = platformPayment ? platformLineUnitPriceOverrides[platformPayment] : {};
+  const platformLineDrafts = platformLineBases.map((line, index) => {
+    const original_unit_cop = line.quantity > 0 ? Math.round(line.original_cop / line.quantity) : 0;
+    const commissionBaseCop = Math.round(
+      line.original_cop * (platformPaymentSetting?.commission_percent ?? 0) / 100 + platformFixedFeeAllocations[index]
+    );
+    const configuredCommissionCop = Math.round(
+      commissionBaseCop * (1 + (platformPaymentSetting?.commission_tax_percent ?? 0) / 100)
+    );
+    const suggestedFinalCop = Math.max(0, line.original_cop - configuredCommissionCop);
+    const suggestedFinalUnitCop = line.quantity > 0 ? Math.round(suggestedFinalCop / line.quantity) : 0;
+    const final_unit_cop = platformLineOverrides[line.cart_line_key] ?? suggestedFinalUnitCop;
+    const final_cop = Math.max(0, Math.round(final_unit_cop * line.quantity));
+    const merchant_discount_cop = line.original_cop - final_cop;
+    return {
+      ...line,
+      original_unit_cop,
+      final_unit_cop,
+      final_cop,
+      merchant_discount_cop,
+      merchant_discount_percent: line.original_cop > 0 ? merchant_discount_cop * 100 / line.original_cop : 0
+    };
+  });
+  const platformSettlementEntries = [
+    ...platformLineDrafts,
+    ...(deliveryValue > 0 ? [{ cart_line_key: "__delivery__", name: "Domicilio", detail: null, quantity: 1, original_unit_cop: deliveryValue, final_unit_cop: deliveryValue, original_cop: deliveryValue, final_cop: deliveryValue, merchant_discount_cop: 0, merchant_discount_percent: 0 }] : [])
+  ].map((line) => {
+    const commission_cop = Math.max(0, line.original_cop - line.final_cop);
+    const commission_base_cop = commission_cop;
+    const commission_tax_cop = 0;
+    return { ...line, commission_base_cop, commission_tax_cop, commission_cop, net_expected_cop: line.final_cop };
+  });
+  const platformSubtotalCop = platformSettlementEntries.reduce((sum, line) => sum + line.original_cop, 0);
+  const platformCommissionCop = platformSettlementEntries.reduce((sum, line) => sum + line.commission_cop, 0);
+  const platformNetExpectedCop = platformSettlementEntries.reduce((sum, line) => sum + line.net_expected_cop, 0);
+  const hasInvalidPlatformPricing = Boolean(platformPayment && platformLineDrafts.some((line) => !Number.isFinite(line.final_unit_cop) || line.final_unit_cop < 0 || line.final_cop > line.original_cop));
+  const platformLinePricingPayload = platformLineDrafts.map((line) => ({
+    cart_line_key: line.cart_line_key,
+    name: line.name,
+    quantity: line.quantity,
+    original_cop: line.original_cop,
+    final_cop: line.final_cop,
+    platform_subsidy_cop: 0
+  }));
+
   const parsedDiscountInput = Number(discountInput.replace(",", "."));
   const previewDiscountCop = discountType === "percentage"
     ? Math.round(subtotal * parsedDiscountInput / 100)
@@ -1273,7 +1398,7 @@ export function PosOrderWorkspace({
 
   function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
     if (cashSubmitLockRef.current) return;
-    if (cart.length === 0 || hasInvalidSaleProductPrice) return;
+    if (cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidPlatformPricing) return;
     event.preventDefault();
     setPrintNotice("");
     if (paymentMethod === "cash") {
@@ -1348,16 +1473,18 @@ export function PosOrderWorkspace({
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
         <input name="kind" type="hidden" value={orderKind} />
         <input name="payment_method" type="hidden" value={paymentMethod} />
-        <input name="source_channel" type="hidden" value={sourceChannel} />
+        <input name="source_channel" type="hidden" value={platformPayment ?? "direct"} />
         <input name="collection_party" type="hidden" value={paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business"} />
+        <input name="sale_date" type="hidden" value={isSystemAdmin ? saleDate : ""} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
-        <input name="discount_type" type="hidden" value={discount?.type ?? "none"} />
-        <input name="discount_value" type="hidden" value={discount?.value ?? 0} />
-        <input name="discount_cop" type="hidden" value={discountCop} />
+        <input name="discount_type" type="hidden" value={platformPayment ? "none" : discount?.type ?? "none"} />
+        <input name="discount_value" type="hidden" value={platformPayment ? 0 : discount?.value ?? 0} />
+        <input name="discount_cop" type="hidden" value={platformPayment ? 0 : discountCop} />
         <input name="delivery_cop" type="hidden" value={deliveryValue} />
         <input name="cash_received_cop" type="hidden" value={paymentMethod === "cash" ? cashReceivedValue : 0} />
         <input name="cash_change_cop" type="hidden" value={paymentMethod === "cash" ? cashChange : 0} />
+        <input name="platform_line_pricing" type="hidden" value={platformPayment ? JSON.stringify(platformLinePricingPayload) : ""} />
         <input name="notes" type="hidden" value={notes} />
 
         <section className="pos-catalog-panel">
@@ -1620,35 +1747,73 @@ export function PosOrderWorkspace({
           ) : null}
           <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" value={notes} />
 
-          <label className="pos-platform-channel">
-            <span>Canal del pedido</span>
-            <select onChange={(event) => setSourceChannel(event.target.value as SourceChannel)} value={sourceChannel}>
-              <option value="direct">Directo</option>
-              <option value="rappi">Rappi</option>
-              <option value="didi">DiDi</option>
-            </select>
-          </label>
           <div className="pos-payment-grid">
             {(["cash", "transfer", "mixed", "pending", "rappi", "didi"] as PaymentMethod[]).map((method) => (
               <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => {
                 setPaymentMethod(method);
-                if (method === "rappi" || method === "didi") setSourceChannel(method);
+                if (method === "rappi" || method === "didi") {
+                  setDiscount(null);
+                  setDiscountInput("");
+                  setDiscountModalOpen(false);
+                }
               }} type="button">
                 {paymentLabel(method)}
               </button>
             ))}
           </div>
-          {(paymentMethod === "rappi" || paymentMethod === "didi") ? <p className="muted">{paymentLabel(paymentMethod)} recauda esta venta. Se registrará como liquidación pendiente, no como efectivo ni transferencia del turno.</p> : null}
+          {platformPayment ? (
+            <section className="pos-platform-estimate" aria-label={`Liquidación estimada de ${paymentLabel(platformPayment)}`}>
+              <h2>Liquidación estimada</h2>
+              <div className="pos-platform-table-wrap">
+                <table className="pos-platform-table">
+                  <thead><tr><th>Producto × Cantidad</th><th>Venta unit.</th><th>Importe</th></tr></thead>
+                  <tbody>{platformSettlementEntries.map((line) => (
+                    <tr key={line.cart_line_key}>
+                      <td><strong>{line.name}</strong><small>{line.quantity} ×{line.detail ? ` · ${line.detail}` : ""}</small></td>
+                      <td>{line.cart_line_key === "__delivery__" ? <strong>{formatCop(line.final_unit_cop)}</strong> : (
+                        <div className="pos-platform-unit-input">
+                          <span aria-hidden="true">$</span>
+                          <input aria-label={`Venta unitaria de ${line.name}`} inputMode="numeric" onChange={(event) => {
+                            if (!platformPayment) return;
+                            const value = Number(event.target.value.replace(/\D/g, "") || 0);
+                            setPlatformLineUnitPriceOverrides((current) => ({
+                              ...current,
+                              [platformPayment]: { ...current[platformPayment], [line.cart_line_key]: value }
+                            }));
+                          }} value={formatInteger(line.final_unit_cop)} />
+                          <button aria-label={`Restablecer venta unitaria de ${line.name}`} className="icon-button pos-platform-unit-reset" onClick={() => {
+                            if (!platformPayment) return;
+                            setPlatformLineUnitPriceOverrides((current) => {
+                              const { [line.cart_line_key]: _removed, ...remaining } = current[platformPayment];
+                              return { ...current, [platformPayment]: remaining };
+                            });
+                          }} title="Restablecer valor sugerido" type="button"><RotateCcw size={15} /></button>
+                        </div>
+                      )}</td>
+                      <td><strong>{formatCop(line.final_cop)}</strong></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {hasInvalidPlatformPricing ? <small className="text-danger">La venta unitaria no puede superar el precio original.</small> : null}
+            </section>
+          ) : null}
 
-          <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
+          {!platformPayment ? <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
             <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}
-          </button>
+          </button> : null}
           <div className="pos-total-box">
-            {comboPriceAdjustmentCop !== 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
-            {comboPriceAdjustmentCop !== 0 ? <span className={comboPriceAdjustmentCop > 0 ? "pos-subtotal-line" : "pos-discount-line"}>{comboPriceAdjustmentCop > 0 ? "Ajuste combo" : "Descuento combo"} <strong>{comboPriceAdjustmentCop > 0 ? "+" : "-"}{formatCop(Math.abs(comboPriceAdjustmentCop))}</strong></span> : null}
-            {discount ? <span className="pos-subtotal-line">Subtotal <strong>{formatCop(subtotal)}</strong></span> : null}
-            {discount ? <span className="pos-discount-line">{discountLabel} <strong>-{formatCop(discountCop)}</strong></span> : null}
-            <span>Total <strong>{formatCop(total)}</strong></span>
+            {platformPayment ? <>
+              <span className="pos-subtotal-line">Subtotal <strong>{formatCop(platformSubtotalCop)}</strong></span>
+              <span className="pos-discount-line">Comisiones <strong>-{formatCop(platformCommissionCop)}</strong></span>
+              <span>Total esperado <strong>{formatCop(platformNetExpectedCop)}</strong></span>
+            </> : <>
+              {comboPriceAdjustmentCop !== 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
+              {comboPriceAdjustmentCop !== 0 ? <span className={comboPriceAdjustmentCop > 0 ? "pos-subtotal-line" : "pos-discount-line"}>{comboPriceAdjustmentCop > 0 ? "Ajuste combo" : "Descuento combo"} <strong>{comboPriceAdjustmentCop > 0 ? "+" : "-"}{formatCop(Math.abs(comboPriceAdjustmentCop))}</strong></span> : null}
+              {discount ? <span className="pos-subtotal-line">Subtotal <strong>{formatCop(subtotal)}</strong></span> : null}
+              {discount ? <span className="pos-discount-line">{discountLabel} <strong>-{formatCop(discountCop)}</strong></span> : null}
+              <span>Total <strong>{formatCop(total)}</strong></span>
+            </>}
           </div>
           {discount ? (
             <div className="pos-discount-actions">
@@ -1663,15 +1828,25 @@ export function PosOrderWorkspace({
           ) : null}
           {printNotice ? <p className="form-status error">{printNotice}</p> : null}
           {hasInvalidSaleProductPrice ? <p className="form-status error">Hay productos sin precio de venta configurado.</p> : null}
+          {hasInvalidPlatformPricing ? <p className="form-status error">Corrige los precios unitarios de plataforma antes de registrar el pedido.</p> : null}
           <div className="pos-final-actions">
             <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
               {customerName || customerPhone ? "Editar cliente" : "+ Agregar cliente"}
             </button>
-            <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice} />
+            <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidPlatformPricing} />
           </div>
           <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">
             <PackageSearch size={16} /> Ver consumo de inventario
           </button>
+          {isSystemAdmin ? (
+            <section className="pos-sale-date" aria-label="Fecha de venta">
+              <label htmlFor="pos-sale-date">Fecha de venta</label>
+              <div>
+                <input id="pos-sale-date" max={todayBogota()} onChange={(event) => setSaleDate(event.target.value)} type="date" value={saleDate} />
+                <button className="ghost-button" onClick={() => setSaleDate(todayBogota())} type="button">Restablecer</button>
+              </div>
+            </section>
+          ) : null}
         </aside>
       </form>
 
@@ -2858,25 +3033,30 @@ function ComboSelectorModal({
   const requiredSelectionsForSlot = (slot: typeof pizzaSlots[number]) => slotMode(slot) === "half" ? 2 : 1;
   const slotHasHalfEligibleFlavor = (slot: typeof pizzaSlots[number]) =>
     slot.choices.filter(({ option }) => option.pizza_flavor_id && pizzas.find((pizza) => pizza.flavor_id === option.pizza_flavor_id)?.allows_half_and_half).length >= 2;
-  const standalonePizzaTypeSlot = pizzaSlots.length === 1 && slotHasHalfEligibleFlavor(pizzaSlots[0])
-    ? pizzaSlots[0]
-    : null;
-  const needsPizzaTypeChoice = Boolean(
-    standalonePizzaTypeSlot
-    && (selectedChoicesBySlot[0]?.choices.length ?? 0) === 0
-    && slotModes[standalonePizzaTypeSlot.sort_order] === undefined
-  );
+  const pizzaSlotPresentation = (slot: typeof pizzaSlots[number]) =>
+    slot.choices[0]?.option.presentation?.replace(/-([0-9])/, " - $1")
+      ?? slot.name
+      ?? "esta pizza";
   const slotIsComplete = (slot: typeof pizzaSlots[number]) => {
     const count = selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length ?? 0;
     return count === requiredSelectionsForSlot(slot);
   };
+  const pendingSlot = pizzaSlots.find((slot) => !slotIsComplete(slot)) ?? null;
+  const pendingPizzaTypeSlot = pendingSlot && slotHasHalfEligibleFlavor(pendingSlot)
+    ? pendingSlot
+    : null;
+  const pendingPizzaTypePresentation = pendingPizzaTypeSlot ? pizzaSlotPresentation(pendingPizzaTypeSlot) : "esta pizza";
+  const needsPizzaTypeChoice = Boolean(
+    pendingPizzaTypeSlot
+    && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingPizzaTypeSlot.sort_order)?.choices.length ?? 0) === 0
+    && slotModes[pendingPizzaTypeSlot.sort_order] === undefined
+  );
   const appliedVariant = combo.variants
     .filter((candidate) => selectedPizzaChoices.some((choice) => choice.candidate.id === candidate.id))
     .sort((left, right) => right.sale_price_cop - left.sale_price_cop)[0] ?? null;
   const variant = combo.variants.find((candidate) => candidate.id === variantId) ?? appliedVariant;
   const includedProductGroups = (variant?.groups ?? []).filter((group) => group.group_kind === "sale_product" && group.is_required);
   const complete = pizzaSlots.every(slotIsComplete) && includedProductGroups.every((group) => (selections[group.id] ?? []).length === group.quantity_to_choose);
-  const pendingSlot = pizzaSlots.find((slot) => !slotIsComplete(slot)) ?? null;
   const selectedPizzas = selectedChoicesBySlot
     .filter(({ choices }) => choices.length > 0)
     .map(({ slot, choices }) => ({
@@ -2902,20 +3082,18 @@ function ComboSelectorModal({
     return selected.length ? selected : group.options.length === 1 ? [comboOptionLabel(group.options[0])] : [];
   });
   const minimumComboPrice = combo.variants.reduce((lowest, candidate) => Math.min(lowest, candidate.sale_price_cop), combo.sale_price_cop);
-  const totalSteps = pizzaSlots.length + 2 + Number(Boolean(standalonePizzaTypeSlot)) + pizzaSlots.filter((slot) => slotMode(slot) === "half").length;
+  const totalSteps = pizzaSlots.length + 2 + pizzaSlots.filter(slotHasHalfEligibleFlavor).length + pizzaSlots.filter((slot) => slotMode(slot) === "half").length;
   const currentStep = needsPizzaTypeChoice
     ? 2
     : pendingSlot
-    ? 2 + Number(Boolean(standalonePizzaTypeSlot)) + selectedChoicesBySlot.reduce((sum, entry) => sum + Math.min(entry.choices.length, requiredSelectionsForSlot(entry.slot)), 0)
+    ? 2 + pizzaSlots.filter((slot) => slotHasHalfEligibleFlavor(slot) && slotModes[slot.sort_order] !== undefined).length + selectedChoicesBySlot.reduce((sum, entry) => sum + Math.min(entry.choices.length, requiredSelectionsForSlot(entry.slot)), 0)
     : totalSteps;
   const stepLabel = needsPizzaTypeChoice
     ? "Elige el tipo de pizza"
     : pendingSlot
     ? slotMode(pendingSlot) === "half" && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingSlot.sort_order)?.choices.length ?? 0) === 1
-      ? `Elige el segundo sabor de ${pendingSlot.name}`
-      : pizzaSlots.length === 1
-      ? "Elige el sabor"
-      : `Elige el sabor de ${pendingSlot.name}`
+      ? `Elige el segundo sabor de la pizza: ${pizzaSlotPresentation(pendingSlot)}`
+      : `Elige el sabor de la pizza: ${pizzaSlotPresentation(pendingSlot)}`
     : "Revisa tu combo";
 
   useEffect(() => {
@@ -2931,7 +3109,7 @@ function ComboSelectorModal({
     if (selectingHalf && slot && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slotOrder)?.choices.length ?? 0) === 0) {
       setStepTransitionLabel(`el segundo sabor de ${slot.name}`);
     } else if (nextSlot) {
-      setStepTransitionLabel(nextSlot.name || "la siguiente pizza");
+      setStepTransitionLabel(`la pizza: ${pizzaSlotPresentation(nextSlot)}`);
     }
     onPizzaSelect(slotOrder, candidateVariantId, groupId, optionId, selectingHalf);
   }
@@ -2964,16 +3142,16 @@ function ComboSelectorModal({
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
         <div className="pos-wizard-body pos-combo-wizard-body">
-          {needsPizzaTypeChoice && standalonePizzaTypeSlot ? <div className="pos-combo-catalog pos-combo-type-choice">
+          {needsPizzaTypeChoice && pendingPizzaTypeSlot ? <div className="pos-combo-catalog pos-combo-type-choice">
             <WizardStep title="Elige el tipo de pizza">
-              <p className="field-hint">Define primero c&oacute;mo quieres tu pizza grande.</p>
+              <p className="field-hint">Define c&oacute;mo quieres la pizza: <strong>{pendingPizzaTypePresentation}</strong>.</p>
               <div className="pos-option-grid">
-                <button className="pos-type-card" onClick={() => changeSlotMode(standalonePizzaTypeSlot, "whole")} type="button">
+                <button className="pos-type-card" onClick={() => changeSlotMode(pendingPizzaTypeSlot, "whole")} type="button">
                   <span className="pizza-type-illustration whole" />
                   <strong>Pizza entera</strong>
                   <span>Desde {formatCop(minimumComboPrice)}</span>
                 </button>
-                <button className="pos-type-card" onClick={() => changeSlotMode(standalonePizzaTypeSlot, "half")} type="button">
+                <button className="pos-type-card" onClick={() => changeSlotMode(pendingPizzaTypeSlot, "half")} type="button">
                   <span className="pizza-type-illustration half" />
                   <strong>Mitad y mitad</strong>
                   <span>Precio del sabor mayor</span>
@@ -2981,7 +3159,7 @@ function ComboSelectorModal({
               </div>
             </WizardStep>
           </div> : pendingSlot ? <div className="pos-combo-catalog">
-            <WizardStep onBack={standalonePizzaTypeSlot ? () => resetPizzaType(standalonePizzaTypeSlot) : undefined} title={stepLabel}>
+            <WizardStep onBack={slotHasHalfEligibleFlavor(pendingSlot) ? () => resetPizzaType(pendingSlot) : undefined} title={stepLabel}>
               {stepTransitionLabel ? <p aria-live="polite" className="pos-combo-next-pizza-notice" role="status">Ahora elige <strong>{stepTransitionLabel}</strong></p> : null}
               <p className="field-hint">Todos los sabores disponibles.</p>
               <div className={stepTransitionLabel ? "pos-combo-flavor-grid is-advancing" : "pos-combo-flavor-grid"}>

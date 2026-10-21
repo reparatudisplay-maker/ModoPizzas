@@ -4,7 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import { reconcilePlatformReceivableAction, registerPlatformSettlementAction, savePlatformPaymentSettings, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 
-type Setting = { platform: "rappi" | "didi"; commission_percent: number; fixed_fee_cop: number; settlement_due_days: number };
+type Setting = { platform: "rappi" | "didi"; commission_percent: number; fixed_fee_cop: number; commission_tax_percent: number; settlement_due_days: number };
 export type PlatformReceivableRow = { id: string; platform: "rappi" | "didi"; gross_cop: number; estimated_commission_cop: number; net_expected_cop: number; settled_gross_cop: number; settled_net_cop: number; due_at: string; status: string; order_code: string };
 const idle: FormActionState = { status: "idle", message: "" };
 
@@ -47,7 +47,7 @@ export function PlatformSettlementsModule({ settings, receivables }: { settings:
 
 function PlatformSettingCard({ setting }: { setting: Setting }) {
   const [state, action] = useActionState(savePlatformPaymentSettings, idle);
-  return <form action={action} className="form-panel compact-card"><input name="platform" type="hidden" value={setting.platform} /><h2>{setting.platform === "rappi" ? "Rappi" : "DiDi"}</h2><div className="form-grid"><label className="field"><span>Comisión %</span><input defaultValue={setting.commission_percent} inputMode="decimal" name="commission_percent" required /></label><label className="field"><span>Cargo fijo</span><input defaultValue={setting.fixed_fee_cop} inputMode="numeric" name="fixed_fee_cop" required /></label><label className="field"><span>Pago esperado (días)</span><input defaultValue={setting.settlement_due_days} inputMode="numeric" name="settlement_due_days" required /></label></div>{state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}<button className="ghost-button" type="submit">Guardar</button></form>;
+  return <form action={action} className="form-panel compact-card"><input name="platform" type="hidden" value={setting.platform} /><h2>{setting.platform === "rappi" ? "Rappi" : "DiDi"}</h2><div className="form-grid"><label className="field"><span>Comisión %</span><input defaultValue={setting.commission_percent} inputMode="decimal" name="commission_percent" required /></label><label className="field"><span>IVA sobre comisión %</span><input defaultValue={setting.commission_tax_percent} inputMode="decimal" name="commission_tax_percent" required /></label><label className="field"><span>Cargo fijo</span><input defaultValue={setting.fixed_fee_cop} inputMode="numeric" name="fixed_fee_cop" required /></label><label className="field"><span>Pago esperado (días)</span><input defaultValue={setting.settlement_due_days} inputMode="numeric" name="settlement_due_days" required /></label></div>{state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}<button className="ghost-button" type="submit">Guardar</button></form>;
 }
 
 function ReconcileButton({ receivableId }: { receivableId: string }) {

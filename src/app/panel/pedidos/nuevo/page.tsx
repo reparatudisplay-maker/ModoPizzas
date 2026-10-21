@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosPizzaBaseOption, type PosPizzaOption, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -91,6 +91,13 @@ type PizzaBaseOptionRow = {
   available_quantity: number;
 };
 
+type PlatformPaymentSettingRow = {
+  platform: "rappi" | "didi";
+  commission_percent: number | string;
+  fixed_fee_cop: number | string;
+  commission_tax_percent: number | string | null;
+};
+
 type ComboRow = {
   id: string;
   sku: string;
@@ -149,7 +156,8 @@ export default async function NuevoPedidoPage() {
     additionsResult,
     saleProductsResult,
     combosResult,
-    baseOptionsResult
+    baseOptionsResult,
+    platformPaymentSettingsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -180,7 +188,11 @@ export default async function NuevoPedidoPage() {
       .select("id, sku, name, description, image_url, sale_price_cop, combo_variants(id, name, sale_price_cop, sort_order, is_active, combo_groups(id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active, sort_order, pizza_flavors(id, name, image_url), inventory_items(id, name, image_url, sale_price_cop, sale_is_enabled))))")
       .eq("is_active", true)
       .order("sort_order", { ascending: true }),
-    supabase.rpc("get_pos_pizza_base_options")
+    supabase.rpc("get_pos_pizza_base_options"),
+    supabase
+      .from("platform_payment_settings")
+      .select("platform, commission_percent, fixed_fee_cop, commission_tax_percent")
+      .order("platform")
   ]);
 
   const error =
@@ -191,7 +203,8 @@ export default async function NuevoPedidoPage() {
     additionsResult.error ??
     saleProductsResult.error ??
     combosResult.error ??
-    baseOptionsResult.error;
+    baseOptionsResult.error ??
+    platformPaymentSettingsResult.error;
 
   const signedImageCache = new Map<string, Promise<string | null>>();
   function signedCachedImage(path: string | null) {
@@ -319,7 +332,12 @@ export default async function NuevoPedidoPage() {
     is_default: option.is_default,
     available_quantity: Number(option.available_quantity)
   }));
-
+  const platformPaymentSettings: PosPlatformPaymentSetting[] = ((platformPaymentSettingsResult.data ?? []) as PlatformPaymentSettingRow[]).map((setting) => ({
+    platform: setting.platform,
+    commission_percent: Number(setting.commission_percent ?? 0),
+    fixed_fee_cop: Number(setting.fixed_fee_cop ?? 0),
+    commission_tax_percent: Number(setting.commission_tax_percent ?? 0)
+  }));
   const priceByFlavorAndSize = new Map<string, { price_config_id: string; sale_price_cop: number }>();
   const flavorImageById = new Map(pizzas.map((pizza) => [pizza.flavor_id, pizza.image_src]));
   const sizeNameById = new Map(sizeRows.map((size) => [size.id, size.name]));
@@ -407,7 +425,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} combos={combos} pizzas={pizzas} saleProducts={saleProducts} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }
