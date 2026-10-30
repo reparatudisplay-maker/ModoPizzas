@@ -1,3 +1,5 @@
+import { formatColombianNumber } from "@/lib/format";
+
 export function parseColombianDecimal(value: string | null | undefined): number | null {
   const rawValue = String(value ?? "").trim();
   if (!rawValue) return null;
@@ -22,16 +24,23 @@ export function parseColombianDecimal(value: string | null | undefined): number 
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * In Colombian inputs, `17,360` can mean either 17.36 or 17,360. We never
+ * infer the latter: purchases must be confirmed when this ambiguous form is
+ * deliberately used as a decimal value.
+ */
+export function isAmbiguousColombianThousandsInput(value: string | null | undefined): boolean {
+  const rawValue = String(value ?? "").trim();
+  return /^\d{1,3}(?:,\d{3})+$/.test(rawValue);
+}
+
 export function parseColombianInteger(value: string | null | undefined): number | null {
   const parsed = parseColombianDecimal(value);
   return parsed === null ? null : Math.round(parsed);
 }
 
 export function formatColombianDecimal(value: number, maximumFractionDigits = 3) {
-  return new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits,
-    minimumFractionDigits: 0
-  }).format(value);
+  return formatColombianNumber(value, maximumFractionDigits, 0);
 }
 
 export function normalizeColombianDecimalInput(value: string, maximumFractionDigits = 3) {

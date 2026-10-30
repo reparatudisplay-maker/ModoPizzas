@@ -33,6 +33,17 @@ export type KitchenKdsItem = {
     quantity: number;
     scope_label: string | null;
   }>;
+  recipe: Array<{
+    name: string;
+    quantity: number;
+    unit: "g" | "kg" | "ml" | "l" | "unit";
+    is_base: boolean;
+    is_addition: boolean;
+    is_sauce: boolean;
+    section: "common" | "left" | "right";
+    primary_flavor: string | null;
+    secondary_flavor: string | null;
+  }>;
 };
 
 const initialState: FormActionState = { status: "idle", message: "" };
@@ -90,6 +101,10 @@ function dateLabel(value: string) {
 function additionText(addition: KitchenKdsItem["additions"][number]) {
   const scope = addition.scope_label ? ` (${addition.scope_label})` : "";
   return `+ ${addition.name} x${addition.quantity}${scope}`;
+}
+
+function quantityText(quantity: number, unit: KitchenKdsItem["recipe"][number]["unit"]) {
+  return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: unit === "unit" ? 0 : 2, minimumFractionDigits: unit === "unit" ? 0 : 2 }).format(quantity)} ${unit === "unit" ? "UND" : unit.toUpperCase()}`;
 }
 
 export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; settings: KitchenSettings }) {
@@ -203,7 +218,8 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
         name: addition.name_snapshot,
         quantity: Number(addition.quantity ?? 0),
         scope_label: addition.scope_label
-      }))
+      })),
+      recipe: []
     };
   }
 
@@ -239,6 +255,7 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
         setBoardItems((current) => (current.some((existing) => existing.id === item.id) ? current : [...current, item]));
         setNewItemIds((current) => [...current, item.id]);
         window.setTimeout(() => setNewItemIds((current) => current.filter((newId) => newId !== item.id)), 2800);
+        router.refresh();
         if (soundEnabled) {
           const played = playKitchenTone();
           if (!played) setSoundBlocked(true);
@@ -275,7 +292,8 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
           item.notes,
           item.order_notes,
           kindLabel(item.order_kind),
-          ...item.additions.map(additionText)
+          ...item.additions.map(additionText),
+          ...item.recipe.map((component) => component.name)
         ].join(" ");
         return !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
       }),
@@ -381,8 +399,9 @@ function KitchenCard({
           {item.name.includes("/") ? <small>Mitad y mitad</small> : null}
         </div>
       </div>
+      {item.recipe.length > 0 ? <KitchenRecipe recipe={item.recipe} /> : null}
       {item.notes ? <p className="kds-note">{item.notes}</p> : null}
-      {item.additions.length > 0 ? (
+      {item.additions.length > 0 && !item.recipe.some((component) => component.is_addition) ? (
         <div className="kds-additions">
           {item.additions.map((addition) => (
             <span key={addition.id}>{additionText(addition)}</span>
@@ -398,6 +417,20 @@ function KitchenCard({
       </div>
     </article>
   );
+}
+
+function KitchenRecipe({ recipe }: { recipe: KitchenKdsItem["recipe"] }) {
+  const primaryFlavor = recipe.find((component) => component.primary_flavor)?.primary_flavor;
+  const secondaryFlavor = recipe.find((component) => component.secondary_flavor)?.secondary_flavor;
+  const groups = [
+    ["Base", recipe.filter((component) => component.is_base)],
+    ["Salsa napolitana", recipe.filter((component) => component.is_sauce && !component.is_base)],
+    ["Ingredientes comunes", recipe.filter((component) => !component.is_base && !component.is_sauce && !component.is_addition && component.section === "common")],
+    [primaryFlavor ? `Mitad: ${primaryFlavor}` : "Ingredientes", recipe.filter((component) => !component.is_base && !component.is_sauce && !component.is_addition && component.section === "left")],
+    [secondaryFlavor ? `Mitad: ${secondaryFlavor}` : "Ingredientes", recipe.filter((component) => !component.is_base && !component.is_sauce && !component.is_addition && component.section === "right")],
+    ["Adiciones", recipe.filter((component) => component.is_addition)]
+  ] as const;
+  return <div className="kds-recipe" aria-label="Ingredientes y cantidades">{groups.map(([label, components]) => components.length ? <section key={label}><b>{label}</b><ul>{components.map((component, index) => <li key={`${label}-${component.name}-${index}`}><span>{component.name}</span><strong>{quantityText(component.quantity, component.unit)}</strong></li>)}</ul></section> : null)}</div>;
 }
 
 function KitchenStatusButton({ id, nextStatus, label }: { id: string; nextStatus: KitchenItemStatus; label: string }) {

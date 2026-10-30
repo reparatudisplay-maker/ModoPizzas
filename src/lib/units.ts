@@ -1,3 +1,5 @@
+import { formatColombianNumber } from "@/lib/format";
+
 export type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 
 export function unitLabel(unit: StockUnit) {
@@ -26,30 +28,23 @@ export function convertStockQuantity(quantity: number, fromUnit: StockUnit, toUn
 export function formatStockQuantity(value: number, unit: StockUnit) {
   const baseUnit = canonicalStockUnit(unit);
   const baseValue = unit === "kg" || unit === "l" ? value * 1000 : value;
-  const formatter = new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits: 3,
-    minimumFractionDigits: 0
-  });
+  const formatQuantity = (quantity: number) => formatColombianNumber(quantity, baseUnit === "unit" ? 0 : 2);
 
   if (baseUnit === "g") {
-    if (Math.abs(baseValue) < 1000) return `${formatter.format(baseValue)} G`;
-    return `${formatter.format(baseValue / 1000)} KG`;
+    if (Math.abs(baseValue) < 1000) return `${formatQuantity(baseValue)} G`;
+    return `${formatQuantity(baseValue / 1000)} KG`;
   }
 
   if (baseUnit === "ml") {
-    if (Math.abs(baseValue) < 1000) return `${formatter.format(baseValue)} ML`;
-    return `${formatter.format(baseValue / 1000)} L`;
+    if (Math.abs(baseValue) < 1000) return `${formatQuantity(baseValue)} ML`;
+    return `${formatQuantity(baseValue / 1000)} L`;
   }
 
-  return `${formatter.format(baseValue)} ${unitLabel("unit")}`;
+  return `${formatQuantity(baseValue)} ${unitLabel("unit")}`;
 }
 
 export function formatStockQuantityInUnit(value: number, unit: StockUnit) {
-  const formatter = new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits: 3,
-    minimumFractionDigits: 0
-  });
-  return `${formatter.format(value)} ${unitLabel(unit)}`;
+  return `${formatColombianNumber(value, canonicalStockUnit(unit) === "unit" ? 0 : 2)} ${unitLabel(unit)}`;
 }
 
 export function toPreferredDisplayQuantity(value: number, unit: StockUnit): { value: number; unit: StockUnit } {

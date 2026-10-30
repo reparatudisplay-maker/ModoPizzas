@@ -7,7 +7,6 @@ export type SystemModuleKey =
   | "compras"
   | "inventario"
   | "menu"
-  | "marketing"
   | "produccion"
   | "reportes"
   | "configuracion";
@@ -30,8 +29,6 @@ export type PanelActiveKey =
   | "menu-precios-combos"
   | "menu-precios-pizzas"
   | "menu-precios-productos"
-  | "marketing-pantallas"
-  | "marketing-promociones"
   | "pedidos-nuevo"
   | "pedidos-listado"
   | "gastos"
@@ -64,7 +61,6 @@ export const systemModules: SystemModuleDefinition[] = [
   { key: "compras", name: "Compras", route: "/panel/compras", icon: "ReceiptText", order: 60, active: true },
   { key: "inventario", name: "Inventario", route: "/panel/inventario", icon: "Package", order: 70, active: true },
   { key: "menu", name: "Menu", route: "/panel/menu/pizzas", icon: "Pizza", order: 80, active: true },
-  { key: "marketing", name: "Marketing", route: "/panel/marketing/pantallas", icon: "MonitorPlay", order: 90, active: true },
   { key: "produccion", name: "Produccion", route: "/panel/produccion/registrar", icon: "Factory", order: 100, active: true },
   { key: "reportes", name: "Reportes", route: "/panel/reportes", icon: "ChartNoAxesCombined", order: 105, active: true },
   { key: "configuracion", name: "Configuracion", route: "/panel/configuracion", icon: "Settings", order: 110, active: true }
@@ -88,8 +84,6 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   "menu-precios-combos": "menu",
   "menu-precios-pizzas": "menu",
   "menu-precios-productos": "menu",
-  "marketing-pantallas": "marketing",
-  "marketing-promociones": "marketing",
   "pedidos-nuevo": "pedidos",
   "pedidos-listado": "pedidos",
   gastos: "gastos",

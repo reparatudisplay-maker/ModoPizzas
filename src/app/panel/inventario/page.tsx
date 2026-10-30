@@ -77,6 +77,12 @@ type PhysicalInventoryCountRow = {
   preparations: { name: string } | null;
 };
 
+type StockReconciliationBaselineRow = {
+  source_kind: "inventory_item" | "preparation";
+  source_id: string;
+  effective_at: string;
+};
+
 type PosProductionOutboundRow = {
   id: string;
   production_batch_id: string;
@@ -198,8 +204,8 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
         const takeBase = Math.min(availableBase, pendingBase);
         const takeLineUnit = toUnit(takeBase, baseUnit, line.unit);
         const lineUnitCost = line.quantity > 0 ? line.line_total_cop / line.quantity : 0;
-        line.quantity = Number(Math.max(0, line.quantity - takeLineUnit).toFixed(3));
-        line.line_total_cop = Number(Math.max(0, line.line_total_cop - takeLineUnit * lineUnitCost).toFixed(2));
+        line.quantity = Math.max(0, line.quantity - takeLineUnit);
+        line.line_total_cop = Math.max(0, line.line_total_cop - takeLineUnit * lineUnitCost);
         line.movements = [
           ...line.movements,
           {
@@ -212,7 +218,7 @@ function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], coun
             detail: count.reason
           }
         ];
-        pendingBase = Number(Math.max(0, pendingBase - takeBase).toFixed(3));
+        pendingBase = Math.max(0, pendingBase - takeBase);
       }
       continue;
     }
@@ -256,7 +262,7 @@ export default async function InventoryPage() {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "inventario");
 
-  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult] = await Promise.all([
+  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult, reconciliationBaselinesResult] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("purchase_items")
@@ -297,7 +303,8 @@ export default async function InventoryPage() {
     supabase.from("brands").select("id, name").order("name"),
     supabase.from("suppliers").select("id, name").order("name"),
     supabase.from("product_categories").select("id, name").order("name"),
-    supabase.from("profiles").select("id, full_name, email")
+    supabase.from("profiles").select("id, full_name, email"),
+    supabase.from("inventory_stock_reconciliation_baselines").select("source_kind, source_id, effective_at")
   ]);
 
   const error =
@@ -309,13 +316,15 @@ export default async function InventoryPage() {
     brandsResult.error ??
     suppliersResult.error ??
     categoriesResult.error ??
-    profilesResult.error;
+    profilesResult.error ??
+    reconciliationBaselinesResult.error;
   const purchaseLines = (purchaseLinesResult.data ?? []) as unknown as PurchaseLineRow[];
   const purchaseAllocations = [
     ...((purchaseAllocationsResult.data ?? []) as unknown as PurchaseAllocationRow[]),
     ...((posPurchaseAllocationsResult.data ?? []) as unknown as PurchaseAllocationRow[])
   ];
   const physicalCounts = (physicalCountsResult.data ?? []) as unknown as PhysicalInventoryCountRow[];
+  const reconciliationBaselines = (reconciliationBaselinesResult.data ?? []) as StockReconciliationBaselineRow[];
   const masterItems = (masterItemsResult.data ?? []) as Array<{ id: string; name: string; image_url: string | null; item_kind: ItemKind | null }>;
   const brands = brandsResult.data ?? [];
   const suppliers = suppliersResult.data ?? [];
@@ -505,6 +514,7 @@ export default async function InventoryPage() {
     purchaseMovementsByLine.set(allocation.purchase_item_id, [...(purchaseMovementsByLine.get(allocation.purchase_item_id) ?? []), movement]);
   }
 
+  const overdrawnPurchaseLineIds = new Set<string>();
   const baseLineItems: InventoryPurchaseLine[] = purchaseLines
     .filter((line) => line.inventory_items && line.purchases)
     .map((line) => {
@@ -529,10 +539,11 @@ export default async function InventoryPage() {
         }
       }
       const originalQuantity = Number(line.quantity ?? 0);
+      if (allocatedQuantity > originalQuantity) overdrawnPurchaseLineIds.add(line.id);
       const availableQuantity = Math.max(0, originalQuantity - allocatedQuantity);
       const landedTotal = Number(line.landed_total_cop ?? line.line_total_cop ?? 0);
       const unitCost = originalQuantity > 0 ? landedTotal / originalQuantity : 0;
-      const availableTotal = originalQuantity > 0 ? Number((landedTotal * availableQuantity / originalQuantity).toFixed(2)) : 0;
+      const availableTotal = originalQuantity > 0 ? landedTotal * availableQuantity / originalQuantity : 0;
       return {
         id: line.id,
         purchase_id: line.purchase_id,
@@ -563,6 +574,37 @@ export default async function InventoryPage() {
       };
     });
   const lineItems = applyPhysicalCountsToPurchaseLines(baseLineItems, physicalCounts);
+
+  for (const baseline of reconciliationBaselines.filter((row) => row.source_kind === "inventory_item")) {
+    const affectedLots = new Set(
+      baseLineItems
+        .filter((line) => line.inventory_item_id === baseline.source_id && overdrawnPurchaseLineIds.has(line.id))
+        .map((line) => line.id)
+    );
+    if (affectedLots.size === 0) continue;
+
+    const countLine = lineItems
+      .filter((line) =>
+        line.inventory_item_id === baseline.source_id &&
+        line.id.startsWith("count-") &&
+        line.purchased_at <= baseline.effective_at &&
+        line.initial_quantity > 0
+      )
+      .sort((a, b) => b.purchased_at.localeCompare(a.purchased_at))[0];
+    if (!countLine) continue;
+
+    const consumed = purchaseAllocations
+      .filter((allocation) => affectedLots.has(allocation.purchase_item_id ?? "") && allocation.created_at >= baseline.effective_at)
+      .reduce((total, allocation) => total + toUnit(Number(allocation.quantity_base ?? 0), allocation.base_unit, countLine.unit), 0);
+    if (consumed <= 0) continue;
+
+    const availableBefore = countLine.quantity;
+    const deducted = Math.min(availableBefore, consumed);
+    countLine.quantity = Math.max(0, availableBefore - deducted);
+    countLine.line_total_cop = availableBefore > 0
+      ? countLine.line_total_cop * (countLine.quantity / availableBefore)
+      : 0;
+  }
 
   const groupedItems = new Map<string, InventoryListItem>();
   for (const line of lineItems) {

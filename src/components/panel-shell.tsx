@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, MapPin, Megaphone, Menu, MonitorPlay, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, MapPin, Menu, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -159,10 +159,6 @@ const menuPriceLinks: NavLink[] = [
   { key: "menu-precios-combos", href: "/panel/menu/precios/combos", label: "Combos", icon: BadgePercent, show: canAccess("menu") },
   { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: canAccess("menu") }
 ];
-  const marketingLinks: NavLink[] = [
-    { key: "marketing-pantallas", href: "/panel/marketing/pantallas", label: "Pantallas", icon: MonitorPlay, show: canAccess("marketing") },
-    { key: "marketing-promociones", href: "/panel/marketing/promociones", label: "Promociones", icon: Megaphone, show: canAccess("marketing") }
-  ];
   const productionLinks: NavLink[] = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: canAccess("produccion") },
     { key: "produccion-preparaciones", href: "/panel/produccion", label: "Recetas", icon: ReceiptText, show: canAccess("produccion") }
@@ -189,7 +185,6 @@ const menuPriceLinks: NavLink[] = [
   const kitchenActive = kitchenLinks.some((link) => link.key === active);
   const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
   const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
-  const marketingActive = marketingLinks.some((link) => link.key === active);
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
   const reportsActive = reportLinks.some((link) => link.key === active);
   const settingsActive = adminLinks.some((link) => link.key === active);
@@ -295,7 +290,6 @@ const menuPriceLinks: NavLink[] = [
     { kind: "group", key: "kitchen", label: "Cocina", title: "Cocina", icon: ChefHat, show: canAccess("cocina"), active: kitchenActive, links: kitchenLinks },
     ...inventoryLinks.map((link) => ({ kind: "link" as const, key: link.key, link })),
     { kind: "group", key: "menu", label: "Menu", title: "Menu", icon: Pizza, show: canAccess("menu"), active: menuActive, links: [], nested: menuRootItems },
-    { kind: "group", key: "marketing", label: "Marketing", title: "Marketing", icon: MonitorPlay, show: canAccess("marketing"), active: marketingActive, links: marketingLinks },
     { kind: "group", key: "production", label: "Produccion", title: "Produccion", icon: Factory, show: canAccess("produccion"), active: productionActive, links: productionLinks },
     { kind: "group", key: "reports", label: "Reportes", title: "Reportes", icon: ChartNoAxesCombined, show: canAccess("reportes"), active: reportsActive, links: reportLinks },
     { kind: "group", key: "settings", label: "Configuracion", title: "Configuracion", icon: isAdmin ? UserCog : Settings, show: canAccess("configuracion"), active: settingsActive, links: adminLinks }

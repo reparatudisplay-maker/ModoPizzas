@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeMasterText } from "@/lib/master-normalization";
-import { parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
+import { isAmbiguousColombianThousandsInput, parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
 import { getAdjustedSourceStock } from "@/lib/inventory-stock";
 import { defaultPrintTemplate, normalizePrintTemplate, type PrintTemplate, type PrintTemplateKind } from "@/lib/print-templates";
 import type { StockUnit } from "@/lib/units";
@@ -18,6 +18,12 @@ const purchaseInvoiceMaxSize = 4 * 1024 * 1024;
 const productImageTypes = new Map([
   ["image/webp", "webp"]
 ]);
+const posPizzaImageTypes = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"]
+]);
+const posPizzaImageMaxSize = 1024 * 1024;
 const purchaseInvoiceTypes = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -567,6 +573,21 @@ async function uploadProductImage(supabase: Awaited<ReturnType<typeof createServ
   if (file.size > productImageMaxSize) throw new Error("No fue posible optimizar la imagen por debajo de 400 KB. Selecciona una imagen más pequeña.");
 
   const path = `${folder}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabase.storage.from(productImageBucket).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false
+  });
+  if (error) throw new Error(error.message);
+  return path;
+}
+
+async function uploadPosPizzaImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, file: File) {
+  const extension = posPizzaImageTypes.get(file.type);
+  if (!extension) throw new Error("La foto debe ser JPG, PNG o WEBP.");
+  if (file.size > posPizzaImageMaxSize) throw new Error("La foto no puede superar 1 MB.");
+
+  const path = `pos-pizzas/${crypto.randomUUID()}.${extension}`;
   const { error } = await supabase.storage.from(productImageBucket).upload(path, file, {
     cacheControl: "3600",
     contentType: file.type,
@@ -1300,6 +1321,40 @@ export async function savePizzaFlavor(_previousState: FormActionState, formData:
   }
   revalidateInventory();
   return { status: "success", message: "Sabor guardado correctamente." };
+}
+
+export async function savePosPizzaImage(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  await requireUserPermission(supabase, "menu.pizzas");
+
+  const flavorId = getString(formData, "flavor_id");
+  if (!flavorId) return { status: "error", message: "Selecciona una pizza." };
+
+  const { data: flavor, error: flavorError } = await supabase.from("pizza_flavors").select("pos_image_url").eq("id", flavorId).single();
+  if (flavorError || !flavor) return { status: "error", message: flavorError?.message ?? "La pizza no existe." };
+
+  const removeImage = getBoolean(formData, "remove_pos_image");
+  const imageFile = getFormFile(formData, "pos_pizza_image");
+  if (!removeImage && !imageFile) return { status: "error", message: "Selecciona una foto o indica que deseas restablecerla." };
+
+  let imageUrl: string | null = removeImage ? null : flavor.pos_image_url;
+  try {
+    if (imageFile) imageUrl = await uploadPosPizzaImage(supabase, imageFile);
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la foto." };
+  }
+
+  const { error } = await supabase.from("pizza_flavors").update({ pos_image_url: imageUrl, updated_at: new Date().toISOString() }).eq("id", flavorId);
+  if (error) {
+    if (imageFile && imageUrl) await supabase.storage.from(productImageBucket).remove([imageUrl]);
+    return { status: "error", message: error.message };
+  }
+
+  if (flavor.pos_image_url && flavor.pos_image_url !== imageUrl && flavor.pos_image_url.startsWith("pos-pizzas/")) {
+    await supabase.storage.from(productImageBucket).remove([flavor.pos_image_url]);
+  }
+  revalidatePath("/panel/pedidos/nuevo");
+  return { status: "success", message: removeImage ? "Foto interna restablecida." : "Foto interna actualizada." };
 }
 
 export async function savePizzaAddition(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -2383,7 +2438,9 @@ export async function registerPurchase(_previousState: FormActionState, formData
     for (const rawLine of submittedLines) {
       const inventoryItemId = String(rawLine.inventory_item_id ?? "");
       let purchaseKind = String(rawLine.purchase_kind ?? "");
-      const enteredQuantity = parseColombianDecimal(String(rawLine.quantity ?? "")) ?? 0;
+      const rawQuantity = String(rawLine.quantity ?? "");
+      const enteredQuantity = parseColombianDecimal(rawQuantity) ?? 0;
+      const confirmsAmbiguousQuantity = rawLine.confirm_ambiguous_quantity === true;
       const submittedPurchaseMode = rawLine.purchase_mode === "packages" ? "packages" : "total_weight";
       const packageContentQuantity = parseColombianDecimal(String(rawLine.package_content_quantity ?? "")) ?? 0;
       const rawPresentationUnit = String(rawLine.presentation_unit ?? "unit");
@@ -2391,8 +2448,11 @@ export async function registerPurchase(_previousState: FormActionState, formData
         ? rawPresentationUnit
         : "unit";
       const presentationQuantity = parseColombianDecimal(String(rawLine.presentation_quantity ?? "")) ?? 0;
-      const merchandiseTotal = parseColombianInteger(String(rawLine.merchandise_total_cop ?? "")) ?? 0;
+      const merchandiseTotal = parseColombianDecimal(String(rawLine.merchandise_total_cop ?? "")) ?? 0;
       if (!inventoryItemId || enteredQuantity <= 0 || merchandiseTotal <= 0) throw new Error("Cada línea requiere producto, cantidad y valor de mercancía.");
+      if (isAmbiguousColombianThousandsInput(rawQuantity) && !confirmsAmbiguousQuantity) {
+        throw new Error(`La cantidad \"${rawQuantity}\" es ambigua. Usa punto para miles (por ejemplo, 17.360) o confirma que deseas registrar ${enteredQuantity} como valor decimal.`);
+      }
       if (!purchaseKind) {
         const { data: selectedItem, error } = await supabase.from("inventory_items").select("item_kind").eq("id", inventoryItemId).single();
         if (error) throw new Error(error.message);
@@ -2442,7 +2502,7 @@ export async function registerPurchase(_previousState: FormActionState, formData
         presentation_unit: itemPurchaseMode === "packages"
           ? normalizedPresentation.unit
           : purchaseKind === "ingredient" && targetUnit !== "unit" ? presentationUnit : normalizedPresentation.quantity > 0 ? normalizedPresentation.unit : null,
-        merchandise_total_cop: Math.round(merchandiseTotal),
+        merchandise_total_cop: merchandiseTotal,
         expiration_date: rawLine.expiration_date || null
       });
     }
@@ -4228,30 +4288,6 @@ export async function sendPasswordRecovery(_previousState: FormActionState, form
   return { status: "success", message: "Recuperacion enviada correctamente." };
 }
 
-function getJsonValue<T>(formData: FormData, key: string, fallback: T): T {
-  const rawValue = getString(formData, key);
-  if (!rawValue) return fallback;
-  try {
-    return JSON.parse(rawValue) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function marketingStatus(value: string) {
-  return ["draft", "active", "archived"].includes(value) ? value : "draft";
-}
-
-function promotionStatus(value: string) {
-  return ["draft", "active", "paused", "expired"].includes(value) ? value : "draft";
-}
-
-function revalidateMarketing() {
-  revalidatePath("/panel/marketing/pantallas");
-  revalidatePath("/panel/marketing/promociones");
-  revalidatePath("/panel/configuracion");
-}
-
 function revalidateCashAndExpenses() {
   revalidatePath("/panel/gastos");
   revalidatePath("/panel/gastos/categorias");
@@ -4467,210 +4503,6 @@ export async function closeCashSessionAction(_previousState: FormActionState, fo
   if (error) return { status: "error", message: error.message };
   revalidateCashAndExpenses();
   return { status: "success", message: "Caja cerrada correctamente." };
-}
-
-export async function saveMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const supabase = await createServerSupabaseClient();
-  const id = getOptionalString(formData, "id");
-  await requireUserPermission(supabase, id ? "marketing_pantallas.edit" : "marketing_pantallas.create");
-
-  const userResult = await supabase.auth.getUser();
-  const userId = userResult.data.user?.id ?? null;
-  const name = upperText(getString(formData, "name"));
-  const width = getInteger(formData, "width_px", 1920);
-  const height = getInteger(formData, "height_px", 1080);
-  const scenes = getJsonValue<
-    Array<{
-      id?: string;
-      name: string;
-      sort_order: number;
-      duration_seconds: number;
-      background: Record<string, unknown>;
-      transition: string;
-      elements: unknown[];
-    }>
-  >(formData, "scenes", []);
-
-  if (!name) return { status: "error", message: "Ingresa el nombre del proyecto." };
-  if (width <= 0 || height <= 0) return { status: "error", message: "La resolucion debe ser mayor a cero." };
-  if (scenes.length === 0) return { status: "error", message: "Agrega al menos una escena." };
-  if (scenes.some((scene) => Number(scene.duration_seconds) <= 0)) return { status: "error", message: "Cada escena necesita duracion mayor a cero." };
-
-  const durationTotal = scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds ?? 0), 0);
-  const payload = {
-    name,
-    resolution_preset: getString(formData, "resolution_preset") === "1280x720" ? "1280x720" : getString(formData, "resolution_preset") === "custom" ? "custom" : "1920x1080",
-    width_px: width,
-    height_px: height,
-    orientation: height > width ? "portrait" : "landscape",
-    duration_total_seconds: durationTotal,
-    status: marketingStatus(getString(formData, "status")),
-    updated_at: new Date().toISOString(),
-    updated_by: userId
-  };
-
-  const query = id
-    ? supabase.from("marketing_screen_projects").update(payload).eq("id", id).select("id").single()
-    : supabase
-        .from("marketing_screen_projects")
-        .insert({ ...payload, created_by: userId })
-        .select("id")
-        .single();
-  const { data: project, error } = await query;
-  if (error || !project) return { status: "error", message: error?.message ?? "No se pudo guardar el proyecto." };
-
-  const projectId = project.id;
-  const { error: deleteError } = await supabase.from("marketing_screen_scenes").delete().eq("project_id", projectId);
-  if (deleteError) return { status: "error", message: deleteError.message };
-
-  const rows = scenes.map((scene, index) => ({
-    project_id: projectId,
-    name: upperText(String(scene.name || `Escena ${index + 1}`)),
-    sort_order: index + 1,
-    duration_seconds: Number(scene.duration_seconds || 8),
-    background: scene.background && typeof scene.background === "object" ? scene.background : { type: "color", value: "#17120f" },
-    transition: ["cut", "fade", "slide"].includes(scene.transition) ? scene.transition : "fade",
-    elements: Array.isArray(scene.elements) ? scene.elements : []
-  }));
-  const { error: scenesError } = await supabase.from("marketing_screen_scenes").insert(rows);
-  if (scenesError) return { status: "error", message: scenesError.message };
-
-  revalidateMarketing();
-  return { status: "success", message: "Proyecto guardado correctamente." };
-}
-
-export async function duplicateMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const supabase = await createServerSupabaseClient();
-  await requireUserPermission(supabase, "marketing_pantallas.create");
-  const id = getString(formData, "id");
-  const name = upperText(getString(formData, "name"));
-  if (!id || !name) return { status: "error", message: "Selecciona un proyecto y un nuevo nombre." };
-
-  const [projectResult, scenesResult] = await Promise.all([
-    supabase.from("marketing_screen_projects").select("resolution_preset, width_px, height_px, orientation, duration_total_seconds, status, export_settings").eq("id", id).single(),
-    supabase.from("marketing_screen_scenes").select("name, sort_order, duration_seconds, background, transition, elements").eq("project_id", id).order("sort_order")
-  ]);
-  if (projectResult.error) return { status: "error", message: projectResult.error.message };
-  if (scenesResult.error) return { status: "error", message: scenesResult.error.message };
-
-  const userResult = await supabase.auth.getUser();
-  const userId = userResult.data.user?.id ?? null;
-  const { data: newProject, error } = await supabase
-    .from("marketing_screen_projects")
-    .insert({ ...projectResult.data, name, status: "draft", created_by: userId, updated_by: userId })
-    .select("id")
-    .single();
-  if (error || !newProject) return { status: "error", message: error?.message ?? "No se pudo duplicar." };
-
-  const rows = (scenesResult.data ?? []).map((scene) => ({ ...scene, project_id: newProject.id }));
-  if (rows.length > 0) {
-    const { error: scenesError } = await supabase.from("marketing_screen_scenes").insert(rows);
-    if (scenesError) return { status: "error", message: scenesError.message };
-  }
-  revalidateMarketing();
-  return { status: "success", message: "Proyecto duplicado correctamente." };
-}
-
-export async function deleteMarketingProject(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const supabase = await createServerSupabaseClient();
-  await requireUserPermission(supabase, "marketing_pantallas.delete");
-  const id = getString(formData, "id");
-  if (!id) return { status: "error", message: "Proyecto no valido." };
-  const { error } = await supabase.from("marketing_screen_projects").delete().eq("id", id);
-  if (error) return { status: "error", message: error.message };
-  revalidateMarketing();
-  return { status: "success", message: "Proyecto eliminado correctamente." };
-}
-
-export async function saveMarketingPromotion(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const supabase = await createServerSupabaseClient();
-  const id = getOptionalString(formData, "id");
-  await requireUserPermission(supabase, id ? "marketing_promociones.edit" : "marketing_promociones.create");
-
-  const userResult = await supabase.auth.getUser();
-  const userId = userResult.data.user?.id ?? null;
-  const name = upperText(getString(formData, "name"));
-  const mainText = upperText(getString(formData, "main_text"));
-  const previousImage = getOptionalString(formData, "previous_image_url");
-  const removeImage = getBoolean(formData, "remove_image");
-  const imageFile = getFormFile(formData, "image");
-  let imageUrl = removeImage ? null : previousImage;
-
-  if (!name) return { status: "error", message: "Ingresa el nombre de la promocion." };
-  if (!mainText) return { status: "error", message: "Ingresa el texto principal." };
-
-  try {
-    if (imageFile) imageUrl = await uploadProductImage(supabase, imageFile, "marketing");
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "No se pudo subir la imagen." };
-  }
-
-  const payload = {
-    name,
-    image_url: imageUrl,
-    main_text: mainText,
-    secondary_text: upperText(getOptionalString(formData, "secondary_text")),
-    normal_price_cop: getOptionalString(formData, "normal_price_cop") ? getDecimal(formData, "normal_price_cop", 0) : null,
-    promo_price_cop: getOptionalString(formData, "promo_price_cop") ? getDecimal(formData, "promo_price_cop", 0) : null,
-    starts_at: getOptionalString(formData, "starts_at"),
-    ends_at: getOptionalString(formData, "ends_at"),
-    status: promotionStatus(getString(formData, "status")),
-    is_active: getBoolean(formData, "is_active"),
-    updated_at: new Date().toISOString(),
-    updated_by: userId
-  };
-
-  const query = id
-    ? supabase.from("marketing_promotions").update(payload).eq("id", id).select("id").single()
-    : supabase.from("marketing_promotions").insert({ ...payload, created_by: userId }).select("id").single();
-  const { data: promotion, error } = await query;
-  if (error || !promotion) return { status: "error", message: error?.message ?? "No se pudo guardar la promocion." };
-
-  const promotionId = promotion.id;
-  const pizzaPriceIds = getJsonStringArray(formData, "pizza_price_ids");
-  const saleProductIds = getJsonStringArray(formData, "sale_product_ids");
-  const projectIds = getJsonStringArray(formData, "project_ids");
-  const [pizzaDelete, saleDelete, projectDelete] = await Promise.all([
-    supabase.from("marketing_promotion_pizza_prices").delete().eq("promotion_id", promotionId),
-    supabase.from("marketing_promotion_sale_products").delete().eq("promotion_id", promotionId),
-    supabase.from("marketing_promotion_screen_projects").delete().eq("promotion_id", promotionId)
-  ]);
-  const relationError = pizzaDelete.error ?? saleDelete.error ?? projectDelete.error;
-  if (relationError) return { status: "error", message: relationError.message };
-
-  const inserts = [];
-  if (pizzaPriceIds.length > 0) {
-    inserts.push(supabase.from("marketing_promotion_pizza_prices").insert(pizzaPriceIds.map((pizza_price_config_id) => ({ promotion_id: promotionId, pizza_price_config_id }))));
-  }
-  if (saleProductIds.length > 0) {
-    inserts.push(supabase.from("marketing_promotion_sale_products").insert(saleProductIds.map((inventory_item_id) => ({ promotion_id: promotionId, inventory_item_id }))));
-  }
-  if (projectIds.length > 0) {
-    inserts.push(supabase.from("marketing_promotion_screen_projects").insert(projectIds.map((project_id) => ({ promotion_id: promotionId, project_id }))));
-  }
-  const results = await Promise.all(inserts);
-  const insertError = results.find((result) => result.error)?.error;
-  if (insertError) return { status: "error", message: insertError.message };
-
-  if ((removeImage || imageFile) && previousImage && previousImage !== imageUrl) {
-    await removeStoredImageIfUnreferenced(supabase, previousImage);
-  }
-
-  revalidateMarketing();
-  return { status: "success", message: "Promocion guardada correctamente." };
-}
-
-export async function deleteMarketingPromotion(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
-  const supabase = await createServerSupabaseClient();
-  await requireUserPermission(supabase, "marketing_promociones.delete");
-  const id = getString(formData, "id");
-  if (!id) return { status: "error", message: "Promocion no valida." };
-  const { data: promotion } = await supabase.from("marketing_promotions").select("image_url").eq("id", id).single();
-  const { error } = await supabase.from("marketing_promotions").delete().eq("id", id);
-  if (error) return { status: "error", message: error.message };
-  await removeStoredImageIfUnreferenced(supabase, promotion?.image_url ?? null);
-  revalidateMarketing();
-  return { status: "success", message: "Promocion eliminada correctamente." };
 }
 
 export async function assignUserRole(formData: FormData) {

@@ -451,7 +451,7 @@ export function ProductionRegisterModule({
     setIsPreparationOpen(false);
     setExpectedQuantity("");
     setActualQuantity("");
-    setExpectedUnit(preferredVisibleUnit(preparation.unit_kind));
+    setExpectedUnit(preparation.unit_kind === "weight" ? "g" : preferredVisibleUnit(preparation.unit_kind));
     setActualUnit(preferredVisibleUnit(preparation.unit_kind));
     const firstMethod = preparation.conservation_rules[0]?.storage_method ?? "";
     setStorageMethod(firstMethod);

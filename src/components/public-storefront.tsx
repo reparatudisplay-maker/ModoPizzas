@@ -14,10 +14,9 @@ type Ingredient = { source_kind: "inventory_item" | "preparation"; source_id: st
 export type PublicPizzaPrice = { id: string; flavor_id: string; flavor_name: string; commercial_description: string | null; image_url: string | null; allows_half_and_half: boolean; category_id: string | null; category_name: string; size_id: string; size_name: string; diameter_cm: number | null; slices_count: number | null; sort_order: number; sale_price_cop: number; available: boolean; ingredients: Ingredient[] };
 export type PublicProduct = { id: string; name: string; image_url: string | null; presentation_quantity: number | null; presentation_unit: StockUnit | null; sale_price_cop: number; available: boolean };
 type Addition = { id: string; name: string; image_url: string | null; size_id: string; price_cop: number; max_allowed: number; flavor_ids: string[]; category_ids: string[] };
-type Promotion = { id: string; name: string; image_url: string | null; main_text: string; secondary_text: string | null; normal_price_cop: number | null; promo_price_cop: number | null };
 type OpeningHour = { day: string; is_open: boolean; opens_at: string; closes_at: string };
 export type PublicBusinessInfo = { business_name: string; phone: string; whatsapp_number: string; address: string | null; neighborhood: string | null; city: string | null; weekday_hours: string | null; weekend_hours: string | null; opening_hours: OpeningHour[]; maps_url: string | null; info_text: string | null; instagram_url: string | null; facebook_url: string | null; email?: string | null; legal_contact_email?: string | null };
-export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; promotions: Promotion[]; combos: PosComboOption[]; business: PublicBusinessInfo };
+export type PublicCatalog = { pizzas: PublicPizzaPrice[]; products: PublicProduct[]; additions: Addition[]; combos: PosComboOption[]; business: PublicBusinessInfo };
 export type PublicCustomer = { id: string; full_name: string; phone: string; email: string };
 type CartAddition = Addition & { quantity: number; scope: "whole" | "left" | "right"; scope_label: string | null };
 type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secondary_id?: string | null; name: string; secondary_name?: string | null; size_name?: string | null; image_url: string | null; quantity: number; unit_price_cop: number; additions: CartAddition[]; removed_components: Ingredient[]; presentation?: string | null; combo_instance_id?: string | null; combo_name?: string | null; combo_variant_name?: string | null; combo_unit_price_cop?: number; combo_normal_price_cop?: number; combo_savings_cop?: number; combo_is_primary?: boolean };
@@ -49,7 +48,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
   useEffect(() => { if (heroGroups.length < 2) return; const timer = window.setInterval(() => setHeroIndex((current) => (current + 1) % heroGroups.length), 5000); return () => window.clearInterval(timer); }, [heroGroups.length]);
   const activeHeroIndex = heroGroups.length ? heroIndex % heroGroups.length : 0;
   const hero = heroGroups[activeHeroIndex]?.price ?? pizzaGroups[0]?.price ?? null;
-  const categories = ["PIZZAS", "PROMOS", "BEBIDAS"];
+  const categories = ["PIZZAS", "BEBIDAS"];
   const search = query.trim().toLocaleLowerCase("es-CO");
   const matches = (value: string) => !search || value.toLocaleLowerCase("es-CO").includes(search);
   const visiblePizzas = pizzaGroups.filter((group) => category === "PIZZAS" && matches(`${group.price.flavor_name} ${group.price.category_name} ${group.price.commercial_description ?? ""}`));
@@ -99,17 +98,6 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
   }
 
   useEffect(() => {
-    const handleHash = () => {
-      if (window.location.hash !== "#promos") return;
-      setCategory("PROMOS");
-      window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-    };
-    handleHash();
-    window.addEventListener("hashchange", handleHash);
-    return () => window.removeEventListener("hashchange", handleHash);
-  }, []);
-
-  useEffect(() => {
     const raw = localStorage.getItem("modopizzas-public-reorder");
     if (!raw) return;
     localStorage.removeItem("modopizzas-public-reorder");
@@ -140,7 +128,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
   }, [catalog.additions, catalog.pizzas, catalog.products]);
 
   return <main className="public-site">
-    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a className={category === "PROMOS" ? "active" : ""} href="#promos" onClick={() => { setCategory("PROMOS"); window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}>Promociones</a><a href="#informacion">Información</a></nav><div className="public-account-actions">{customer ? <><Link className="public-login" href="/mi-cuenta"><UserRound size={16}/>Mi cuenta</Link><button aria-label="Cerrar sesión" className="public-account-signout" onClick={signOut} type="button"><LogOut size={16}/></button></> : <button className="public-login" onClick={() => setAuthOpen(true)} type="button">Ingresar</button>}<button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
+    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a href="#informacion">Información</a></nav><div className="public-account-actions">{customer ? <><Link className="public-login" href="/mi-cuenta"><UserRound size={16}/>Mi cuenta</Link><button aria-label="Cerrar sesión" className="public-account-signout" onClick={signOut} type="button"><LogOut size={16}/></button></> : <button className="public-login" onClick={() => setAuthOpen(true)} type="button">Ingresar</button>}<button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
     <section className="public-hero" id="inicio">
       <div className="public-hero-copy">
         <span className="public-eyebrow">PIZZA HORNEADA AL MOMENTO</span>
@@ -170,8 +158,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
       </div>
       <a className="public-halloween-cta" href="#menu">Explorar el menu <ChevronRight size={17}/></a>
     </section>
-    {catalog.promotions.length ? <section className="public-promos" aria-label="Promociones destacadas"><div className="public-section-heading"><span>SELECCION DEL DIA</span><h2>PROMOS ACTIVADAS</h2></div><div className="public-promo-grid">{catalog.promotions.map((promo) => <article className="public-promo-card" key={promo.id}>{promo.image_url ? <img alt={promo.name} src={promo.image_url}/> : <div className="public-promo-pattern"/>}<div><span>{promo.name}</span><h3>{promo.main_text}</h3>{promo.secondary_text ? <p>{promo.secondary_text}</p> : null}{promo.promo_price_cop ? <strong>{promo.normal_price_cop ? <del>{formatCop(promo.normal_price_cop)}</del> : null}{formatCop(promo.promo_price_cop)}</strong> : null}</div></article>)}</div></section> : null}
-    <section className={`public-menu${category === "PROMOS" ? " public-promos-menu" : ""}`} id="menu"><span aria-hidden="true" className="public-promo-anchor" id="promos"/><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>{category === "PROMOS" ? "COMBOS PARA COMPARTIR" : "ELIGE TU FAVORITA"}</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => { setCategory(item); if (item === "PROMOS") window.setTimeout(() => document.getElementById("promos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PROMOS" ? <div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PROMOS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
+    <section className="public-menu" id="menu"><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PIZZAS" ? <div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PIZZAS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
     <BusinessSection business={catalog.business} />
     <PublicFooter business={catalog.business} />
     {whatsapp ? <a aria-label="Escribir por WhatsApp" className="public-whatsapp-float" href={`https://wa.me/${whatsapp}`} rel="noreferrer" target="_blank"><MessageCircle size={24}/><span>WhatsApp</span></a> : null}
@@ -487,7 +474,6 @@ function PublicFooter({ business }: { business: PublicBusinessInfo }) {
       <div>
         <strong>{businessName}</strong>
         <a href="#menu">Menú</a>
-        <a href="#promos">Promociones</a>
         <Link href="/legal/informacion">Información</Link>
       </div>
       <div>

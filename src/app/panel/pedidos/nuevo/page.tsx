@@ -39,6 +39,7 @@ type FlavorRow = {
   id: string;
   name: string;
   image_url: string | null;
+  pos_image_url?: string | null;
   allows_half_and_half: boolean;
   menu_category_id: string | null;
   menu_categories: { name: string } | null;
@@ -134,9 +135,23 @@ type ComboRow = {
 
 async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
   if (!path) return null;
-  if (path.startsWith("http")) return path;
+  if (path.startsWith("http") || path.startsWith("/")) return path;
   const { data } = await supabase.storage.from(productImageBucket).createSignedUrl(path, 60 * 60);
   return data?.signedUrl ?? null;
+}
+
+function posPizzaFallbackImage(name: string) {
+  const images: Record<string, string> = {
+    CARNES: "/pos-pizzas/carnes.png",
+    HAWAIANA: "/pos-pizzas/hawaiana.png",
+    JAMON: "/pos-pizzas/jamon.png",
+    PEPPERONI: "/pos-pizzas/pepperoni.png",
+    "POLLO CON CHAMPINONES": "/pos-pizzas/pollo-con-champinones.png",
+    SUPREMA: "/pos-pizzas/suprema.png",
+    TOCINETA: "/pos-pizzas/tocineta.png",
+    VEGETARIANA: "/pos-pizzas/vegetariana.png"
+  };
+  return images[name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()] ?? null;
 }
 
 function relationName(relation: { name: string } | { name: string }[] | null) {
@@ -157,7 +172,8 @@ export default async function NuevoPedidoPage() {
     saleProductsResult,
     combosResult,
     baseOptionsResult,
-    platformPaymentSettingsResult
+    platformPaymentSettingsResult,
+    posImagesResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -192,7 +208,8 @@ export default async function NuevoPedidoPage() {
     supabase
       .from("platform_payment_settings")
       .select("platform, commission_percent, fixed_fee_cop, commission_tax_percent")
-      .order("platform")
+      .order("platform"),
+    supabase.from("pizza_flavors").select("id, pos_image_url")
   ]);
 
   const error =
@@ -217,6 +234,9 @@ export default async function NuevoPedidoPage() {
   }
 
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
+  const posImageByFlavor = new Map(
+    posImagesResult.error ? [] : ((posImagesResult.data ?? []) as Array<{ id: string; pos_image_url: string | null }>).map((flavor) => [flavor.id, flavor.pos_image_url] as const)
+  );
   const ingredientsByFlavor = new Map<string, PosPizzaOption["characteristic_ingredients"]>();
   for (const ingredient of (flavorIngredientsResult.data ?? []) as unknown as FlavorIngredientRow[]) {
     const sourceId = ingredient.source_kind === "preparation" ? ingredient.source_preparation_id : ingredient.inventory_item_id;
@@ -240,7 +260,7 @@ export default async function NuevoPedidoPage() {
       flavor_name: flavor.name,
       category_id: flavor.menu_category_id ?? null,
       category_name: flavor.menu_categories?.name ?? null,
-      image_src: await signedImage(supabase, flavor.image_url ?? null),
+      image_src: await signedImage(supabase, posImageByFlavor.get(flavor.id) ?? posPizzaFallbackImage(flavor.name) ?? flavor.image_url ?? null),
       allows_half_and_half: flavor.allows_half_and_half,
       characteristic_ingredients: ingredientsByFlavor.get(flavor.id) ?? [],
       min_price_cop: null,
@@ -425,7 +445,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

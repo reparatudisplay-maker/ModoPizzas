@@ -1,15 +1,20 @@
+export function formatColombianNumber(value: number, decimals = 2, minimumFractionDigits = decimals) {
+  return new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
 export function formatCop(value: number, options: { decimals?: boolean } = {}) {
+  const decimals = options.decimals === false ? 0 : 2;
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    maximumFractionDigits: options.decimals ? 2 : 0,
-    minimumFractionDigits: options.decimals ? 2 : 0
-  }).format(value);
-}
-
-export function formatNumber(value: number, decimals = 0) {
-  return new Intl.NumberFormat("es-CO", {
     maximumFractionDigits: decimals,
     minimumFractionDigits: decimals
-  }).format(value);
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+export function formatNumber(value: number, decimals = 2) {
+  return formatColombianNumber(value, decimals);
 }

@@ -99,7 +99,6 @@ export default async function HomePage() {
     pizzas: [],
     products: [],
     additions: [],
-    promotions: [],
     combos: [],
     business: fallbackBusiness
   };
@@ -110,7 +109,6 @@ export default async function HomePage() {
     pizzas: rawCatalog.pizzas ?? [],
     products: rawCatalog.products ?? [],
     additions: rawCatalog.additions ?? [],
-    promotions: rawCatalog.promotions ?? [],
     combos: rawCatalog.combos ?? [],
     business: { ...fallbackBusiness, ...(rawCatalog.business ?? {}), ...(businessResult.data ?? {}) }
   };
@@ -159,7 +157,7 @@ export default async function HomePage() {
     };
   }));
   const imagePaths = new Set<string>();
-  for (const collection of [catalog.pizzas, catalog.products, catalog.additions, catalog.promotions]) {
+  for (const collection of [catalog.pizzas, catalog.products, catalog.additions]) {
     for (const item of collection) if (item.image_url) imagePaths.add(item.image_url);
   }
   const signed = new Map(await Promise.all([...imagePaths].map(async (path) => [path, await signedImage(supabase, path)] as const)));
@@ -173,5 +171,5 @@ export default async function HomePage() {
       }
     : null;
 
-  return <PublicStorefront catalog={{ ...catalog, combos, pizzas: withSignedImage(catalog.pizzas), products: withSignedImage(catalog.products), additions: withSignedImage(catalog.additions), promotions: withSignedImage(catalog.promotions) }} catalogUnavailable={catalogUnavailable} customer={customer} directOrderingEnabled={Boolean(directOrdersResult.data?.public_direct_ordering_enabled)} />;
+  return <PublicStorefront catalog={{ ...catalog, combos, pizzas: withSignedImage(catalog.pizzas), products: withSignedImage(catalog.products), additions: withSignedImage(catalog.additions) }} catalogUnavailable={catalogUnavailable} customer={customer} directOrderingEnabled={Boolean(directOrdersResult.data?.public_direct_ordering_enabled)} />;
 }

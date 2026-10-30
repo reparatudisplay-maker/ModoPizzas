@@ -6,7 +6,7 @@ import { useFormStatus } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Camera, ChevronDown, Plus, Search, Trash2, Upload, X, ZoomIn } from "lucide-react";
 import { registerPurchase, type FormActionState } from "@/app/admin/actions";
-import { normalizeColombianDecimalInput } from "@/lib/number-format";
+import { isAmbiguousColombianThousandsInput, normalizeColombianDecimalInput, parseColombianDecimal } from "@/lib/number-format";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 type PurchaseKind = "ingredient" | "sale_product" | "supply";
@@ -15,7 +15,7 @@ type InventoryItem = { id: string; name: string; sku?: string | null; unit: Stoc
 type LookupOption = { id: string; name: string; is_active: boolean };
 type EditablePurchaseLine = { inventory_item_id: string; brand_id: string | null; purchased_quantity: number; quantity: number; unit: StockUnit; presentation_quantity: number | null; presentation_unit: StockUnit | null; merchandise_total_cop: number; expiration_date: string | null };
 export type EditablePurchase = { id: string; supplier_id: string | null; notes: string | null; purchase_date: string; transport_cost_cop: number; invoice_photo_url: string | null; lines: EditablePurchaseLine[] };
-type DraftLine = { key: string; inventory_item_id: string; brand_id: string; purchase_kind: PurchaseKind | ""; purchase_mode: PurchaseMode; quantity: string; package_content_quantity: string; presentation_unit: StockUnit; presentation_quantity: string; merchandise_total_cop: string; expiration_date: string; reference_sku: string };
+type DraftLine = { key: string; inventory_item_id: string; brand_id: string; purchase_kind: PurchaseKind | ""; purchase_mode: PurchaseMode; quantity: string; confirm_ambiguous_quantity: boolean; package_content_quantity: string; presentation_unit: StockUnit; presentation_quantity: string; merchandise_total_cop: string; expiration_date: string; reference_sku: string };
 
 const initialFormActionState: FormActionState = { status: "idle", message: "" };
 const purchaseInvoicePhotoMaxSize = 4 * 1024 * 1024;
@@ -24,13 +24,15 @@ const newKey = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const moneyFormatter = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 2 });
 const formatInteger = (value: string | number) => String(value).replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 const formatDecimal = (value: string | number) => normalizeColombianDecimalInput(String(value), 3);
-const parseMoney = (value: string) => Number(value.replace(/\./g, "")) || 0;
+const parseMoney = (value: string) => parseColombianDecimal(value) ?? 0;
+const formatMoneyDecimal = (value: string | number) => new Intl.NumberFormat("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(parseMoney(String(value)));
+const moneyInputCharacters = (value: string) => value.replace(/[^\d.,]/g, "");
 const parseDecimal = (value: string) => Number(value.replace(/\./g, "").replace(",", ".")) || 0;
 const unitLabel = (unit: StockUnit) => unit === "unit" ? "UND" : unit.toUpperCase();
 const normalSearch = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 function todayDateValue() { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
-function emptyLine(): DraftLine { return { key: newKey(), inventory_item_id: "", brand_id: "", purchase_kind: "", purchase_mode: "total_weight", quantity: "", package_content_quantity: "", presentation_unit: "unit", presentation_quantity: "", merchandise_total_cop: "", expiration_date: "", reference_sku: "" }; }
+function emptyLine(): DraftLine { return { key: newKey(), inventory_item_id: "", brand_id: "", purchase_kind: "", purchase_mode: "total_weight", quantity: "", confirm_ambiguous_quantity: false, package_content_quantity: "", presentation_unit: "unit", presentation_quantity: "", merchandise_total_cop: "", expiration_date: "", reference_sku: "" }; }
 function unitsFor(unit: StockUnit) { if (unit === "g" || unit === "kg") return [{ value: "g", label: "Gramos" }, { value: "kg", label: "Kilogramos" }] as const; if (unit === "ml" || unit === "l") return [{ value: "ml", label: "Mililitros" }, { value: "l", label: "Litros" }] as const; return [{ value: "unit", label: "Unidades" }] as const; }
 const saleProductPresentationUnits = [{ value: "ml", label: "Mililitros" }, { value: "l", label: "Litros" }, { value: "g", label: "Gramos" }, { value: "kg", label: "Kilogramos" }, { value: "unit", label: "Unidades" }] as const;
 function kindLabel(kind: PurchaseKind) { return kind === "ingredient" ? "Ingrediente" : kind === "sale_product" ? "Producto para venta" : "Insumo"; }
@@ -53,12 +55,13 @@ function lineFromEditable(line: EditablePurchaseLine, items: InventoryItem[]): D
     purchase_kind: item?.item_kind ?? "",
     purchase_mode: isPackage ? "packages" : "total_weight",
     quantity: formatDecimal(line.purchased_quantity),
+    confirm_ambiguous_quantity: false,
     package_content_quantity: isPackage ? formatDecimal(unitsPerPackage) : "",
     presentation_unit: line.presentation_unit ?? item?.unit ?? "unit",
     presentation_quantity: isSaleProduct && isPackage
       ? formatDecimal(line.presentation_quantity ?? "")
       : !isPackage && line.presentation_quantity ? formatDecimal(line.presentation_quantity) : "",
-    merchandise_total_cop: formatInteger(line.merchandise_total_cop),
+    merchandise_total_cop: formatMoneyDecimal(line.merchandise_total_cop),
     expiration_date: line.expiration_date ?? "",
     reference_sku: ""
   };
@@ -108,6 +111,7 @@ function PurchaseLineEditor({ brands, items, line, index, canRemove, transportAl
   const canPickMode = selected?.unit === "unit" && kind !== "sale_product";
   const merchandiseTotal = parseMoney(line.merchandise_total_cop);
   const packageCount = parseDecimal(line.quantity);
+  const hasAmbiguousQuantity = isAmbiguousColombianThousandsInput(line.quantity);
   const effectiveCost = merchandiseTotal + transportAllocation;
   const unitsPerPackage = parseDecimal(line.package_content_quantity);
   const baseQuantity = packageMode ? packageCount * unitsPerPackage : parseDecimal(line.quantity);
@@ -118,7 +122,10 @@ function PurchaseLineEditor({ brands, items, line, index, canRemove, transportAl
       ? "Peso total de referencia"
       : "Presentación total de referencia";
   const update = (patch: Partial<DraftLine>) => onChange({ ...line, ...patch });
-  const selectProduct = (item: InventoryItem | null) => update({ inventory_item_id: item?.id ?? "", brand_id: item?.brand_id ?? "", purchase_kind: item?.item_kind ?? "", purchase_mode: item?.purchase_mode ?? "total_weight", presentation_unit: item?.unit ?? "unit", package_content_quantity: "", presentation_quantity: "", reference_sku: "" });
+  const selectProduct = (item: InventoryItem | null) => {
+    const presentationUnit = item?.unit === "kg" ? "g" : item?.unit === "l" ? "ml" : item?.unit ?? "unit";
+    update({ inventory_item_id: item?.id ?? "", brand_id: item?.brand_id ?? "", purchase_kind: item?.item_kind ?? "", purchase_mode: item?.purchase_mode ?? "total_weight", presentation_unit: presentationUnit, package_content_quantity: "", presentation_quantity: "", reference_sku: "" });
+  };
   return <fieldset className="purchase-line-card">
     <legend>Línea {index + 1}</legend>
     <div className="purchase-line-heading">
@@ -130,12 +137,12 @@ function PurchaseLineEditor({ brands, items, line, index, canRemove, transportAl
       {selected ? <>
         <div className="field"><label>Tipo</label><input disabled value={kindLabel(kind as PurchaseKind)} /></div>
         <div className="field"><label>Forma de compra</label>{canPickMode ? <select onChange={(event) => update({ purchase_mode: event.target.value as PurchaseMode, package_content_quantity: "" })} value={line.purchase_mode}><option value="total_weight">Unidades</option><option value="packages">Paquetes</option></select> : <input disabled value={packageMode ? "Paquetes" : "Peso o volumen"} />}</div>
-        <div className="field"><label>{packageMode ? "Cantidad de paquetes" : selected.unit === "unit" ? "Cantidad" : "Peso o volumen"}</label><input inputMode="decimal" onBlur={() => update({ quantity: formatDecimal(line.quantity) })} onChange={(event) => update({ quantity: event.target.value.replace(/[^\d.,]/g, "") })} placeholder="0" type="text" value={line.quantity} /></div>
+        <div className="field purchase-line-quantity"><label>{packageMode ? "Cantidad de paquetes" : selected.unit === "unit" ? "Cantidad" : "Peso o volumen"}</label><input inputMode="decimal" onBlur={() => !hasAmbiguousQuantity && update({ quantity: formatDecimal(line.quantity) })} onChange={(event) => update({ quantity: event.target.value.replace(/[^\d.,]/g, ""), confirm_ambiguous_quantity: false })} placeholder="0" type="text" value={line.quantity} />{hasAmbiguousQuantity ? <label className="purchase-quantity-warning"><input checked={line.confirm_ambiguous_quantity} onChange={(event) => update({ confirm_ambiguous_quantity: event.target.checked })} type="checkbox" /> Se registrará como {formatDecimal(packageCount)}. Para miles usa punto: {line.quantity.replace(/,/g, ".")}.</label> : null}</div>
         {packageMode ? saleProductPackage ? <><div className="field"><label>Unidades por paquete</label><input inputMode="decimal" onBlur={() => update({ package_content_quantity: formatDecimal(line.package_content_quantity) })} onChange={(event) => update({ package_content_quantity: event.target.value.replace(/[^\d.,]/g, "") })} placeholder="Ej. 12" type="text" value={line.package_content_quantity} /></div><div className="field"><label>Presentaci&oacute;n por unidad</label><input inputMode="decimal" onBlur={() => update({ presentation_quantity: formatDecimal(line.presentation_quantity) })} onChange={(event) => update({ presentation_quantity: event.target.value.replace(/[^\d.,]/g, "") })} placeholder="Ej. 250" type="text" value={line.presentation_quantity} /></div><div className="field"><label>Unidad presentaci&oacute;n</label><select onChange={(event) => update({ presentation_unit: event.target.value as StockUnit })} value={line.presentation_unit}>{presentationUnitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}</select></div></> : <><div className="field"><label>{packageContentLabel(line.presentation_unit)}</label><input inputMode="decimal" onBlur={() => update({ package_content_quantity: formatDecimal(line.package_content_quantity) })} onChange={(event) => update({ package_content_quantity: event.target.value.replace(/[^\d.,]/g, "") })} placeholder="Ej. 1,5" type="text" value={line.package_content_quantity} /></div><div className="field"><label>Unidad</label><select onChange={(event) => update({ presentation_unit: event.target.value as StockUnit })} value={line.presentation_unit}>{unitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}</select></div></> : selected.unit !== "unit" ? <div className="field"><label>Unidad</label><select onChange={(event) => update({ presentation_unit: event.target.value as StockUnit })} value={line.presentation_unit}>{unitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}</select></div> : null}
+        <div className="field purchase-line-value"><label>Valor mercancía COP</label><input inputMode="decimal" onBlur={() => update({ merchandise_total_cop: line.merchandise_total_cop ? formatMoneyDecimal(line.merchandise_total_cop) : "" })} onChange={(event) => update({ merchandise_total_cop: moneyInputCharacters(event.target.value) })} placeholder="$ 0,00" type="text" value={line.merchandise_total_cop} /></div>
         {selected.sku ? <div className="field"><label>SKU</label><input disabled value={selected.sku} /></div> : null}
         <LookupSelect emptyLabel="Sin marca" label="Marca" name={`line-brand-${line.key}`} onChange={(brand_id) => update({ brand_id })} options={brands} value={line.brand_id} />
         <div className="field"><label>Vencimiento</label><input onChange={(event) => update({ expiration_date: event.target.value })} type="date" value={line.expiration_date} /></div>
-        <div className="field"><label>Valor mercancía COP</label><input inputMode="numeric" onChange={(event) => update({ merchandise_total_cop: formatInteger(event.target.value) })} placeholder="$ 0" type="text" value={line.merchandise_total_cop} /></div>
         {totalQuantity(line) || merchandiseTotal > 0 ? <aside className="purchase-line-calculation">
           {saleProductPackage && baseQuantity ? <><strong>{formatDecimal(packageCount)} {packageCount === 1 ? "paquete" : "paquetes"} × {formatDecimal(unitsPerPackage)} UND = {formatDecimal(baseQuantity)} UND</strong>{line.presentation_quantity ? <span>Presentaci&oacute;n: {formatDecimal(parseDecimal(line.presentation_quantity))} {unitLabel(line.presentation_unit).toLowerCase()} c/u</span> : null}{totalPresentationQuantity > 0 && line.presentation_unit !== "unit" ? <span>{presentationReferenceLabel}: {formatReferenceQuantity(totalPresentationQuantity, line.presentation_unit)}</span> : null}</> : totalQuantity(line) ? <strong>{packageMode ? `${formatDecimal(packageCount)} paquetes × ${formatDecimal(unitsPerPackage)} ${unitLabel(line.presentation_unit)} = ${totalQuantity(line)}` : `Cantidad total: ${totalQuantity(line)}`}</strong> : null}
           <PurchaseCostSummary baseQuantity={baseQuantity} effectiveCost={effectiveCost} merchandiseTotal={merchandiseTotal} packageCount={packageCount} packageMode={packageMode} transportAllocation={transportAllocation} unit={saleProductPackage ? "unit" : line.presentation_unit} />

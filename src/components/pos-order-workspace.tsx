@@ -6,7 +6,7 @@ import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
-import { createPosOrder, getPosInventoryConsumptionPreview, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
+import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -425,6 +425,7 @@ export function PosOrderWorkspace({
   saleProducts,
   combos,
   baseOptions,
+  canConfigurePizzaPhotos,
   platformPaymentSettings,
   isSystemAdmin,
   userId
@@ -434,6 +435,7 @@ export function PosOrderWorkspace({
   saleProducts: PosSaleProductOption[];
   combos: PosComboOption[];
   baseOptions: PosPizzaBaseOption[];
+  canConfigurePizzaPhotos: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
   isSystemAdmin: boolean;
   userId: string;
@@ -1878,8 +1880,10 @@ export function PosOrderWorkspace({
 
       {productSettingsOpen ? (
         <ProductViewSettingsModal
+          canEditPizzaPhotos={isSystemAdmin && canConfigurePizzaPhotos}
           onChange={setProductViewSettings}
           onClose={() => setProductSettingsOpen(false)}
+          pizzas={pizzas}
           settings={productViewSettings}
         />
       ) : null}
@@ -2748,12 +2752,16 @@ function PizzaBaseSelectorModal({
 }
 
 function ProductViewSettingsModal({
+  canEditPizzaPhotos,
   onChange,
   onClose,
+  pizzas,
   settings
 }: {
+  canEditPizzaPhotos: boolean;
   onChange: (settings: ProductViewSettings) => void;
   onClose: () => void;
+  pizzas: PosPizzaOption[];
   settings: ProductViewSettings;
 }) {
   function updateSetting(key: keyof ProductViewSettings, value: boolean) {
@@ -2783,10 +2791,40 @@ function ProductViewSettingsModal({
             <input checked={settings.showSoldOut} onChange={(event) => updateSetting("showSoldOut", event.target.checked)} type="checkbox" />
             <span>Mostrar productos agotados</span>
           </label>
+          {canEditPizzaPhotos ? <PosPizzaImageSettings pizzas={pizzas} /> : null}
         </div>
         <footer className="form-actions modal-form-actions"><button className="positive-button" onClick={onClose} type="button">Listo</button></footer>
       </section>
     </div>
+  );
+}
+
+function PosPizzaImageSettings({ pizzas }: { pizzas: PosPizzaOption[] }) {
+  const [state, action, pending] = useActionState(savePosPizzaImage, initialState);
+  const [flavorId, setFlavorId] = useState(pizzas[0]?.flavor_id ?? "");
+  const router = useRouter();
+  const selectedPizza = pizzas.find((pizza) => pizza.flavor_id === flavorId) ?? null;
+
+  useEffect(() => {
+    if (state.status === "success") router.refresh();
+  }, [router, state.status]);
+
+  return (
+    <form action={action} className="pos-pizza-image-settings">
+      <strong>Fotos de pizzas para Pedidos</strong>
+      <span>Solo cambian las tarjetas de Crear pedido.</span>
+      <input name="flavor_id" type="hidden" value={flavorId} />
+      <select aria-label="Pizza" onChange={(event) => setFlavorId(event.target.value)} value={flavorId}>
+        {pizzas.map((pizza) => <option key={pizza.flavor_id} value={pizza.flavor_id}>{pizza.flavor_name}</option>)}
+      </select>
+      {selectedPizza?.image_src ? <Image alt={selectedPizza.flavor_name} className="pos-pizza-image-preview" height={64} src={selectedPizza.image_src} unoptimized width={96} /> : null}
+      <input accept="image/jpeg,image/png,image/webp" name="pos_pizza_image" type="file" />
+      <div className="form-actions">
+        <button className="secondary-button" disabled={pending} name="remove_pos_image" type="submit" value="1">Restablecer</button>
+        <button className="positive-button" disabled={pending} type="submit">Guardar foto</button>
+      </div>
+      {state.status !== "idle" ? <small className={state.status}>{state.message}</small> : null}
+    </form>
   );
 }
 
