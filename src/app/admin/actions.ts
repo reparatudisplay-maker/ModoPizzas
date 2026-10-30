@@ -3278,14 +3278,14 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
       data: { user }
     } = await supabase.auth.getUser();
     if (!user) return { status: "error", message: "Tu sesión expiró. Ingresa nuevamente." };
-    const { data: adminRole, error: adminRoleError } = await supabase
+    const { data: operationalDateRole, error: operationalDateRoleError } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", user.id)
-      .eq("role", "admin_sistema")
+      .in("role", ["admin_sistema", "gerente"])
       .maybeSingle();
-    if (adminRoleError) return { status: "error", message: adminRoleError.message };
-    if (!adminRole) return { status: "error", message: "Solo el Administrador del sistema puede registrar una fecha de venta manual." };
+    if (operationalDateRoleError) return { status: "error", message: operationalDateRoleError.message };
+    if (!operationalDateRole) return { status: "error", message: "Solo Gerente o Administrador del sistema puede registrar una fecha de venta manual." };
 
     const dateParts = saleDate.split("-").map(Number);
     const calendarDate = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));

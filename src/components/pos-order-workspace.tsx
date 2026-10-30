@@ -426,6 +426,7 @@ export function PosOrderWorkspace({
   combos,
   baseOptions,
   canConfigurePizzaPhotos,
+  canEditSaleDate,
   platformPaymentSettings,
   isSystemAdmin,
   userId
@@ -436,6 +437,7 @@ export function PosOrderWorkspace({
   combos: PosComboOption[];
   baseOptions: PosPizzaBaseOption[];
   canConfigurePizzaPhotos: boolean;
+  canEditSaleDate: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
   isSystemAdmin: boolean;
   userId: string;
@@ -453,7 +455,7 @@ export function PosOrderWorkspace({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
   const [saleDate, setSaleDate] = useState(todayBogota);
-  const [saleDateReady, setSaleDateReady] = useState(!isSystemAdmin);
+  const [saleDateReady, setSaleDateReady] = useState(!canEditSaleDate);
   const [delivery, setDelivery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -526,23 +528,23 @@ export function PosOrderWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!isSystemAdmin) return;
+    if (!canEditSaleDate) return;
     try {
       const saved = window.localStorage.getItem(saleDateStorageKey);
       if (/^\d{4}-\d{2}-\d{2}$/.test(saved ?? "") && saved! <= todayBogota()) setSaleDate(saved!);
     } finally {
       setSaleDateReady(true);
     }
-  }, [isSystemAdmin, saleDateStorageKey]);
+  }, [canEditSaleDate, saleDateStorageKey]);
 
   useEffect(() => {
-    if (!isSystemAdmin || !saleDateReady) return;
+    if (!canEditSaleDate || !saleDateReady) return;
     try {
       window.localStorage.setItem(saleDateStorageKey, saleDate);
     } catch {
       // The order remains usable when browser preferences are unavailable.
     }
-  }, [isSystemAdmin, saleDate, saleDateReady, saleDateStorageKey]);
+  }, [canEditSaleDate, saleDate, saleDateReady, saleDateStorageKey]);
 
   useEffect(() => {
     if (!printPreferencesReady) return;
@@ -1478,7 +1480,7 @@ export function PosOrderWorkspace({
         <input name="payment_method" type="hidden" value={paymentMethod} />
         <input name="source_channel" type="hidden" value={platformPayment ?? "direct"} />
         <input name="collection_party" type="hidden" value={paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business"} />
-        <input name="sale_date" type="hidden" value={isSystemAdmin ? saleDate : ""} />
+        <input name="sale_date" type="hidden" value={canEditSaleDate ? saleDate : ""} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
         <input name="discount_type" type="hidden" value={platformPayment ? "none" : discount?.type ?? "none"} />
@@ -1841,7 +1843,7 @@ export function PosOrderWorkspace({
           <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">
             <PackageSearch size={16} /> Ver consumo de inventario
           </button>
-          {isSystemAdmin ? (
+          {canEditSaleDate ? (
             <section className="pos-sale-date" aria-label="Fecha de venta">
               <label htmlFor="pos-sale-date">Fecha de venta</label>
               <div>
