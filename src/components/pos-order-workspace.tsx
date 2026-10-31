@@ -5,7 +5,7 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -22,6 +22,7 @@ type AppliedDiscount = {
   amount_cop: number;
 };
 type CatalogTab = "pizzas" | "products" | "combos";
+type DirectFundsOrigin = "cash_session" | "external";
 type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
 type AdditionScope = "whole" | "left" | "right";
@@ -176,7 +177,7 @@ type CartAddition = {
 type CartLine = {
   key: string;
   signature: string;
-  kind: "pizza" | "sale_product" | "combo";
+  kind: "pizza" | "sale_product" | "combo" | "direct_sale";
   id: string;
   secondary_id?: string | null;
   name: string;
@@ -203,6 +204,22 @@ type CartLine = {
   combo_component_normal_price_cop?: number;
   combo_component_label?: string;
   combo_is_primary?: boolean;
+  direct_sale?: {
+    inventory_item_id: string | null;
+    acquisition_unit_cost_cop: number;
+    funds_origin: DirectFundsOrigin;
+    observation: string;
+  };
+};
+
+type DirectSaleDraft = {
+  inventory_item_id: string;
+  name: string;
+  quantity: string;
+  sale_unit_price_cop: string;
+  acquisition_unit_cost_cop: string;
+  funds_origin: DirectFundsOrigin;
+  observation: string;
 };
 
 type PizzaWizard = {
@@ -241,6 +258,10 @@ type ProductViewSettings = {
 
 const defaultProductViewSettings: ProductViewSettings = { showCost: true, showStock: true, showSoldOut: true };
 const defaultPrintSelection: PaymentPrintSelection = { kitchen: false, receipt: false };
+
+function emptyDirectSaleDraft(): DirectSaleDraft {
+  return { inventory_item_id: "", name: "", quantity: "1", sale_unit_price_cop: "", acquisition_unit_cost_cop: "", funds_origin: "cash_session", observation: "" };
+}
 
 function readPrintSelection(): PaymentPrintSelection {
   if (typeof window === "undefined") return defaultPrintSelection;
@@ -450,6 +471,10 @@ export function PosOrderWorkspace({
   const [productCardScale, setProductCardScale] = useState(1);
   const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(defaultProductViewSettings);
   const [productSettingsOpen, setProductSettingsOpen] = useState(false);
+  const [directSaleOpen, setDirectSaleOpen] = useState(false);
+  const [directSaleDraft, setDirectSaleDraft] = useState<DirectSaleDraft>(emptyDirectSaleDraft);
+  const [directSaleError, setDirectSaleError] = useState("");
+  const [directSaleQuickActions, setDirectSaleQuickActions] = useState<DirectSaleDraft[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -500,6 +525,7 @@ export function PosOrderWorkspace({
   const normalizedQuery = normalizeMasterText(query);
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
   const saleDateStorageKey = `modo-pos-sale-date:${userId}`;
+  const directSaleQuickActionsKey = `modo-pos-direct-sale-actions:${userId}`;
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -509,6 +535,29 @@ export function PosOrderWorkspace({
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(directSaleQuickActionsKey) ?? "[]");
+      if (Array.isArray(stored)) setDirectSaleQuickActions(stored.filter((item): item is DirectSaleDraft => Boolean(item && typeof item.name === "string")).slice(0, 12));
+    } catch {
+      setDirectSaleQuickActions([]);
+    }
+  }, [directSaleQuickActionsKey]);
+
+  function saveDirectSaleQuickAction() {
+    const name = uppercaseMasterName(directSaleDraft.name);
+    if (!name || !directSaleDraft.sale_unit_price_cop || !directSaleDraft.acquisition_unit_cost_cop) {
+      setDirectSaleError("Completa producto y precios antes de guardar la acción rápida.");
+      return;
+    }
+    setDirectSaleQuickActions((current) => {
+      const next = [{ ...directSaleDraft, name, quantity: "1", observation: "" }, ...current.filter((item) => item.name !== name)].slice(0, 12);
+      window.localStorage.setItem(directSaleQuickActionsKey, JSON.stringify(next));
+      return next;
+    });
+    setDirectSaleError("");
+  }
 
   useEffect(() => {
     window.localStorage.setItem(pizzaCardScaleKey, String(pizzaCardScale));
@@ -691,6 +740,49 @@ export function PosOrderWorkspace({
 
   function saleProductStock(productId: string) {
     return Math.max(0, Math.floor(saleProductById.get(productId)?.stock_base ?? 0));
+  }
+
+  function selectDirectSaleProduct(productId: string) {
+    const product = saleProductById.get(productId);
+    if (!product) return;
+    setDirectSaleDraft((current) => ({
+      ...current,
+      inventory_item_id: product.id,
+      name: product.name,
+      sale_unit_price_cop: current.sale_unit_price_cop || String(Math.round(product.sale_price_cop || 0)),
+      acquisition_unit_cost_cop: current.acquisition_unit_cost_cop || String(Math.round(product.unit_cost_cop || 0))
+    }));
+  }
+
+  function addDirectSale() {
+    const quantity = Number(directSaleDraft.quantity.replace(",", "."));
+    const salePrice = Number(directSaleDraft.sale_unit_price_cop.replace(/\D/g, ""));
+    const acquisitionCost = Number(directSaleDraft.acquisition_unit_cost_cop.replace(/\D/g, ""));
+    const name = uppercaseMasterName(directSaleDraft.name);
+    if (!name || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(salePrice) || salePrice <= 0 || !Number.isFinite(acquisitionCost) || acquisitionCost < 0) {
+      setDirectSaleError("Completa producto, cantidad, precio de venta y costo de compra válidos.");
+      return;
+    }
+    const uniqueKey = `direct:${crypto.randomUUID()}`;
+    addLine({
+      kind: "direct_sale",
+      id: `direct-${uniqueKey}`,
+      name,
+      sku: null,
+      image_src: null,
+      unit_price_cop: Math.round(salePrice),
+      additions: [],
+      notes: directSaleDraft.observation.trim() || undefined,
+      direct_sale: {
+        inventory_item_id: directSaleDraft.inventory_item_id || null,
+        acquisition_unit_cost_cop: Math.round(acquisitionCost * 100) / 100,
+        funds_origin: directSaleDraft.funds_origin,
+        observation: directSaleDraft.observation.trim()
+      }
+    }, Math.max(1, Math.round(quantity)));
+    setDirectSaleOpen(false);
+    setDirectSaleDraft(emptyDirectSaleDraft());
+    setDirectSaleError("");
   }
 
   function stockMessage(productId: string) {
@@ -1360,6 +1452,7 @@ export function PosOrderWorkspace({
     combo_component_normal_price_cop: line.combo_component_normal_price_cop ?? 0,
     combo_component_label: line.combo_component_label ?? null,
     combo_is_primary: Boolean(line.combo_is_primary),
+    direct_sale: line.direct_sale ?? null,
     additions: line.additions.map((addition) => ({
       id: addition.id,
       quantity: addition.quantity,
@@ -1369,12 +1462,19 @@ export function PosOrderWorkspace({
   }));
 
   async function openInventoryPreview() {
-    if (payload.length === 0) return;
+    const inventoryPayload = payload.filter((line) => line.kind !== "direct_sale");
+    if (inventoryPayload.length === 0) {
+      setInventoryPreviewOpen(true);
+      setInventoryPreviewLoading(false);
+      setInventoryPreviewError("La venta libre no genera consumo de inventario.");
+      setInventoryPreview(null);
+      return;
+    }
     setInventoryPreviewOpen(true);
     setInventoryPreviewLoading(true);
     setInventoryPreviewError("");
     setInventoryPreview(null);
-    const result = await getPosInventoryConsumptionPreview(JSON.stringify(payload));
+    const result = await getPosInventoryConsumptionPreview(JSON.stringify(inventoryPayload));
     setInventoryPreviewLoading(false);
     if (result.status === "error" || !result.preview) {
       setInventoryPreviewError(result.message);
@@ -1387,6 +1487,9 @@ export function PosOrderWorkspace({
   const baseLineDefault = baseLine ? defaultBaseForLine(baseLine) : null;
   const baseLineOptions = baseLine ? baseOptionsForLine(baseLine) : [];
   const hasInvalidSaleProductPrice = cart.some((line) => line.kind === "sale_product" && (!Number.isFinite(line.unit_price_cop) || line.unit_price_cop <= 0));
+  const hasInvalidDirectSale = cart.some((line) => line.kind === "direct_sale" && (!line.direct_sale || line.unit_price_cop <= 0 || line.direct_sale.acquisition_unit_cost_cop < 0));
+  const hasDirectSales = cart.some((line) => line.kind === "direct_sale");
+  const directSalesOnPlatform = hasDirectSales && Boolean(platformPayment);
   const cartEntries: Array<{ kind: "combo"; id: string; primary: CartLine; lines: CartLine[] } | { kind: "line"; line: CartLine }> = [];
   const renderedComboInstances = new Set<string>();
   for (const line of cart) {
@@ -1403,7 +1506,7 @@ export function PosOrderWorkspace({
 
   function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
     if (cashSubmitLockRef.current) return;
-    if (cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidPlatformPricing) return;
+    if (cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidDirectSale || hasInvalidPlatformPricing || directSalesOnPlatform) return;
     event.preventDefault();
     setPrintNotice("");
     if (paymentMethod === "cash") {
@@ -1498,6 +1601,7 @@ export function PosOrderWorkspace({
               <button className={tab === "pizzas" ? "active" : ""} onClick={() => setTab("pizzas")} type="button">Pizzas</button>
               <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
               <button className={tab === "combos" ? "active" : ""} onClick={() => setTab("combos")} type="button">Combos</button>
+              <button className="pos-direct-sale-button" onClick={() => setDirectSaleOpen(true)} type="button"><PackagePlus size={16} /> Venta libre</button>
               <button
                 aria-label="Configurar vista de productos"
                 className="pos-products-settings-button"
@@ -1679,6 +1783,8 @@ export function PosOrderWorkspace({
                     ) : null}
                   </span>
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
+                  {line.kind === "direct_sale" ? <small>Venta libre · sin movimiento de inventario</small> : null}
+                  {line.kind === "direct_sale" ? <small>Costo compra: {formatCop((line.direct_sale?.acquisition_unit_cost_cop ?? 0) * line.quantity)} · {line.direct_sale?.funds_origin === "cash_session" ? "Dinero de caja" : "Dinero externo"}</small> : null}
                   {line.kind === "combo" ? (
                     <>
                       <small>{line.sku ?? "Sin SKU"} · combo</small>
@@ -1833,12 +1939,13 @@ export function PosOrderWorkspace({
           ) : null}
           {printNotice ? <p className="form-status error">{printNotice}</p> : null}
           {hasInvalidSaleProductPrice ? <p className="form-status error">Hay productos sin precio de venta configurado.</p> : null}
+          {directSalesOnPlatform ? <p className="form-status error">La venta libre se confirma por caja, transferencia o pendiente; no se puede liquidar como Rappi o DiDi.</p> : null}
           {hasInvalidPlatformPricing ? <p className="form-status error">Corrige los precios unitarios de plataforma antes de registrar el pedido.</p> : null}
           <div className="pos-final-actions">
             <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
               {customerName || customerPhone ? "Editar cliente" : "+ Agregar cliente"}
             </button>
-            <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidPlatformPricing} />
+            <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidDirectSale || hasInvalidPlatformPricing || directSalesOnPlatform} />
           </div>
           <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">
             <PackageSearch size={16} /> Ver consumo de inventario
@@ -1854,6 +1961,29 @@ export function PosOrderWorkspace({
           ) : null}
         </aside>
       </form>
+
+      {directSaleOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Agregar venta libre" aria-modal="true" className="modal-panel pos-direct-sale-modal" role="dialog">
+            <header className="modal-header">
+              <div><strong>Venta libre</strong><span>Se registra sin movimientos de inventario.</span></div>
+              <button className="icon-button" onClick={() => { setDirectSaleOpen(false); setDirectSaleError(""); }} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="form-grid pos-direct-sale-grid">
+              {directSaleQuickActions.length ? <label className="field pos-direct-sale-observation"><span>Acción rápida</span><select onChange={(event) => { const selected = directSaleQuickActions[Number(event.target.value)]; if (selected) setDirectSaleDraft({ ...selected, quantity: "1" }); }} defaultValue=""><option value="">Seleccionar referencia guardada</option>{directSaleQuickActions.map((item, index) => <option key={`${item.name}-${index}`} value={index}>{item.name} · {formatCop(Number(item.sale_unit_price_cop || 0))}</option>)}</select></label> : null}
+              <label className="field"><span>Producto existente</span><select onChange={(event) => selectDirectSaleProduct(event.target.value)} value={directSaleDraft.inventory_item_id}><option value="">Producto sin registro previo</option>{saleProducts.map((product) => <option key={product.id} value={product.id}>{product.name}{product.presentation ? ` · ${product.presentation}` : ""}</option>)}</select></label>
+              <label className="field"><span>Producto</span><input onChange={(event) => setDirectSaleDraft((current) => ({ ...current, name: uppercaseMasterName(event.target.value) }))} placeholder="Nombre del artículo" value={directSaleDraft.name} /></label>
+              <label className="field"><span>Cantidad</span><input inputMode="decimal" min="1" onChange={(event) => setDirectSaleDraft((current) => ({ ...current, quantity: event.target.value }))} type="number" value={directSaleDraft.quantity} /></label>
+              <label className="field"><span>Precio de venta unitario</span><input inputMode="numeric" onChange={(event) => setDirectSaleDraft((current) => ({ ...current, sale_unit_price_cop: event.target.value.replace(/\D/g, "") }))} placeholder="$ 0" value={directSaleDraft.sale_unit_price_cop} /></label>
+              <label className="field"><span>Costo de compra unitario</span><input inputMode="decimal" onChange={(event) => setDirectSaleDraft((current) => ({ ...current, acquisition_unit_cost_cop: event.target.value.replace(/[^\d,]/g, "") }))} placeholder="$ 0" value={directSaleDraft.acquisition_unit_cost_cop} /></label>
+              <label className="field"><span>Origen del dinero</span><select onChange={(event) => setDirectSaleDraft((current) => ({ ...current, funds_origin: event.target.value as DirectFundsOrigin }))} value={directSaleDraft.funds_origin}><option value="cash_session">Dinero de caja</option><option value="external">Dinero externo</option></select></label>
+              <label className="field pos-direct-sale-observation"><span>Observación</span><textarea onChange={(event) => setDirectSaleDraft((current) => ({ ...current, observation: event.target.value }))} placeholder="Referencia opcional" value={directSaleDraft.observation} /></label>
+            </div>
+            {directSaleError ? <p className="form-status error">{directSaleError}</p> : null}
+            <footer className="modal-actions"><button className="ghost-button" onClick={() => setDirectSaleOpen(false)} type="button">Cancelar</button><button className="ghost-button" onClick={saveDirectSaleQuickAction} type="button">Guardar rápida</button><button className="positive-button" onClick={addDirectSale} type="button">Agregar al pedido</button></footer>
+          </section>
+        </div>
+      ) : null}
 
       {stockShortageModalOpen && state.stockShortages?.length ? (
         <StockShortageModal

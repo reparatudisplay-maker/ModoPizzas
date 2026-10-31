@@ -5,6 +5,7 @@ import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { formatCop } from "@/lib/format";
 import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, formatStockQuantityInUnit, unitLabel, type StockUnit } from "@/lib/units";
 
 type InventoryItem = {
@@ -81,6 +82,18 @@ type PurchasePageProps = {
     q?: string;
     tipo?: string;
   }>;
+};
+
+type DirectSalePurchase = {
+  id: string;
+  product_name_snapshot: string;
+  quantity: number;
+  acquisition_unit_cost_cop: number;
+  acquisition_total_cop: number;
+  funds_origin: "cash_session" | "external";
+  observation: string | null;
+  created_at: string;
+  pos_orders: { code: string } | null;
 };
 
 export const dynamic = "force-dynamic";
@@ -259,7 +272,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     purchasesQuery = purchasesQuery.gte("purchased_at", periodStart);
   }
 
-  const [itemsResult, suppliersResult, brandsResult, purchasesResult] = await Promise.all([
+  const [itemsResult, suppliersResult, brandsResult, purchasesResult, directPurchasesResult] = await Promise.all([
     supabase
       .from("inventory_items")
       .select("id, name, sku, unit, item_kind, purchase_mode, brand_id, image_url, presentation_quantity, presentation_unit, is_active")
@@ -267,7 +280,12 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       .order("name"),
     supabase.from("suppliers").select("id, name, is_active").eq("is_active", true).order("name"),
     supabase.from("brands").select("id, name, is_active").eq("is_active", true).order("name"),
-    purchasesQuery
+    purchasesQuery,
+    supabase
+      .from("direct_sale_purchases")
+      .select("id, product_name_snapshot, quantity, acquisition_unit_cost_cop, acquisition_total_cop, funds_origin, observation, created_at, pos_orders(code)")
+      .order("created_at", { ascending: false })
+      .limit(60)
   ]);
   let purchaseData = purchasesResult.data;
   let purchasesError = purchasesResult.error;
@@ -288,6 +306,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const suppliers = (suppliersResult.data ?? []) as Supplier[];
   const brands = (brandsResult.data ?? []) as Brand[];
   const purchases = (purchaseData ?? []) as unknown as Purchase[];
+  const directPurchases = directPurchasesResult.error ? [] : (directPurchasesResult.data ?? []) as unknown as DirectSalePurchase[];
   const masterItems = items.filter((item) => item.presentation_quantity === null);
   const masterByKey = new Map(masterItems.map((item) => [masterKey(item), item]));
   const imagePaths = new Map<string, string | null>();
@@ -437,6 +456,14 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     >
       {error ? <p className="alert">{error.message}</p> : null}
       {editPurchaseError ? <p className="alert">{editPurchaseError}</p> : null}
+      {directPurchases.length ? (
+        <section className="form-panel purchase-direct-list">
+          <div className="section-title-row"><h2>Compras directas</h2><small>Sin ingreso a inventario</small></div>
+          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Pedido</th><th>Artículo</th><th>Cantidad</th><th>Costo</th><th>Origen</th><th>Observación</th></tr></thead><tbody>
+            {directPurchases.map((purchase) => <tr key={purchase.id}><td>{new Date(purchase.created_at).toLocaleDateString("es-CO")}</td><td>{purchase.pos_orders?.code ?? "-"}</td><td><strong>{purchase.product_name_snapshot}</strong></td><td>{formatQuantity(Number(purchase.quantity), "unit")}</td><td>{formatCop(Number(purchase.acquisition_total_cop))}<small>{formatCop(Number(purchase.acquisition_unit_cost_cop))} / UND</small></td><td>{purchase.funds_origin === "cash_session" ? "Caja" : "Externo"}</td><td>{purchase.observation || "-"}</td></tr>)}
+          </tbody></table></div>
+        </section>
+      ) : null}
       <section className="form-panel">
         <div className="section-title-row purchase-list-header">
           <h2>Listado de compras</h2>

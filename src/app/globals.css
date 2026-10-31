@@ -4806,6 +4806,24 @@ a {
   padding: 8px 12px;
 }
 
+.pos-direct-sale-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.pos-direct-sale-modal {
+  max-width: 640px;
+}
+
+.pos-direct-sale-grid {
+  padding: 16px;
+}
+
+.pos-direct-sale-observation {
+  grid-column: 1 / -1;
+}
+
 .pos-tabs button.active,
 .pos-kind-grid button.active,
 .pos-payment-grid button.active {
@@ -4821,7 +4839,7 @@ a {
   border-radius: 8px;
   display: flex;
   gap: 8px;
-  min-width: 260px;
+  min-width: 200px;
   padding: 0 10px;
 }
 

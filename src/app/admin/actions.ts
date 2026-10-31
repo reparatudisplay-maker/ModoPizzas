@@ -3331,6 +3331,16 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error instanceof Error ? error.message : "No se pudo validar el combo." };
   }
 
+  const directSaleItems = (rpcItems as unknown[]).filter((item) => {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    return record?.kind === "direct_sale";
+  });
+  const operationalItems = (rpcItems as unknown[]).filter((item) => {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    return record?.kind !== "direct_sale";
+  });
+  if (directSaleItems.length > 0 && collectionParty === "platform") return { status: "error", message: "La venta libre no puede liquidarse como Rappi o DiDi." };
+
   const platformPaymentArgs = {
     p_kind: kind,
     p_customer_name: upperText(customerName),
@@ -3349,7 +3359,14 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   };
   let data: unknown;
   let error: { code?: string; message: string; details?: string | null } | null;
-  if (collectionParty === "platform") {
+  if (directSaleItems.length > 0) {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_direct_sales", {
+      ...platformPaymentArgs,
+      p_items: operationalItems,
+      p_direct_sales: directSaleItems
+    }));
+    if (error?.code === "PGRST202") return { status: "error", message: "La venta libre estará disponible cuando se aplique la actualización pendiente." };
+  } else if (collectionParty === "platform") {
     ({ data, error } = await supabase.rpc("create_pos_order_with_platform_line_pricing", {
       ...platformPaymentArgs,
       p_line_pricing: platformLinePricing
