@@ -181,78 +181,71 @@ function sortInventoryLotsForAdjustment(a: InventoryPurchaseLine, b: InventoryPu
 }
 
 function applyPhysicalCountsToPurchaseLines(lines: InventoryPurchaseLine[], counts: PhysicalInventoryCountRow[]) {
-  const adjustedLines = lines.map((line) => ({ ...line }));
-  const inventoryCounts = counts
-    .filter((count) => count.source_kind === "inventory_item" && count.inventory_item_id)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const adjustedLines = lines.map((line) => ({ ...line, quantity: 0, line_total_cop: 0 }));
+  const lineById = new Map(adjustedLines.map((line) => [line.id, line]));
 
-  for (const count of inventoryCounts) {
-    const itemId = count.inventory_item_id!;
-    const baseUnit = count.base_unit;
-    const itemLines = adjustedLines.filter((line) => line.inventory_item_id === itemId && line.purchased_at <= count.created_at);
-    if (itemLines.length === 0) continue;
-    const deltaBase = Number(count.difference_quantity_base ?? 0);
-    if (deltaBase === 0) continue;
-
-    if (deltaBase < 0) {
-      let pendingBase = Math.abs(deltaBase);
-      const orderedLines = [...itemLines].sort(sortInventoryLotsForAdjustment);
-      for (const line of orderedLines) {
-        if (pendingBase <= 0) break;
-        const availableBase = toUnit(Number(line.quantity ?? 0), line.unit, baseUnit);
-        if (availableBase <= 0) continue;
-        const takeBase = Math.min(availableBase, pendingBase);
-        const takeLineUnit = toUnit(takeBase, baseUnit, line.unit);
-        const lineUnitCost = line.quantity > 0 ? line.line_total_cop / line.quantity : 0;
-        line.quantity = Math.max(0, line.quantity - takeLineUnit);
-        line.line_total_cop = Math.max(0, line.line_total_cop - takeLineUnit * lineUnitCost);
-        line.movements = [
-          ...line.movements,
-          {
-            id: `count-${count.id}-${line.id}`,
-            kind: "adjustment",
-            occurred_at: count.created_at,
-            quantity_base: -takeBase,
-            base_unit: baseUnit,
-            reference: "Conteo físico",
-            detail: count.reason
-          }
-        ];
-        pendingBase = Math.max(0, pendingBase - takeBase);
-      }
-      continue;
-    }
-
-    const template = [...itemLines].sort(sortInventoryLotsForAdjustment)[0];
-    const quantity = toUnit(deltaBase, baseUnit, baseUnit);
-    adjustedLines.push({
-      ...template,
-      id: `count-${count.id}`,
-      purchase_id: count.id,
-      quantity,
-      purchased_quantity: quantity,
-      initial_quantity: quantity,
-      unit: baseUnit,
-      presentation_quantity: null,
-      presentation_unit: null,
-      unit_cost_cop: Number(count.average_cost_cop ?? 0),
-      line_total_cop: Number((quantity * Number(count.average_cost_cop ?? 0)).toFixed(2)),
-      expiration_date: null,
-      purchased_at: count.created_at,
-      supplier_name: "Conteo fisico",
-      lot_code: `AJ-${count.id.slice(0, 6).toUpperCase()}`,
-      movements: [
-        {
-          id: `count-${count.id}`,
-          kind: "adjustment",
-          occurred_at: count.created_at,
-          quantity_base: deltaBase,
-          base_unit: baseUnit,
-          reference: "Conteo físico",
-          detail: count.reason
-        }
-      ]
+  for (const itemId of new Set(adjustedLines.map((line) => line.inventory_item_id))) {
+    const itemLines = adjustedLines.filter((line) => line.inventory_item_id === itemId);
+    const itemCounts = counts.filter((count) => count.source_kind === "inventory_item" && count.inventory_item_id === itemId);
+    const events = [
+      ...itemLines.map((line) => ({ at: line.purchased_at, kind: "entry" as const, line })),
+      ...itemLines.flatMap((line) => line.movements
+        .filter((movement) => movement.kind !== "adjustment")
+        .map((movement) => ({ at: movement.occurred_at, kind: "consumption" as const, line, movement }))),
+      ...itemCounts.map((count) => ({ at: count.created_at, kind: "count" as const, count }))
+    ].sort((a, b) => {
+      const time = a.at.localeCompare(b.at);
+      if (time !== 0) return time;
+      const order = { entry: 0, consumption: 1, count: 2 };
+      return order[a.kind] - order[b.kind];
     });
+
+    for (const event of events) {
+      if (event.kind === "entry") {
+        event.line.quantity = event.line.initial_quantity;
+        event.line.line_total_cop = event.line.initial_quantity * event.line.unit_cost_cop;
+        continue;
+      }
+
+      const eligibleLines = itemLines
+        .filter((line) => line.purchased_at <= event.at)
+        .sort(sortInventoryLotsForAdjustment);
+
+      if (event.kind === "consumption") {
+        let pending = toUnit(event.movement.quantity_base, event.movement.base_unit, event.line.unit);
+        const target = lineById.get(event.line.id);
+        const consume = (line: InventoryPurchaseLine) => {
+          if (pending <= 0 || line.unit !== event.line.unit) return;
+          const used = Math.min(line.quantity, pending);
+          line.quantity = Math.max(0, line.quantity - used);
+          line.line_total_cop = Math.max(0, line.line_total_cop - used * line.unit_cost_cop);
+          pending -= used;
+        };
+        if (target) consume(target);
+        for (const line of eligibleLines) {
+          if (line.id !== target?.id) consume(line);
+        }
+        continue;
+      }
+
+      const delta = toUnit(event.count.difference_quantity_base, event.count.base_unit, itemLines[0]?.unit ?? event.count.base_unit);
+      if (delta < 0) {
+        let pending = Math.abs(delta);
+        for (const line of eligibleLines) {
+          if (pending <= 0) break;
+          const used = Math.min(line.quantity, pending);
+          line.quantity = Math.max(0, line.quantity - used);
+          line.line_total_cop = Math.max(0, line.line_total_cop - used * line.unit_cost_cop);
+          line.movements = [...line.movements, { id: `count-${event.count.id}-${line.id}`, kind: "adjustment", occurred_at: event.count.created_at, quantity_base: -used, base_unit: line.unit, reference: "Conteo físico", detail: event.count.reason }];
+          pending -= used;
+        }
+      } else if (delta > 0 && eligibleLines[0]) {
+        const line = eligibleLines[0];
+        line.quantity += delta;
+        line.line_total_cop += delta * line.unit_cost_cop;
+        line.movements = [...line.movements, { id: `count-${event.count.id}-${line.id}`, kind: "adjustment", occurred_at: event.count.created_at, quantity_base: delta, base_unit: line.unit, reference: "Conteo físico", detail: event.count.reason }];
+      }
+    }
   }
 
   return adjustedLines;

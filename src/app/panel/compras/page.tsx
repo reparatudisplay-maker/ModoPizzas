@@ -456,35 +456,29 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     >
       {error ? <p className="alert">{error.message}</p> : null}
       {editPurchaseError ? <p className="alert">{editPurchaseError}</p> : null}
-      {directPurchases.length ? (
-        <section className="form-panel purchase-direct-list">
-          <div className="section-title-row"><h2>Compras directas</h2><small>Sin ingreso a inventario</small></div>
-          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Pedido</th><th>Artículo</th><th>Cantidad</th><th>Costo</th><th>Origen</th><th>Observación</th></tr></thead><tbody>
-            {directPurchases.map((purchase) => <tr key={purchase.id}><td>{new Date(purchase.created_at).toLocaleDateString("es-CO")}</td><td>{purchase.pos_orders?.code ?? "-"}</td><td><strong>{purchase.product_name_snapshot}</strong></td><td>{formatQuantity(Number(purchase.quantity), "unit")}</td><td>{formatCop(Number(purchase.acquisition_total_cop))}<small>{formatCop(Number(purchase.acquisition_unit_cost_cop))} / UND</small></td><td>{purchase.funds_origin === "cash_session" ? "Caja" : "Externo"}</td><td>{purchase.observation || "-"}</td></tr>)}
-          </tbody></table></div>
-        </section>
-      ) : null}
       <section className="form-panel">
         <div className="section-title-row purchase-list-header">
-          <h2>Listado de compras</h2>
-          <div className="purchase-toolbar">
-            <PurchaseSearchFilters
-              brands={brands}
-              currentBrand={brandFilter}
-              currentPeriod={periodFilter}
-              currentSupplier={supplierFilter}
-              query={query}
-              suggestions={searchSuggestions}
-              suppliers={suppliers}
-            />
-            <PurchaseModal
-              brands={brands}
-              editPurchase={editPurchase}
-              items={items}
-              key={editPurchase?.id ?? "new-purchase"}
-              suppliers={suppliers}
-            />
-          </div>
+          <h2>{kindFilter === "direct" ? "Compras directas" : "Listado de compras"}</h2>
+          {kindFilter === "direct" ? <small>Sin ingreso a inventario</small> : (
+            <div className="purchase-toolbar">
+              <PurchaseSearchFilters
+                brands={brands}
+                currentBrand={brandFilter}
+                currentPeriod={periodFilter}
+                currentSupplier={supplierFilter}
+                query={query}
+                suggestions={searchSuggestions}
+                suppliers={suppliers}
+              />
+              <PurchaseModal
+                brands={brands}
+                editPurchase={editPurchase}
+                items={items}
+                key={editPurchase?.id ?? "new-purchase"}
+                suppliers={suppliers}
+              />
+            </div>
+          )}
         </div>
         <nav aria-label="Secciones de compras" className="purchase-tabs">
           <Link className={!kindFilter ? "active-tab" : ""} href={tabHref("")}>
@@ -499,8 +493,49 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
           <Link className={kindFilter === "supply" ? "active-tab" : ""} href={tabHref("supply")}>
             Insumos
           </Link>
+          <Link className={kindFilter === "direct" ? "active-tab" : ""} href={tabHref("direct")}>
+            Compras directas
+          </Link>
         </nav>
-        <PurchaseListWorkspace purchases={listRows} />
+        {kindFilter === "direct" ? (
+          <>
+            <div className="section-title-row purchase-list-settings-row">
+              <span className="muted">{directPurchases.length} compras directas visibles</span>
+            </div>
+            <div className="data-table-wrap">
+              <table className="data-table purchase-direct-table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Pedido</th>
+                    <th>Artículo</th>
+                    <th>Cantidad</th>
+                    <th>Costo</th>
+                    <th>Origen</th>
+                    <th>Observación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {directPurchases.map((purchase) => (
+                    <tr key={purchase.id}>
+                      <td>{new Date(purchase.created_at).toLocaleDateString("es-CO")}</td>
+                      <td><strong>{purchase.pos_orders?.code ?? "-"}</strong></td>
+                      <td><strong>{purchase.product_name_snapshot}</strong></td>
+                      <td>{formatQuantity(Number(purchase.quantity), "unit")}</td>
+                      <td>
+                        <strong>{formatCop(Number(purchase.acquisition_total_cop))}</strong>
+                        <small>{formatCop(Number(purchase.acquisition_unit_cost_cop))} / UND</small>
+                      </td>
+                      <td>{purchase.funds_origin === "cash_session" ? "Caja" : "Externo"}</td>
+                      <td>{purchase.observation || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {directPurchases.length === 0 ? <p className="muted compact-empty-state">No hay compras directas registradas.</p> : null}
+            </div>
+          </>
+        ) : <PurchaseListWorkspace purchases={listRows} />}
       </section>
     </PanelShell>
   );

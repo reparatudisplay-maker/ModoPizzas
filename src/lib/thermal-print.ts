@@ -54,9 +54,11 @@ const thermalDocumentStyles = `
   .customer-receipt { display: grid; gap: 7px; }
   .customer-receipt-items { gap: 7px; }
   .customer-receipt-items li { display: grid; gap: 2px; padding-bottom: 6px; border-bottom: 1px dashed #555; break-inside: avoid; }
-  .customer-receipt-items li > div, .customer-receipt-items li > b, .customer-receipt-items small { display: flex; justify-content: space-between; gap: 6px; }
-  .customer-receipt-items li > div span, .customer-receipt-items small { color: #222; font-size: .72rem; }
-  .customer-receipt-items li > b { justify-self: end; }
+  .customer-receipt-item-row, .customer-receipt-item-subtotal, .customer-receipt-items small { display: flex; justify-content: space-between; gap: 6px; }
+  .customer-receipt-item-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+  .customer-receipt-item-row span, .customer-receipt-items small { color: #222; font-size: .72rem; }
+  .customer-receipt-item-row > strong, .customer-receipt-item-subtotal > strong { text-align: right; }
+  .customer-receipt-item-subtotal { justify-content: flex-end; }
   .customer-receipt-totals, .customer-receipt-payment { display: grid; gap: 4px; }
   .customer-receipt-total { margin-top: 2px !important; padding-top: 6px; border-top: 2px solid #111; font-size: 1rem; }
   .customer-receipt-footer { padding-top: 6px; border-top: 1px dashed #555; font-size: .78rem; text-align: center; }

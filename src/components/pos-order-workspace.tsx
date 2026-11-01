@@ -3,11 +3,11 @@
 import Image from "next/image";
 import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import { useFormStatus } from "react-dom";
+import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, Trash2, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
-import { formatCop } from "@/lib/format";
+import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
 import { PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
@@ -448,6 +448,7 @@ export function PosOrderWorkspace({
   baseOptions,
   canConfigurePizzaPhotos,
   canEditSaleDate,
+  canRecordPendingStock,
   platformPaymentSettings,
   isSystemAdmin,
   userId
@@ -459,6 +460,7 @@ export function PosOrderWorkspace({
   baseOptions: PosPizzaBaseOption[];
   canConfigurePizzaPhotos: boolean;
   canEditSaleDate: boolean;
+  canRecordPendingStock: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
   isSystemAdmin: boolean;
   userId: string;
@@ -481,6 +483,7 @@ export function PosOrderWorkspace({
   const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
   const [saleDate, setSaleDate] = useState(todayBogota);
   const [saleDateReady, setSaleDateReady] = useState(!canEditSaleDate);
+  const [allowPendingStock, setAllowPendingStock] = useState(false);
   const [delivery, setDelivery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -626,6 +629,7 @@ export function PosOrderWorkspace({
       setNotes("");
       setOrderKind("local");
       setPaymentMethod("cash");
+      setAllowPendingStock(false);
       setPlatformLineUnitPriceOverrides({ rappi: {}, didi: {} });
       setDiscount(null);
       setDiscountInput("");
@@ -681,7 +685,12 @@ export function PosOrderWorkspace({
       }, 0);
       return () => window.clearTimeout(timeout);
     }
-    return undefined;
+    const timeout = window.setTimeout(() => {
+      setCashConfirmed(false);
+      setCashSubmitting(false);
+      cashSubmitLockRef.current = false;
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [state]);
 
   const categories = useMemo(() => {
@@ -1432,6 +1441,7 @@ export function PosOrderWorkspace({
     line_key: line.key,
     kind: line.kind,
     id: line.id,
+    name: line.name,
     secondary_id: line.secondary_id ?? null,
     quantity: line.quantity,
     unit_price_cop: line.unit_price_cop,
@@ -1537,12 +1547,14 @@ export function PosOrderWorkspace({
     if (cashSubmitLockRef.current) return;
     cashSubmitLockRef.current = true;
     submittedPaymentMethodRef.current = "cash";
-    setCashReceived(String(received));
-    setCashConfirmed(true);
-    setCashSubmitting(true);
-    setCashSelectedOption(null);
-    setCashModalOpen(false);
-    window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+    flushSync(() => {
+      setCashReceived(String(received));
+      setCashConfirmed(true);
+      setCashSubmitting(true);
+      setCashSelectedOption(null);
+      setCashModalOpen(false);
+    });
+    formRef.current?.requestSubmit();
   }
 
   function closeCashModal() {
@@ -1746,10 +1758,9 @@ export function PosOrderWorkspace({
                       )))}
                     </div>
                     <div className="pos-qty-controls pos-combo-cart-actions" aria-label={`Acciones de ${primary.combo_name ?? primary.name}`}>
-                      <button onClick={() => updateQuantity(primary.key, -1)} title="Disminuir" type="button"><Minus size={16} /></button>
-                      <strong>{primary.quantity}</strong>
                       <button onClick={() => updateQuantity(primary.key, 1)} title="Aumentar" type="button"><Plus size={16} /></button>
-                      <button className="danger-button" onClick={() => setCart((current) => current.filter((item) => item.combo_instance_id !== entry.id))} title="Quitar combo" type="button"><Trash2 size={16} /></button>
+                      <strong aria-label={`Cantidad ${primary.quantity}`}>{primary.quantity}</strong>
+                      <button aria-label={primary.quantity === 1 ? `Quitar combo ${primary.combo_name ?? primary.name}` : `Disminuir ${primary.combo_name ?? primary.name}`} onClick={() => updateQuantity(primary.key, -1)} title={primary.quantity === 1 ? "Quitar combo" : "Disminuir"} type="button"><Minus size={16} /></button>
                     </div>
                   </article>
                 );
@@ -1757,7 +1768,7 @@ export function PosOrderWorkspace({
               const line = entry.line;
               return (
               <article className="pos-cart-line" key={line.key}>
-                <div>
+                <div className="pos-cart-line-content">
                   <span className="pos-cart-line-title">
                     <strong>{line.name}</strong>
                     {line.kind === "pizza" ? (
@@ -1809,18 +1820,17 @@ export function PosOrderWorkspace({
                   {line.additions.map((addition) => (
                     <small key={addition.key}>{additionLabel(addition)} +{formatCop(addition.quantity * addition.unit_price_cop)}</small>
                   ))}
-                  <span>{line.unit_price_cop > 0 ? formatCop(line.unit_price_cop) : "Sin precio"}</span>
+                  <span className="pos-cart-line-price">{line.unit_price_cop > 0 ? formatCop(line.unit_price_cop) : "Sin precio"}</span>
                 </div>
                 <div className="pos-qty-controls">
-                  <button onClick={() => updateQuantity(line.key, -1)} title="Disminuir" type="button"><Minus size={16} /></button>
-                  <strong>{line.quantity}</strong>
                   <button
                     disabled={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id)}
                     onClick={() => updateQuantity(line.key, 1)}
                     title={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id) ? stockMessage(line.id) : "Aumentar"}
                     type="button"
                   ><Plus size={16} /></button>
-                  <button className="danger-button" onClick={() => setCart((current) => current.filter((item) => item.key !== line.key))} title="Quitar" type="button"><Trash2 size={16} /></button>
+                  <strong aria-label={`Cantidad ${line.quantity}`}>{line.quantity}</strong>
+                  <button aria-label={line.quantity === 1 ? `Quitar ${line.name}` : `Disminuir ${line.name}`} onClick={() => updateQuantity(line.key, -1)} title={line.quantity === 1 ? "Quitar" : "Disminuir"} type="button"><Minus size={16} /></button>
                 </div>
               </article>
               );
@@ -1950,6 +1960,12 @@ export function PosOrderWorkspace({
           <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">
             <PackageSearch size={16} /> Ver consumo de inventario
           </button>
+          {canRecordPendingStock ? (
+            <label className="pos-pending-stock-toggle">
+              <input checked={allowPendingStock} name="allow_pending_stock" onChange={(event) => setAllowPendingStock(event.target.checked)} type="checkbox" value="true" />
+              <span>Registrar faltantes pendientes de regularización</span>
+            </label>
+          ) : null}
           {canEditSaleDate ? (
             <section className="pos-sale-date" aria-label="Fecha de venta">
               <label htmlFor="pos-sale-date">Fecha de venta</label>
@@ -1987,7 +2003,12 @@ export function PosOrderWorkspace({
 
       {stockShortageModalOpen && state.stockShortages?.length ? (
         <StockShortageModal
+          allowPendingRegularization={allowPendingStock}
           onClose={() => setStockShortageModalOpen(false)}
+          onContinueWithPendingRegularization={() => {
+            setStockShortageModalOpen(false);
+            window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+          }}
           onChooseAlternativeBase={(linePosition) => {
             const line = cart[linePosition - 1];
             if (line?.kind === "pizza") {
@@ -2007,6 +2028,7 @@ export function PosOrderWorkspace({
           loading={inventoryPreviewLoading}
           onClose={() => setInventoryPreviewOpen(false)}
           preview={inventoryPreview}
+          presentationByInventoryId={new Map(saleProducts.filter((product) => product.presentation).map((product) => [product.id, product.presentation!]))}
         />
       ) : null}
 
@@ -2971,12 +2993,14 @@ function InventoryConsumptionPreviewModal({
   error,
   loading,
   onClose,
-  preview
+  preview,
+  presentationByInventoryId
 }: {
   error: string;
   loading: boolean;
   onClose: () => void;
   preview: PosInventoryConsumptionPreview | null;
+  presentationByInventoryId: Map<string, string>;
 }) {
   const [view, setView] = useState<"consolidated" | "detailed">("consolidated");
   const [openOrigins, setOpenOrigins] = useState<string[]>([]);
@@ -3031,7 +3055,7 @@ function InventoryConsumptionPreviewModal({
                         const key = `${item.source_kind}:${item.source_id}`;
                         const expanded = openOrigins.includes(key);
                         return <Fragment key={key}>
-                          <tr><td><strong>{item.source_name}</strong><small>{item.source_kind === "preparation" ? "Preparación producida" : "Inventario"}</small></td><td>{formatStockQuantity(item.stock_before, item.unit)}</td><td>{formatStockQuantity(item.consumption_quantity, item.unit)}</td><td>{formatStockQuantity(item.stock_after, item.unit)}</td><td><button className="ghost-button compact-button" onClick={() => setOpenOrigins((current) => expanded ? current.filter((id) => id !== key) : [...current, key])} type="button">{expanded ? "Ocultar origen" : "Ver origen"}</button></td></tr>
+                          <tr><td><strong>{item.source_name}</strong><small>{item.source_kind === "preparation" ? "Preparación producida" : presentationByInventoryId.get(item.source_id) ?? "Inventario"}</small></td><td>{formatPreviewStockQuantity(item.stock_before, item.unit)}</td><td>{formatPreviewStockQuantity(item.consumption_quantity, item.unit)}</td><td>{formatPreviewStockQuantity(item.stock_after, item.unit)}</td><td><button className="ghost-button compact-button" onClick={() => setOpenOrigins((current) => expanded ? current.filter((id) => id !== key) : [...current, key])} type="button">{expanded ? "Ocultar origen" : "Ver origen"}</button></td></tr>
                           {expanded ? <tr className="pos-inventory-preview-origins"><td colSpan={5}>{item.origins.map((origin, index) => <OriginPreview key={`${origin.origin_label}:${index}`} origin={origin} unit={item.unit} />)}</td></tr> : null}
                         </Fragment>;
                       })}</tbody>
@@ -3045,7 +3069,7 @@ function InventoryConsumptionPreviewModal({
                       <h3>{groupName === "Pedido actual" ? "Pedido actual" : groupName.replace(/^COMBO\s+/, "Combo: ")}</h3>
                       {lines.map((line, lineIndex) => <article className="pos-inventory-preview-line" key={line.order_item_id}>
                         <header><span>{line.item_kind === "pizza" ? `Pizza ${lineIndex + 1}` : "Producto"}</span><strong>{line.quantity}× {line.name}</strong></header>
-                        <div>{line.consumptions.map((consumption, consumptionIndex) => <div className="pos-inventory-preview-consumption" key={`${consumption.source_id}:${consumptionIndex}`}><span><strong>{consumption.source_name}</strong><small>{formatStockQuantity(consumption.quantity_base, consumption.base_unit)} · {consumption.origin_label}</small></span><span>{formatStockQuantity(consumption.origin_stock_before, consumption.base_unit)} → {formatStockQuantity(consumption.origin_stock_after, consumption.base_unit)}</span></div>)}</div>
+                        <div>{line.consumptions.map((consumption, consumptionIndex) => <div className="pos-inventory-preview-consumption" key={`${consumption.source_id}:${consumptionIndex}`}><span><strong>{consumption.source_name}</strong><small>{formatPreviewStockQuantity(consumption.quantity_base, consumption.base_unit)} · {consumption.origin_label}</small></span><span>{formatPreviewStockQuantity(consumption.origin_stock_before, consumption.base_unit)} → {formatPreviewStockQuantity(consumption.origin_stock_after, consumption.base_unit)}</span></div>)}</div>
                       </article>)}
                     </section>
                   ))}
@@ -3061,12 +3085,20 @@ function InventoryConsumptionPreviewModal({
 }
 
 function PreviewShortages({ shortages }: { shortages: PosStockShortage[] }) {
-  return <div className="pos-inventory-preview-shortages">{shortages.map((shortage) => <article key={`${shortage.source_kind}:${shortage.source_id}`}><strong>{shortage.source_name}</strong><span>Stock actual: {formatStockQuantity(shortage.available_quantity, shortage.unit)}</span><span>Pedido requiere: {formatStockQuantity(shortage.requested_quantity, shortage.unit)}</span><b>Faltan: {formatStockQuantity(shortage.missing_quantity, shortage.unit)}</b></article>)}</div>;
+  return <div className="pos-inventory-preview-shortages">{shortages.map((shortage) => <article key={`${shortage.source_kind}:${shortage.source_id}`}><strong>{shortage.source_name}</strong><span>Stock actual: {formatPreviewStockQuantity(shortage.available_quantity, shortage.unit)}</span><span>Pedido requiere: {formatPreviewStockQuantity(shortage.requested_quantity, shortage.unit)}</span><b>Faltan: {formatPreviewStockQuantity(shortage.missing_quantity, shortage.unit)}</b></article>)}</div>;
+}
+
+function formatPreviewStockQuantity(value: number, unit: StockUnit) {
+  if (unit === "g" || unit === "kg") {
+    const grams = unit === "kg" ? value * 1000 : value;
+    return `${formatColombianNumber(Math.round(grams), 0, 0)} G`;
+  }
+  return formatStockQuantity(value, unit);
 }
 
 function OriginPreview({ origin, unit }: { origin: PosInventoryConsumptionPreview["consolidated"][number]["origins"][number]; unit: StockUnit }) {
   const dates = [origin.purchased_at ? `Compra: ${previewDate(origin.purchased_at)}` : null, origin.elaborated_at ? `Elaboración: ${previewDate(origin.elaborated_at)}` : null, origin.purchase_expiration_date || origin.production_expiration_date ? `Vence: ${previewDate(origin.purchase_expiration_date ?? origin.production_expiration_date)}` : null].filter(Boolean);
-  return <div className="pos-inventory-preview-origin"><strong>{origin.origin_label}</strong><span>{dates.join(" · ")}</span><span>Saldo: {formatStockQuantity(origin.stock_before, unit)} · Consumirá: {formatStockQuantity(origin.consumption_quantity, unit)} · Quedará: {formatStockQuantity(origin.stock_after, unit)}</span></div>;
+  return <div className="pos-inventory-preview-origin"><strong>{origin.origin_label}</strong><span>{dates.join(" · ")}</span><span>Saldo: {formatPreviewStockQuantity(origin.stock_before, unit)} · Consumirá: {formatPreviewStockQuantity(origin.consumption_quantity, unit)} · Quedará: {formatPreviewStockQuantity(origin.stock_after, unit)}</span></div>;
 }
 
 function SubmitOrderButton({ disabled }: { disabled: boolean }) {
@@ -3386,14 +3418,18 @@ function ComboSelectorModal({
 }
 
 function StockShortageModal({
+  allowPendingRegularization,
   shortages,
   onClose,
+  onContinueWithPendingRegularization,
   onOpenPurchases,
   onOpenProduction,
   onChooseAlternativeBase
 }: {
+  allowPendingRegularization: boolean;
   shortages: PosStockShortage[];
   onClose: () => void;
+  onContinueWithPendingRegularization: () => void;
   onOpenPurchases: () => void;
   onOpenProduction: () => void;
   onChooseAlternativeBase: (linePosition: number) => void;
@@ -3417,14 +3453,20 @@ function StockShortageModal({
         <div className="stock-shortage-body">
           <StockShortageTable entries={pizzaRows} onChooseAlternativeBase={onChooseAlternativeBase} title="Pizzas" />
           <StockShortageTable entries={productRows} title="Productos" />
-          <p className="field-hint danger">No es posible confirmar el pedido hasta completar el stock requerido.</p>
-          {needsPurchase ? <p className="field-hint">Para ingredientes, bases o productos: registra una compra o ajuste de inventario.</p> : null}
-          {needsProduction ? <p className="field-hint">Para preparaciones: registra una producción o ingreso histórico/ajuste de la preparación.</p> : null}
+          {allowPendingRegularization ? (
+            <p className="field-hint">La venta descontará únicamente el stock disponible y dejará los faltantes pendientes para asociarlos posteriormente a una compra. No creará compras.</p>
+          ) : <>
+            <p className="field-hint danger">No es posible confirmar el pedido hasta completar el stock requerido.</p>
+            {needsPurchase ? <p className="field-hint">Para ingredientes, bases o productos: registra una compra o ajuste de inventario.</p> : null}
+            {needsProduction ? <p className="field-hint">Para preparaciones: registra una producción o ingreso histórico/ajuste de la preparación.</p> : null}
+          </>}
         </div>
         <footer className="form-actions modal-form-actions">
           <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
-          {needsPurchase ? <button className="primary-button" onClick={onOpenPurchases} type="button">Ir a Compras</button> : null}
-          {needsProduction ? <button className="positive-button" onClick={onOpenProduction} type="button">Ir a Producción</button> : null}
+          {allowPendingRegularization ? <button className="positive-button" onClick={onContinueWithPendingRegularization} type="button">Continuar con faltantes</button> : <>
+            {needsPurchase ? <button className="primary-button" onClick={onOpenPurchases} type="button">Ir a Compras</button> : null}
+            {needsProduction ? <button className="positive-button" onClick={onOpenProduction} type="button">Ir a Producción</button> : null}
+          </>}
         </footer>
       </section>
     </div>

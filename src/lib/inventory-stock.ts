@@ -135,6 +135,82 @@ export function applyPhysicalStockAdjustments(
   return { stock: Number(stock.toFixed(6)), originStock: stockByOrigin, adjustmentsByOrigin };
 }
 
+// Entries, allocations, and physical counts must be processed in time order.
+// Applying all allocations before a count can incorrectly restore stock used later.
+export function applyChronologicalStockAdjustments(
+  origins: StockOrigin[],
+  allocations: Allocation[],
+  counts: PhysicalStockAdjustment[],
+  unit: StockUnit,
+  sourceKind: "inventory_item" | "preparation"
+) {
+  type StockEvent =
+    | { kind: "entry"; at: string; origin: StockOrigin }
+    | { kind: "allocation"; at: string; allocation: Allocation }
+    | { kind: "count"; at: string; count: PhysicalStockAdjustment };
+
+  const stockByOrigin = new Map(origins.map((origin) => [origin.id, 0]));
+  const adjustmentsByOrigin = new Map<string, AppliedPhysicalStockAdjustment[]>();
+  const orderedOrigins = [...origins].sort((a, b) => {
+    if (a.expiration && b.expiration && a.expiration !== b.expiration) return a.expiration.localeCompare(b.expiration);
+    if (a.expiration && !b.expiration) return -1;
+    if (!a.expiration && b.expiration) return 1;
+    return a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id);
+  });
+  const events: StockEvent[] = [
+    ...orderedOrigins.map((origin) => ({ kind: "entry" as const, at: origin.occurredAt, origin })),
+    ...allocations.map((allocation) => ({ kind: "allocation" as const, at: allocation.created_at ?? "", allocation })),
+    ...counts.map((count) => ({ kind: "count" as const, at: count.created_at, count }))
+  ];
+  const priority = { entry: 0, allocation: 1, count: 2 } as const;
+
+  const recordAdjustment = (originId: string, quantity: number, occurredAt: string) => {
+    if (quantity === 0) return;
+    adjustmentsByOrigin.set(originId, [...(adjustmentsByOrigin.get(originId) ?? []), { occurred_at: occurredAt, quantity }]);
+  };
+  const consume = (origin: StockOrigin, pending: { value: number }) => {
+    if (pending.value <= 0) return;
+    const current = stockByOrigin.get(origin.id) ?? 0;
+    const used = Math.min(Math.max(0, current), pending.value);
+    stockByOrigin.set(origin.id, Math.max(0, current - used));
+    pending.value -= used;
+  };
+
+  for (const event of events.sort((a, b) => a.at.localeCompare(b.at) || priority[a.kind] - priority[b.kind])) {
+    if (event.kind === "entry") {
+      stockByOrigin.set(event.origin.id, (stockByOrigin.get(event.origin.id) ?? 0) + event.origin.available);
+      continue;
+    }
+
+    const eligible = orderedOrigins.filter((origin) => origin.occurredAt <= event.at);
+    if (event.kind === "allocation") {
+      const pending = { value: convertStockQuantity(Number(event.allocation.quantity_base ?? 0), event.allocation.base_unit, unit) };
+      const targetId = sourceKind === "inventory_item" ? event.allocation.purchase_item_id : event.allocation.production_batch_id;
+      const target = targetId ? eligible.find((origin) => origin.id === targetId) : undefined;
+      if (target) consume(target, pending);
+      for (const origin of eligible) if (origin.id !== target?.id) consume(origin, pending);
+      continue;
+    }
+
+    const adjustment = convertStockQuantity(Number(event.count.difference_quantity_base ?? 0), event.count.base_unit, unit);
+    if (adjustment < 0) {
+      const pending = { value: Math.abs(adjustment) };
+      for (const origin of eligible) {
+        const before = stockByOrigin.get(origin.id) ?? 0;
+        consume(origin, pending);
+        recordAdjustment(origin.id, (stockByOrigin.get(origin.id) ?? 0) - before, event.at);
+      }
+    } else if (adjustment > 0 && eligible[0]) {
+      const origin = eligible[0];
+      stockByOrigin.set(origin.id, (stockByOrigin.get(origin.id) ?? 0) + adjustment);
+      recordAdjustment(origin.id, adjustment, event.at);
+    }
+  }
+
+  const stock = [...stockByOrigin.values()].reduce((sum, value) => sum + value, 0);
+  return { stock: Number(stock.toFixed(6)), originStock: stockByOrigin, adjustmentsByOrigin };
+}
+
 export async function getAdjustedSourceStock(
   supabase: StockSupabaseClient,
   sourceKind: "inventory_item" | "preparation",
@@ -153,7 +229,7 @@ export async function getAdjustedSourceStock(
     if (lotsError) throw new Error(lotsError.message);
 
     const ids = (lots ?? []).map((lot) => lot.id);
-    const [productionResult, posResult, countsResult, baselineResult] = await Promise.all([
+    const [productionResult, posResult, countsResult] = await Promise.all([
       ids.length
         ? fetchAllRows((from, to) =>
             supabase
@@ -184,35 +260,17 @@ export async function getAdjustedSourceStock(
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to)
-      ),
-      supabase
-        .from("inventory_stock_reconciliation_baselines")
-        .select("source_kind, source_id, effective_at")
-        .eq("source_kind", sourceKind)
-        .eq("source_id", sourceId)
-        .maybeSingle()
+      )
     ]);
     if (productionResult.error) throw new Error(productionResult.error.message);
     if (posResult.error) throw new Error(posResult.error.message);
     if (countsResult.error) throw new Error(countsResult.error.message);
-    if (baselineResult.error) throw new Error(baselineResult.error.message);
-
-    const used = new Map<string, number>();
-    for (const row of [...(productionResult.data ?? []), ...(posResult.data ?? [])] as unknown as Allocation[]) {
-      if (!row.purchase_item_id) continue;
-      const quantity = convertStockQuantity(Number(row.quantity_base ?? 0), row.base_unit, unit);
-      used.set(row.purchase_item_id, (used.get(row.purchase_item_id) ?? 0) + quantity);
-    }
-
     const origins: StockOrigin[] = (lots ?? [])
       .map((lot) => {
         const purchase = Array.isArray(lot.purchases) ? lot.purchases[0] : lot.purchases;
         return {
           id: lot.id,
-          available: Math.max(
-            0,
-            convertStockQuantity(Number(lot.quantity ?? 0), lot.unit as StockUnit, unit) - (used.get(lot.id) ?? 0)
-          ),
+          available: convertStockQuantity(Number(lot.quantity ?? 0), lot.unit as StockUnit, unit),
           occurredAt: purchase?.purchased_at ?? "",
           expiration: lot.expiration_date ?? "",
           sequence: 0
@@ -225,23 +283,13 @@ export async function getAdjustedSourceStock(
         return a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id);
       });
 
-    const adjusted = applyPhysicalStockAdjustments(
+    return applyChronologicalStockAdjustments(
       origins,
-      (countsResult.data ?? []) as PhysicalStockAdjustment[],
-      unit
-    );
-    const originStock = applyStockReconciliationBaseline(
-      origins,
-      adjusted.originStock,
       [...(productionResult.data ?? []), ...(posResult.data ?? [])] as unknown as Allocation[],
-      (baselineResult.data ?? null) as StockReconciliationBaseline | null,
-      unit
+      (countsResult.data ?? []) as PhysicalStockAdjustment[],
+      unit,
+      sourceKind
     );
-    return {
-      ...adjusted,
-      originStock,
-      stock: Number([...originStock.values()].reduce((total, value) => total + value, 0).toFixed(6))
-    };
   }
 
   const { data: batches, error: batchesError } = await fetchAllRows((from, to) =>
@@ -255,7 +303,7 @@ export async function getAdjustedSourceStock(
   if (batchesError) throw new Error(batchesError.message);
 
   const ids = (batches ?? []).map((batch) => batch.id);
-  const [productionResult, posResult, countsResult, baselineResult] = await Promise.all([
+  const [productionResult, posResult, countsResult] = await Promise.all([
     ids.length
       ? fetchAllRows((from, to) =>
           supabase
@@ -286,34 +334,15 @@ export async function getAdjustedSourceStock(
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
-    ),
-    supabase
-      .from("inventory_stock_reconciliation_baselines")
-      .select("source_kind, source_id, effective_at")
-      .eq("source_kind", sourceKind)
-      .eq("source_id", sourceId)
-      .maybeSingle()
+    )
   ]);
   if (productionResult.error) throw new Error(productionResult.error.message);
   if (posResult.error) throw new Error(posResult.error.message);
   if (countsResult.error) throw new Error(countsResult.error.message);
-  if (baselineResult.error) throw new Error(baselineResult.error.message);
-
-  const used = new Map<string, number>();
-  for (const row of [...(productionResult.data ?? []), ...(posResult.data ?? [])] as unknown as Allocation[]) {
-    if (!row.production_batch_id) continue;
-    const quantity = convertStockQuantity(Number(row.quantity_base ?? 0), row.base_unit, unit);
-    used.set(row.production_batch_id, (used.get(row.production_batch_id) ?? 0) + quantity);
-  }
-
   const origins: StockOrigin[] = (batches ?? [])
     .map((batch) => ({
       id: batch.id,
-      available: Math.max(
-        0,
-        convertStockQuantity(Number(batch.initial_quantity_base ?? 0), batch.base_unit as StockUnit, unit) -
-          (used.get(batch.id) ?? 0)
-      ),
+      available: convertStockQuantity(Number(batch.initial_quantity_base ?? 0), batch.base_unit as StockUnit, unit),
       occurredAt: batch.elaborated_at ?? "",
       expiration: batch.expiration_date ?? "",
       sequence: Number(batch.production_number ?? 0)
@@ -325,21 +354,11 @@ export async function getAdjustedSourceStock(
         a.sequence - b.sequence
     );
 
-  const adjusted = applyPhysicalStockAdjustments(
+  return applyChronologicalStockAdjustments(
     origins,
-    (countsResult.data ?? []) as PhysicalStockAdjustment[],
-    unit
-  );
-  const originStock = applyStockReconciliationBaseline(
-    origins,
-    adjusted.originStock,
     [...(productionResult.data ?? []), ...(posResult.data ?? [])] as unknown as Allocation[],
-    (baselineResult.data ?? null) as StockReconciliationBaseline | null,
-    unit
+    (countsResult.data ?? []) as PhysicalStockAdjustment[],
+    unit,
+    sourceKind
   );
-  return {
-    ...adjusted,
-    originStock,
-    stock: Number([...originStock.values()].reduce((total, value) => total + value, 0).toFixed(6))
-  };
 }

@@ -29,6 +29,20 @@ function formatQuantity(quantity: number, unit: Parameters<typeof formatStockQua
   return formatStockQuantity(quantity, unit);
 }
 
+function baseLabel(item: KitchenTicket["items"][number]) {
+  if (!item.base) return "Base sin registro";
+  if (item.base.mode === "production_dough" || !item.size) return item.base.name ?? "Base sin registro";
+
+  const size = item.size
+    .replace(/-/g, " ")
+    .replace(/\b(\d+)\s*cm\b/gi, "$1CM")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => /^\d+CM$/i.test(part) ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ");
+  return `Base ${size}`;
+}
+
 function ComponentList({ components, element }: { components: KitchenTicket["items"][number]["components"]; element: PrintTemplateElement }) {
   return (
     <ul className="kitchen-ticket-quantity-list">
@@ -55,13 +69,11 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
             <header>
               <PrintTemplatePart element={element} part="label">{item.quantity} × PIZZA</PrintTemplatePart>
               <PrintTemplatePart as="strong" element={element} part="value">{item.name}</PrintTemplatePart>
-              {item.size ? <PrintTemplatePart as="small" element={element} part="value">{item.size}</PrintTemplatePart> : null}
             </header>
 
             {item.base ? (
               <div className="kitchen-ticket-group">
-                <PrintTemplatePart as="b" element={element} part="title">{item.base.mode === "production_dough" ? "MASA DE PRODUCCIÓN" : "BASE"}</PrintTemplatePart>
-                <p><PrintTemplatePart element={element} part="label">{item.base.name ?? "Base sin registro"}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatQuantity(item.base.quantity, item.base.unit)}</PrintTemplatePart></p>
+                <p><PrintTemplatePart element={element} part="label">{baseLabel(item)}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatQuantity(item.base.quantity, item.base.unit)}</PrintTemplatePart></p>
                 {item.base.production_batches.map((batch, batchIndex) => (
                   <PrintTemplatePart as="small" element={element} key={`${batch.production_number}-${batchIndex}`} part="value">Producción P{batch.production_number ?? "—"} · {formatQuantity(batch.quantity, batch.unit)}</PrintTemplatePart>
                 ))}
@@ -81,12 +93,12 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
     kitchen_order: (element) => <div className="kitchen-ticket-order-notes"><PrintTemplatePart element={element} part="value">{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</PrintTemplatePart></div>,
     kitchen_pizzas: pizzaSection,
     kitchen_delivery: (element) => deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><PrintTemplatePart as="b" element={element} part="title">PARA ENTREGAR</PrintTemplatePart><ul>{deliveryItems.map((item) => <li key={item.id}><PrintTemplatePart element={element} part="value">{item.quantity} × {item.name}</PrintTemplatePart></li>)}</ul></section> : null,
-    kitchen_summary: (element) => <section className="kitchen-ticket-summary">
+    kitchen_summary: (element) => pizzaItems.length > 1 ? <section className="kitchen-ticket-summary">
       <PrintTemplatePart as="b" element={element} part="title">RESUMEN OPERATIVO</PrintTemplatePart>
       <p><PrintTemplatePart element={element} part="label">TOTAL PIZZAS</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{ticket.summary.pizza_count}</PrintTemplatePart></p>
       {ticket.summary.bases.length > 0 ? <><PrintTemplatePart as="small" element={element} part="title">BASES</PrintTemplatePart><ComponentList element={element} components={ticket.summary.bases.map((base) => ({ type: "ingredient" as const, name: base.name, quantity: base.quantity, unit: base.unit, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
       {ticket.summary.components.length > 0 ? <><PrintTemplatePart as="small" element={element} part="title">TOTAL INGREDIENTES</PrintTemplatePart><ComponentList element={element} components={ticket.summary.components.map((component) => ({ ...component, addition_name: null, addition_scope: null, addition_scope_label: null }))} /></> : null}
-    </section>
+    </section> : null
   };
 
   return (

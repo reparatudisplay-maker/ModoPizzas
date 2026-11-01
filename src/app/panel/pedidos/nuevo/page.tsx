@@ -445,7 +445,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

@@ -7,7 +7,7 @@ import { normalizeMasterText } from "@/lib/master-normalization";
 import { isAmbiguousColombianThousandsInput, parseColombianDecimal, parseColombianInteger } from "@/lib/number-format";
 import { getAdjustedSourceStock } from "@/lib/inventory-stock";
 import { defaultPrintTemplate, normalizePrintTemplate, type PrintTemplate, type PrintTemplateKind } from "@/lib/print-templates";
-import type { StockUnit } from "@/lib/units";
+import { formatStockQuantity, type StockUnit } from "@/lib/units";
 
 const validRoles = new Set(["vendedor", "mesero", "cocina", "mensajero", "gerente", "admin_sistema"]);
 const productImageBucket = "product-images";
@@ -93,6 +93,7 @@ export type PosOrderReceipt = {
     kind: "pizza" | "sale_product";
     quantity: number;
     name: string;
+    presentation: string | null;
     unit_price_cop: number;
     line_subtotal_cop: number;
     additions: Array<{ quantity: number; name: string; unit_price_cop: number; line_subtotal_cop: number }>;
@@ -3252,6 +3253,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const sourceChannel = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : "direct";
   const collectionParty = paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business";
   const platformLinePricingRaw = getString(formData, "platform_line_pricing");
+  const allowPendingStock = getString(formData, "allow_pending_stock") === "true";
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
   if (!["cash", "card", "transfer", "mixed", "pending", "rappi", "didi"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
@@ -3270,6 +3272,21 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
 
   if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
   if (paymentMethod === "cash" && cashReceivedCop <= 0) return { status: "error", message: "Confirma el cobro en efectivo." };
+  if (allowPendingStock) {
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+    if (!user) return { status: "error", message: "Tu sesión expiró. Ingresa nuevamente." };
+    const { data: regularizationRole, error: regularizationRoleError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .in("role", ["admin_sistema", "gerente"])
+      .limit(1)
+      .maybeSingle();
+    if (regularizationRoleError) return { status: "error", message: regularizationRoleError.message };
+    if (!regularizationRole) return { status: "error", message: "Solo Gerente o Administrador del sistema puede registrar faltantes pendientes." };
+  }
 
   let operationalSaleAt: string | null = null;
   if (saleDate) {
@@ -3283,6 +3300,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
       .select("role")
       .eq("user_id", user.id)
       .in("role", ["admin_sistema", "gerente"])
+      .limit(1)
       .maybeSingle();
     if (operationalDateRoleError) return { status: "error", message: operationalDateRoleError.message };
     if (!operationalDateRole) return { status: "error", message: "Solo Gerente o Administrador del sistema puede registrar una fecha de venta manual." };
@@ -3341,6 +3359,44 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   });
   if (directSaleItems.length > 0 && collectionParty === "platform") return { status: "error", message: "La venta libre no puede liquidarse como Rappi o DiDi." };
 
+  const directSalesPayload = directSaleItems.map((item) => {
+    const line = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    const directSale = line?.direct_sale && typeof line.direct_sale === "object" ? line.direct_sale as Record<string, unknown> : null;
+    if (!directSale) return { payload: null, invalidFields: ["datos de compra"] };
+    const quantity = Number(line?.quantity);
+    const unitPrice = Number(line?.unit_price_cop);
+    const acquisitionUnitCost = Number(directSale?.acquisition_unit_cost_cop);
+    const fundsOrigin = directSale?.funds_origin;
+    const name = typeof line?.name === "string" ? line.name.trim() : "";
+    const invalidFields = [
+      !name ? "producto" : "",
+      !Number.isFinite(quantity) || quantity <= 0 ? "cantidad" : "",
+      !Number.isFinite(unitPrice) || unitPrice < 0 ? "precio" : "",
+      !Number.isFinite(acquisitionUnitCost) || acquisitionUnitCost < 0 ? "costo" : "",
+      fundsOrigin !== "cash_session" && fundsOrigin !== "external" ? "origen del dinero" : ""
+    ].filter(Boolean);
+
+    if (invalidFields.length > 0) return { payload: null, invalidFields };
+
+    return {
+      invalidFields,
+      payload: {
+        line_key: typeof line?.line_key === "string" ? line.line_key : null,
+        name,
+        quantity,
+        unit_price_cop: unitPrice,
+        direct_sale: {
+          inventory_item_id: typeof directSale.inventory_item_id === "string" && directSale.inventory_item_id ? directSale.inventory_item_id : null,
+          acquisition_unit_cost_cop: acquisitionUnitCost,
+          funds_origin: fundsOrigin,
+          observation: typeof directSale.observation === "string" ? directSale.observation.trim() : ""
+        }
+      }
+    };
+  });
+  const invalidDirectSale = directSalesPayload.find((item) => item.payload === null);
+  if (invalidDirectSale) return { status: "error", message: `La venta libre tiene campos inválidos: ${invalidDirectSale.invalidFields.join(", ")}.` };
+
   const platformPaymentArgs = {
     p_kind: kind,
     p_customer_name: upperText(customerName),
@@ -3363,15 +3419,19 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     ({ data, error } = await supabase.rpc("create_pos_order_with_direct_sales", {
       ...platformPaymentArgs,
       p_items: operationalItems,
-      p_direct_sales: directSaleItems
+      p_direct_sales: directSalesPayload.flatMap((item) => item.payload ? [item.payload] : []),
+      p_allow_pending_stock: allowPendingStock
     }));
     if (error?.code === "PGRST202") return { status: "error", message: "La venta libre estará disponible cuando se aplique la actualización pendiente." };
   } else if (collectionParty === "platform") {
-    ({ data, error } = await supabase.rpc("create_pos_order_with_platform_line_pricing", {
+    ({ data, error } = await supabase.rpc(allowPendingStock ? "create_pos_order_with_platform_line_pricing_and_pending_stock" : "create_pos_order_with_platform_line_pricing", {
       ...platformPaymentArgs,
       p_line_pricing: platformLinePricing
     }));
     if (error?.code === "PGRST202") return { status: "error", message: "La edición de precios por plataforma estará disponible cuando se aplique la actualización pendiente." };
+  } else if (allowPendingStock) {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_pending_stock", platformPaymentArgs));
+    if (error?.code === "PGRST202") return { status: "error", message: "La excepción temporal estará disponible cuando se aplique la actualización pendiente." };
   } else {
     ({ data, error } = await supabase.rpc("create_pos_order_with_platform_payment", platformPaymentArgs));
   }
@@ -3600,6 +3660,7 @@ export async function getPosOrderReceipt(orderId: string): Promise<PosOrderRecei
       pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
       pos_order_items(
         id, item_kind, quantity, product_name_snapshot, unit_price_cop, line_subtotal_cop,
+        inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit),
         pos_order_item_additions(quantity, name_snapshot, unit_price_cop, line_subtotal_cop)
       )
     `)
@@ -3638,6 +3699,14 @@ export async function getPosOrderReceipt(orderId: string): Promise<PosOrderRecei
         kind: item.item_kind === "sale_product" ? "sale_product" as const : "pizza" as const,
         quantity: numberValue(item.quantity),
         name: text(item.product_name_snapshot, "Producto sin nombre"),
+        presentation: (() => {
+          if (item.item_kind !== "sale_product" || !item.inventory_item || typeof item.inventory_item !== "object") return null;
+          const inventoryItem = item.inventory_item as Record<string, unknown>;
+          const presentationQuantity = numberValue(inventoryItem.presentation_quantity);
+          const presentationUnit = text(inventoryItem.presentation_unit) as StockUnit;
+          if (presentationQuantity <= 0 || !["g", "kg", "ml", "l", "unit"].includes(presentationUnit)) return null;
+          return formatStockQuantity(presentationQuantity, presentationUnit).replace(/,00 (?=(?:G|KG|ML|L|UND)$)/, " ");
+        })(),
         unit_price_cop: numberValue(item.unit_price_cop),
         line_subtotal_cop: numberValue(item.line_subtotal_cop),
         additions: asArray(item.pos_order_item_additions).map((addition) => ({

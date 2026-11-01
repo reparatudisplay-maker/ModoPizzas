@@ -70,6 +70,7 @@ type BleDevice = {
 
 type WebBluetooth = {
   requestDevice: (options: { acceptAllDevices: true; optionalServices: string[] }) => Promise<BleDevice>;
+  getDevices?: () => Promise<BleDevice[]>;
 };
 
 export type BlePrinterStatus = {
@@ -258,20 +259,7 @@ export function getBleErrorMessage(error: unknown) {
   return describeBleError(error);
 }
 
-export async function connectBlePrinter(profile = getDefaultBluetoothProfile()) {
-  const bluetooth = getWebBluetooth();
-  if (!bluetooth) throw new Error("Este navegador no permite conexión Bluetooth desde páginas web. En iPhone o iPad, abre Modo Pizzas desde Bluefy; en otros dispositivos usa la impresión original.");
-  const profileError = validateBluetoothProfile(profile);
-  if (profileError) throw new Error(profileError);
-  const normalizedProfile = normalizeProfile(profile);
-  ensureEscPosProfile(normalizedProfile);
-  if (device?.gatt?.connected && characteristic && activeProfile?.id === normalizedProfile.id) return currentStatus();
-  if (device?.gatt?.connected) disconnectBlePrinter();
-
-  const nextDevice = await bluetooth.requestDevice({
-    acceptAllDevices: true,
-    optionalServices: [normalizedProfile.serviceUuid]
-  });
+async function connectDevice(nextDevice: BleDevice, normalizedProfile: BluetoothPrinterProfile) {
   const server = await nextDevice.gatt?.connect();
   if (!server) throw new Error("La impresora no permitió una conexión GATT.");
   let nextCharacteristic: WritableBleCharacteristic;
@@ -299,6 +287,28 @@ export async function connectBlePrinter(profile = getDefaultBluetoothProfile()) 
   return currentStatus();
 }
 
+export async function connectBlePrinter(profile = getDefaultBluetoothProfile()) {
+  const bluetooth = getWebBluetooth();
+  if (!bluetooth) throw new Error("Este navegador no permite conexión Bluetooth desde páginas web. En iPhone o iPad, abre Modo Pizzas desde Bluefy; en otros dispositivos usa la impresión original.");
+  const profileError = validateBluetoothProfile(profile);
+  if (profileError) throw new Error(profileError);
+  const normalizedProfile = normalizeProfile(profile);
+  ensureEscPosProfile(normalizedProfile);
+  if (device?.gatt?.connected && characteristic && activeProfile?.id === normalizedProfile.id) return currentStatus();
+  if (device?.gatt?.connected) disconnectBlePrinter();
+
+  const configuration = getBluetoothPrinterConfiguration();
+  const defaultPrinter = configuration.printers.find((printer) => printer.id === configuration.defaultPrinterId && printer.profileId === normalizedProfile.id);
+  const authorizedDevices = defaultPrinter && bluetooth.getDevices ? await bluetooth.getDevices() : [];
+  const savedDevice = defaultPrinter ? authorizedDevices.find((candidate) => candidate.id === defaultPrinter.deviceId) : null;
+  const nextDevice = savedDevice ?? await bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: [normalizedProfile.serviceUuid]
+  });
+
+  return connectDevice(nextDevice, normalizedProfile);
+}
+
 export function disconnectBlePrinter() {
   if (device && disconnectListener) device.removeEventListener("gattserverdisconnected", disconnectListener);
   if (device?.gatt?.connected) device.gatt.disconnect();
@@ -314,6 +324,8 @@ function toPrinterAscii(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/ñ/gi, (character) => character === "Ñ" ? "N" : "n")
+    .replace(/[×✕]/g, " x ")
+    .replace(/·/g, " - ")
     .replace(/[^\x20-\x7E\n]/g, "");
 }
 
@@ -420,7 +432,7 @@ function templateNodeLines(node: Element, width: number, inherited: ThermalTextS
     return runs.length > 0 ? [{ runs }] : [];
   }
   const isPairRow = children.length >= 2
-    && children[0]?.tagName === "SPAN"
+    && (children[0]?.tagName === "SPAN" || element.classList.contains("customer-receipt-item-row"))
     && (children.at(-1)?.tagName === "STRONG" || children.at(-1)?.tagName === "B");
   if (isPairRow) {
     const leftNode = children.find((child) => child.tagName === "SPAN") as HTMLElement | undefined;
@@ -428,6 +440,11 @@ function templateNodeLines(node: Element, width: number, inherited: ThermalTextS
     const left = { text: textFromNode(leftNode ?? element), style: styleFromNode(leftNode ?? element, style) };
     const right = { text: textFromNode(rightNode ?? element), style: styleFromNode(rightNode ?? element, style) };
     return thermalPair(left, right, width);
+  }
+  if (element.classList.contains("customer-receipt-item-subtotal")) {
+    const valueNode = children.find((child) => child.tagName === "STRONG" || child.tagName === "B") as HTMLElement | undefined;
+    const value = { text: textFromNode(valueNode ?? element), style: { ...styleFromNode(valueNode ?? element, style), alignment: 2 } };
+    return value.text ? [{ runs: [value] }] : [];
   }
   if (children.length === 0) {
     const text = textFromNode(element);

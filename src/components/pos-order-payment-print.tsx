@@ -30,6 +30,11 @@ function paymentLabel(method: string) {
   return labels[method] ?? method;
 }
 
+function receiptItemLabel(item: PosOrderReceipt["items"][number]) {
+  if (item.kind === "pizza") return `Pizza: ${item.name}`;
+  return item.presentation ? `${item.name} · ${item.presentation}` : item.name;
+}
+
 export function CustomerReceiptDocument({ receipt, printRef, template = defaultPrintTemplate("receipt") }: { receipt: PosOrderReceipt; printRef?: Ref<HTMLElement>; template?: PrintTemplate }) {
   const cashPayment = receipt.payments.find((payment) => payment.method === "cash");
   const hasBreakdown = receipt.order.combo_price_adjustment_cop !== 0 || receipt.order.discount_cop > 0 || receipt.order.delivery_cop > 0;
@@ -39,8 +44,8 @@ export function CustomerReceiptDocument({ receipt, printRef, template = defaultP
     receipt_items: (element) => <ul className="customer-receipt-items">
       {receipt.items.map((item) => (
         <li key={item.id}>
-          <div><PrintTemplatePart as="strong" element={element} part="label">{item.quantity} × {item.name}</PrintTemplatePart><PrintTemplatePart element={element} part="value">{formatCop(item.unit_price_cop)} c/u</PrintTemplatePart></div>
-          <PrintTemplatePart as="b" element={element} part="value">{formatCop(item.line_subtotal_cop)}</PrintTemplatePart>
+          <div className="customer-receipt-item-row"><PrintTemplatePart element={element} part="label">{item.quantity} x {receiptItemLabel(item)}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatCop(item.unit_price_cop)} c/u</PrintTemplatePart></div>
+          <div className="customer-receipt-item-subtotal"><PrintTemplatePart as="strong" element={element} part="value">{formatCop(item.line_subtotal_cop)}</PrintTemplatePart></div>
           {item.additions.map((addition, index) => <PrintTemplatePart as="small" element={element} key={`${addition.name}-${index}`} part="value">+ {addition.quantity} × {addition.name} {formatCop(addition.line_subtotal_cop)}</PrintTemplatePart>)}
         </li>
       ))}
@@ -188,13 +193,13 @@ export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; on
       const errors: string[] = [];
       const kitchenTemplate = templatesResult.status === "success" && templatesResult.templates ? templatesResult.templates.kitchen : defaultPrintTemplate("kitchen");
       const receiptTemplate = templatesResult.status === "success" && templatesResult.templates ? templatesResult.templates.receipt : defaultPrintTemplate("receipt");
-      if (ticketResult) {
-        if (ticketResult.status === "success" && ticketResult.ticket) nextDocuments.push({ kind: "kitchen", node: <KitchenTicketDocument compact template={kitchenTemplate} ticket={ticketResult.ticket} /> });
-        else errors.push(ticketResult.message);
-      }
       if (receiptResult) {
         if (receiptResult.status === "success" && receiptResult.receipt) nextDocuments.push({ kind: "receipt", node: <CustomerReceiptDocument receipt={receiptResult.receipt} template={receiptTemplate} /> });
         else errors.push(receiptResult.message);
+      }
+      if (ticketResult) {
+        if (ticketResult.status === "success" && ticketResult.ticket) nextDocuments.push({ kind: "kitchen", node: <KitchenTicketDocument compact template={kitchenTemplate} ticket={ticketResult.ticket} /> });
+        else errors.push(ticketResult.message);
       }
       if (nextDocuments.length === 0) {
         onError(errors.join(" ") || "No se pudo preparar la impresión.");
@@ -215,7 +220,12 @@ export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; on
     const printDocuments = async () => {
       if (shouldUseBlePrinter()) {
         try {
-          for (const printable of printables) await printBleThermalDocuments([printable]);
+          for (let index = 0; index < printables.length; index += 1) {
+            await printBleThermalDocuments([printables[index]], { connectIfNeeded: true });
+            if (documents[index]?.kind === "receipt" && documents.some((document) => document.kind === "kitchen")) {
+              await new Promise<void>((resolve) => window.setTimeout(resolve, 3000));
+            }
+          }
           return;
         } catch (error) {
           onError(`No se pudo enviar por Bluetooth; se abrirá la impresión original. ${getBleErrorMessage(error)}`);
