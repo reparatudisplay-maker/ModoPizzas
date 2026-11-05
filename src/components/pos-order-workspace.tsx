@@ -922,7 +922,7 @@ export function PosOrderWorkspace({
   }
 
   function addSaleProduct(product: PosSaleProductOption) {
-    if (saleProductCartQuantity(product.id) >= saleProductStock(product.id)) {
+    if (!allowPendingStock && saleProductCartQuantity(product.id) >= saleProductStock(product.id)) {
       setStockNotice(stockMessage(product.id));
       return;
     }
@@ -1361,7 +1361,7 @@ export function PosOrderWorkspace({
     if (line?.combo_instance_id) {
       const groupLines = cart.filter((item) => item.combo_instance_id === line.combo_instance_id);
       if (delta > 0) {
-        const blocked = groupLines.find((item) => item.kind === "sale_product" && item.quantity >= saleProductStock(item.id));
+        const blocked = !allowPendingStock ? groupLines.find((item) => item.kind === "sale_product" && item.quantity >= saleProductStock(item.id)) : undefined;
         if (blocked) {
           setStockNotice(stockMessage(blocked.id));
           return;
@@ -1375,7 +1375,7 @@ export function PosOrderWorkspace({
       );
       return;
     }
-    if (line?.kind === "sale_product" && delta > 0 && line.quantity >= saleProductStock(line.id)) {
+    if (!allowPendingStock && line?.kind === "sale_product" && delta > 0 && line.quantity >= saleProductStock(line.id)) {
       setStockNotice(stockMessage(line.id));
       return;
     }
@@ -1669,7 +1669,7 @@ export function PosOrderWorkspace({
               : tab === "products" ? filteredProducts.map((product) => (
                   <button
                     className="pos-product-card pos-sale-product-card"
-                    disabled={product.sale_price_cop <= 0 || saleProductCartQuantity(product.id) >= saleProductStock(product.id)}
+                    disabled={product.sale_price_cop <= 0 || (!allowPendingStock && saleProductCartQuantity(product.id) >= saleProductStock(product.id))}
                     key={product.id}
                     onClick={() => addSaleProduct(product)}
                     type="button"
@@ -1824,9 +1824,9 @@ export function PosOrderWorkspace({
                 </div>
                 <div className="pos-qty-controls">
                   <button
-                    disabled={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id)}
+                    disabled={!allowPendingStock && line.kind === "sale_product" && line.quantity >= saleProductStock(line.id)}
                     onClick={() => updateQuantity(line.key, 1)}
-                    title={line.kind === "sale_product" && line.quantity >= saleProductStock(line.id) ? stockMessage(line.id) : "Aumentar"}
+                    title={!allowPendingStock && line.kind === "sale_product" && line.quantity >= saleProductStock(line.id) ? stockMessage(line.id) : "Aumentar"}
                     type="button"
                   ><Plus size={16} /></button>
                   <strong aria-label={`Cantidad ${line.quantity}`}>{line.quantity}</strong>

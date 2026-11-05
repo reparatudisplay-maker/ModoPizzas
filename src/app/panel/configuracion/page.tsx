@@ -1,4 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
+import { ThemePreferencesModule } from "@/components/theme-preferences-module";
 import {
   type SystemModuleRecord,
   UsersPermissionsModule,
@@ -140,7 +141,8 @@ export default async function SettingsPanelPage() {
   });
 
   return (
-    <PanelShell active="configuracion" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Usuarios y permisos" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="configuracion" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Configuración" userEmail={user.email ?? "usuario"}>
+      <ThemePreferencesModule />
       <UsersPermissionsModule
         authAdminConfigured={Boolean(admin)}
         currentUserId={user.id}

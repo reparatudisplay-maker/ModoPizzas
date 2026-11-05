@@ -420,6 +420,56 @@ a {
   padding: 16px;
 }
 
+.settings-preferences-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.settings-preferences-heading p,
+.settings-preference-row span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.settings-preferences-heading h2 {
+  margin: 2px 0 0;
+}
+
+.settings-preference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-preference-row > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-preference-row .segmented-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+@media (max-width: 560px) {
+  .settings-preference-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-preference-row .segmented-control {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2594,7 +2644,55 @@ a {
 }
 
 .inventory-settings-modal {
-  width: min(760px, 100%);
+  width: min(680px, calc(100vw - 24px));
+}
+
+.inventory-settings-card {
+  border: 0;
+  box-shadow: none;
+  padding: 12px 0 0;
+}
+
+.inventory-settings-layout {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.inventory-settings-mode,
+.inventory-settings-columns-field {
+  grid-column: 1 / -1;
+}
+
+.inventory-settings-layout .field {
+  gap: 5px;
+}
+
+.inventory-settings-layout .segmented-control button {
+  min-height: 36px;
+}
+
+.inventory-settings-layout .ghost-button {
+  min-height: 36px;
+}
+
+.inventory-settings-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inventory-settings-columns .column-settings-section {
+  gap: 5px;
+}
+
+.inventory-settings-columns .column-settings-grid {
+  gap: 5px;
+}
+
+.inventory-settings-columns .check-option {
+  min-height: 30px;
+  padding: 5px 7px;
 }
 
 .physical-count-modal {
@@ -2657,6 +2755,17 @@ a {
   color: var(--muted);
   font-size: 0.82rem;
   text-transform: uppercase;
+}
+
+@media (max-width: 560px) {
+  .inventory-settings-modal {
+    width: calc(100vw - 16px);
+  }
+
+  .inventory-settings-layout,
+  .inventory-settings-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 .icon-text-button {

@@ -359,14 +359,14 @@ export default async function InventoryPage() {
     fetchAllRows((from, to) =>
       supabase
         .from("production_consumption_allocations")
-        .select("production_batch_id, quantity_base, base_unit")
+        .select("production_batch_id, quantity_base, base_unit, created_at")
         .order("id", { ascending: true })
         .range(from, to)
     ),
     fetchAllRows((from, to) =>
       supabase
         .from("pos_order_consumption_allocations")
-        .select("production_batch_id, quantity_base, base_unit, pos_order_consumptions!inner(pos_orders!inner(status))")
+        .select("production_batch_id, quantity_base, base_unit, created_at, pos_order_consumptions!inner(pos_orders!inner(status))")
         .not("production_batch_id", "is", null)
         .neq("pos_order_consumptions.pos_orders.status", "cancelled")
         .order("id", { ascending: true })
@@ -439,6 +439,7 @@ export default async function InventoryPage() {
       .map((count) => ({
         source_preparation_id: count.source_preparation_id,
         difference_quantity_base: Number(count.difference_quantity_base ?? 0),
+        physical_quantity_base: Number(count.physical_quantity_base ?? 0),
         base_unit: count.base_unit,
         created_at: count.created_at
       })),

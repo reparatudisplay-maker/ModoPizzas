@@ -8,12 +8,13 @@ import { Edit3, Eye, History, Settings, Trash2, X } from "lucide-react";
 import { recordPhysicalInventoryCount, updatePhysicalInventoryCount, voidPhysicalInventoryCount, type PhysicalInventoryActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { type ProductionInventoryItem, type ProductionInventoryLot, productionItemStatus, productionLotStatus } from "@/lib/production-inventory";
-import { canonicalStockUnit, formatStockQuantity, unitLabel } from "@/lib/units";
+import { canonicalStockUnit, formatStockQuantity, formatStockQuantityInUnit, unitLabel } from "@/lib/units";
 
 type StockUnit = "g" | "kg" | "ml" | "l" | "unit";
 type ItemKind = "ingredient" | "sale_product" | "supply";
 type ViewMode = "consolidated" | "decentralized";
 type StockFilter = "all" | "available" | "out";
+type WeightDisplayUnit = "g" | "kg";
 type InventorySection = "purchases" | "preparations" | "adjustments";
 type CountSourceKind = "inventory_item" | "preparation";
 
@@ -318,6 +319,7 @@ function readInventoryPreferences() {
     return JSON.parse(saved) as {
       viewMode?: ViewMode;
       stockFilter?: StockFilter;
+      weightDisplayUnit?: WeightDisplayUnit;
       showOutOfStock?: boolean;
       visibleColumns?: ColumnKey[];
       columnsByMode?: Partial<ColumnsByMode>;
@@ -326,6 +328,13 @@ function readInventoryPreferences() {
     window.localStorage.removeItem(inventoryViewStorageKey);
     return {};
   }
+}
+
+function formatInventoryQuantity(value: number, unit: StockUnit, weightDisplayUnit: WeightDisplayUnit) {
+  if (canonicalStockUnit(unit) !== "g") return formatStockQuantity(value, unit);
+  const quantityInGrams = unit === "kg" ? value * 1000 : value;
+  const displayValue = weightDisplayUnit === "g" ? quantityInGrams : quantityInGrams / 1000;
+  return formatStockQuantityInUnit(displayValue, weightDisplayUnit);
 }
 
 function readProductionColumns() {
@@ -415,6 +424,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
   const [supplier, setSupplier] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(() => readInventoryPreferences().viewMode ?? "consolidated");
   const [stockFilter, setStockFilter] = useState<StockFilter>(() => readInventoryPreferences().stockFilter ?? "all");
+  const [weightDisplayUnit, setWeightDisplayUnit] = useState<WeightDisplayUnit>(() => readInventoryPreferences().weightDisplayUnit ?? "kg");
   const [showOutOfStock, setShowOutOfStock] = useState(() => readInventoryPreferences().showOutOfStock ?? true);
   const [columnsByMode, setColumnsByMode] = useState<ColumnsByMode>(() => {
     const preferences = readInventoryPreferences();
@@ -474,6 +484,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
       JSON.stringify({
         viewMode,
         stockFilter,
+        weightDisplayUnit,
         showOutOfStock,
         columnsByMode: {
           consolidated: sanitizeColumns(columnsByMode.consolidated, "consolidated"),
@@ -481,7 +492,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
         }
       })
     );
-  }, [columnsByMode, showOutOfStock, stockFilter, viewMode]);
+  }, [columnsByMode, showOutOfStock, stockFilter, viewMode, weightDisplayUnit]);
 
   useEffect(() => {
     window.localStorage.setItem(productionInventoryStorageKey, JSON.stringify(visibleProductionColumns.filter((column) => productionColumns.includes(column))));
@@ -701,6 +712,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
       decentralized: defaultColumnsForMode("decentralized")
     });
     setStockFilter("all");
+    setWeightDisplayUnit("kg");
     setShowOutOfStock(true);
     setOpenItemId(null);
     setOpenPurchaseLotId(null);
@@ -993,7 +1005,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                     {showColumn("stock") ? (
                       <td>
                         <span className="stock-value-stack">
-                          <span>{formatStockQuantity(row.stock, row.unit)}</span>
+                          <span>{formatInventoryQuantity(row.stock, row.unit, weightDisplayUnit)}</span>
                           {viewMode === "decentralized" && isInventoryAdjustmentInRow(row) ? (
                             <small className="inventory-adjustment-label">Ajuste inventario</small>
                           ) : null}
@@ -1114,9 +1126,9 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                 <X size={18} />
               </button>
             </header>
-            <div className="compact-card">
-              <div className="form-grid">
-                <div className="field full">
+            <div className="compact-card inventory-settings-card">
+              <div className="inventory-settings-layout">
+                <div className="field inventory-settings-mode">
                   <label>Modo de visualizacion</label>
                   <div className="segmented-control compact-segmented">
                     <button className={viewMode === "consolidated" ? "active" : ""} onClick={() => handleViewModeChange("consolidated")} type="button">
@@ -1127,7 +1139,7 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                     </button>
                   </div>
                 </div>
-                <div className="field full">
+                <div className="field">
                   <label>Mostrar</label>
                   <select onChange={(event) => setStockFilter(event.target.value as StockFilter)} value={stockFilter}>
                     <option value="all">Mostrar todos</option>
@@ -1135,15 +1147,26 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
                     <option value="out">Solo agotados</option>
                   </select>
                 </div>
-                <div className="field full">
+                <div className="field">
                   <label>Agotados</label>
                   <button className="ghost-button icon-text-button" onClick={() => setShowOutOfStock((current) => !current)} type="button">
                     {showOutOfStock ? "Ocultar agotados" : "Mostrar agotados"}
                   </button>
                 </div>
-                <div className="field full">
+                <div className="field inventory-settings-weight">
+                  <label>Unidad de peso</label>
+                  <div className="segmented-control compact-segmented" role="group" aria-label="Unidad de peso a mostrar">
+                    <button className={weightDisplayUnit === "g" ? "active" : ""} onClick={() => setWeightDisplayUnit("g")} type="button">
+                      G
+                    </button>
+                    <button className={weightDisplayUnit === "kg" ? "active" : ""} onClick={() => setWeightDisplayUnit("kg")} type="button">
+                      KG
+                    </button>
+                  </div>
+                </div>
+                <div className="field inventory-settings-columns-field">
                   <label>Columnas</label>
-                  <div className="column-settings-sections">
+                  <div className="column-settings-sections inventory-settings-columns">
                     {inventoryColumnGroups.map((group) => {
                       const columns = group.columns.filter((column) => compatibleColumns.includes(column));
                       if (columns.length === 0) return null;

@@ -35,6 +35,29 @@ export type FormActionState = {
   message: string;
 };
 
+export async function regularizePendingInventoryDebts(_previousState: FormActionState, _formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user) return { status: "error", message: "Debes iniciar sesión." };
+
+  const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts", {
+    p_notes: "REGULARIZACION TECNICA DE FALTANTES POS. COSTOS TOMADOS DEL ULTIMO PRECIO REGISTRADO. SIN CAMBIO DE STOCK FISICO."
+  });
+  if (error) return { status: "error", message: error.message };
+
+  const result = data as { debt_count?: number; item_count?: number; total_cop?: number } | null;
+  revalidatePath("/panel/compras");
+  revalidatePath("/panel/inventario");
+  revalidatePath("/panel/reportes");
+  revalidatePath("/panel/pedidos");
+  return {
+    status: "success",
+    message: `Factura técnica registrada: ${result?.item_count ?? 0} líneas y ${result?.debt_count ?? 0} faltantes asociados. Total ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(Number(result?.total_cop ?? 0))}.`
+  };
+}
+
 export type KitchenTicket = {
   order: { id: string; code: string; kind: string; ordered_at: string };
   items: Array<{

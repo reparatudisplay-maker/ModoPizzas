@@ -3,6 +3,7 @@ import { PanelShell } from "@/components/panel-shell";
 import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
+import { PendingInventoryRegularizationAction } from "@/components/pending-inventory-regularization-action";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { formatCop } from "@/lib/format";
@@ -272,7 +273,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     purchasesQuery = purchasesQuery.gte("purchased_at", periodStart);
   }
 
-  const [itemsResult, suppliersResult, brandsResult, purchasesResult, directPurchasesResult] = await Promise.all([
+  const [itemsResult, suppliersResult, brandsResult, purchasesResult, directPurchasesResult, pendingRegularizationResult] = await Promise.all([
     supabase
       .from("inventory_items")
       .select("id, name, sku, unit, item_kind, purchase_mode, brand_id, image_url, presentation_quantity, presentation_unit, is_active")
@@ -285,7 +286,11 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       .from("direct_sale_purchases")
       .select("id, product_name_snapshot, quantity, acquisition_unit_cost_cop, acquisition_total_cop, funds_origin, observation, created_at, pos_orders(code)")
       .order("created_at", { ascending: false })
-      .limit(60)
+      .limit(60),
+    supabase
+      .from("pos_inventory_regularization_debts")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
   ]);
   let purchaseData = purchasesResult.data;
   let purchasesError = purchasesResult.error;
@@ -359,7 +364,8 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
         }
       : null;
   const editPurchaseError = editId && !editPurchase ? "No se pudo cargar la compra seleccionada. Revisa que tenga una linea de compra y producto relacionado." : "";
-  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError;
+  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError ?? pendingRegularizationResult.error;
+  const pendingRegularizationCount = pendingRegularizationResult.count ?? 0;
   const normalizedQuery = query.toLowerCase();
   const searchedPurchases = normalizedQuery
     ? purchases.filter((purchase) =>
@@ -477,6 +483,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
                 key={editPurchase?.id ?? "new-purchase"}
                 suppliers={suppliers}
               />
+              <PendingInventoryRegularizationAction pendingCount={pendingRegularizationCount} />
             </div>
           )}
         </div>

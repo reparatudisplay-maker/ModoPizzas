@@ -44,6 +44,7 @@ export type StockOrigin = {
 
 export type PhysicalStockAdjustment = {
   difference_quantity_base: number;
+  physical_quantity_base?: number;
   base_unit: StockUnit;
   created_at: string;
 };
@@ -192,6 +193,20 @@ export function applyChronologicalStockAdjustments(
       continue;
     }
 
+    if (sourceKind === "preparation" && Number.isFinite(Number(event.count.physical_quantity_base))) {
+      const latestOrigin = eligible.reduce<StockOrigin | null>((latest, origin) => {
+        if (!latest) return origin;
+        if (origin.occurredAt !== latest.occurredAt) return origin.occurredAt > latest.occurredAt ? origin : latest;
+        return origin.sequence > latest.sequence ? origin : latest;
+      }, null);
+      if (latestOrigin) {
+        for (const origin of eligible) stockByOrigin.set(origin.id, 0);
+        const physicalStock = convertStockQuantity(Number(event.count.physical_quantity_base ?? 0), event.count.base_unit, unit);
+        stockByOrigin.set(latestOrigin.id, Math.max(0, physicalStock));
+      }
+      continue;
+    }
+
     const adjustment = convertStockQuantity(Number(event.count.difference_quantity_base ?? 0), event.count.base_unit, unit);
     if (adjustment < 0) {
       const pending = { value: Math.abs(adjustment) };
@@ -254,7 +269,7 @@ export async function getAdjustedSourceStock(
       fetchAllRows((from, to) =>
         supabase
           .from("physical_inventory_counts")
-          .select("difference_quantity_base, base_unit, created_at")
+          .select("difference_quantity_base, physical_quantity_base, base_unit, created_at")
           .eq("inventory_item_id", sourceId)
           .is("voided_at", null)
           .order("created_at", { ascending: true })
@@ -328,7 +343,7 @@ export async function getAdjustedSourceStock(
     fetchAllRows((from, to) =>
       supabase
         .from("physical_inventory_counts")
-        .select("difference_quantity_base, base_unit, created_at")
+        .select("difference_quantity_base, physical_quantity_base, base_unit, created_at")
         .eq("source_preparation_id", sourceId)
         .is("voided_at", null)
         .order("created_at", { ascending: true })

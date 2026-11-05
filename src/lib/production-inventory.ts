@@ -1,5 +1,5 @@
 import { convertStockQuantity, type StockUnit } from "@/lib/units";
-import { applyPhysicalStockAdjustments, type PhysicalStockAdjustment } from "@/lib/inventory-stock";
+import { applyChronologicalStockAdjustments, type PhysicalStockAdjustment } from "@/lib/inventory-stock";
 
 export type ProductionStorageMethod = "ambient" | "refrigerated" | "frozen";
 export type ProductionUnitKind = "weight" | "volume" | "unit";
@@ -37,6 +37,7 @@ export type ProductionAllocationInput = {
   production_batch_id: string | null;
   quantity_base: number;
   base_unit: StockUnit;
+  created_at?: string;
 };
 
 export type ProductionConsumptionInput = {
@@ -199,18 +200,20 @@ export function buildProductionInventory({
   for (const [preparationId, preparationBatches] of batchesByPreparation) {
     const unit = preparationBatches[0]?.base_unit;
     if (!unit) continue;
-    const { originStock, adjustmentsByOrigin } = applyPhysicalStockAdjustments(
+    const { originStock, adjustmentsByOrigin } = applyChronologicalStockAdjustments(
       preparationBatches
         .map((batch) => ({
           id: batch.id,
-          available: Math.max(0, Number(batch.initial_quantity_base ?? 0) - productionAllocationSum(allocations, batch.id)),
+          available: Number(batch.initial_quantity_base ?? 0),
           occurredAt: batch.elaborated_at,
           expiration: batch.expiration_date,
           sequence: Number(batch.production_number ?? 0)
         }))
         .sort((a, b) => a.expiration.localeCompare(b.expiration) || a.occurredAt.localeCompare(b.occurredAt) || a.sequence - b.sequence),
+      allocations.filter((allocation) => preparationBatches.some((batch) => batch.id === allocation.production_batch_id)),
       physicalAdjustments.filter((adjustment) => adjustment.source_preparation_id === preparationId),
-      unit
+      unit,
+      "preparation"
     );
     for (const [batchId, stock] of originStock) adjustedStockByBatch.set(batchId, stock);
     for (const [batchId, adjustments] of adjustmentsByOrigin) {

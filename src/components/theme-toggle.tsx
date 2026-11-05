@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRing, Check, Clock3, MessageCircle, Moon, PhoneCall, Send, Sun, X } from "lucide-react";
+import { BellRing, Check, Clock3, MessageCircle, PhoneCall, Send, X } from "lucide-react";
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
 
@@ -164,22 +164,6 @@ export function ThemeToggle({ communicationModule }: { communicationModule?: Ope
     void acknowledge(unreadMessages.map((item) => item.id));
   }
 
-  function selectTheme() {
-    closeSecondaryPanels();
-    if (incomingCall) void acknowledge([incomingCall.id]);
-    setIncomingCall(null);
-    setCalling(false);
-    setNotice("");
-    toggleTheme();
-  }
-
-  function toggleTheme() {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-    window.localStorage.setItem("modo-pizzas-theme", nextTheme);
-  }
-
   function moveToggle(event: PointerEvent<HTMLButtonElement>) {
     const drag = dragRef.current;
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -224,32 +208,32 @@ export function ThemeToggle({ communicationModule }: { communicationModule?: Ope
   const isRightSide = typeof window !== "undefined" && position.x > window.innerWidth / 2;
   const recentMessages = messages.slice(0, 5);
 
+  // The setting is now managed from Configuración. This component only keeps
+  // the saved preference applied on every internal panel.
+  if (!communicationModule) return null;
+
   return (
     <div className={`theme-toggle-shell ${isRightSide ? "is-right" : ""}`} style={{ left: `${position.x}px`, top: `${position.y}px` }}>
       {communicationModule && menuOpen ? <section aria-label="Comunicacion interna" className="operations-quick-panel">
         <div className="operations-quick-heading"><div><strong>{moduleLabel(communicationModule)}</strong><span>Canal con {moduleLabel(destinationModule)}</span></div>{unreadMessages.length ? <b aria-label={`${unreadMessages.length} mensajes sin leer`}>{unreadMessages.length}</b> : null}</div>
         <div className="operations-quick-actions">
-          <button onClick={selectTheme} type="button"><span>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</span>Cambiar tema</button>
           <button onClick={openComposer} type="button"><span><MessageCircle size={17} /></span>Mensaje a {moduleLabel(destinationModule)}</button>
           <button disabled={calling} onClick={() => void send("call")} type="button"><span><PhoneCall size={17} /></span>{calling ? "Llamando..." : `Llamar a ${moduleLabel(destinationModule)}`}</button>
         </div>
         <div className="operations-history"><div><Clock3 size={14} /><strong>Recientes</strong></div>{recentMessages.length ? recentMessages.map((item) => <article className={!item.acknowledged_at && item.target_module === communicationModule ? "unread" : ""} key={item.id}><span>{item.communication_kind === "call" ? <BellRing size={13} /> : <MessageCircle size={13} />}</span><p><strong>{item.sender_name_snapshot}</strong>{item.body}<small>{timeLabel(item.created_at)}</small></p></article>) : <p className="operations-history-empty">Aún no hay mensajes.</p>}</div>
         {notice ? <p className="operations-quick-notice">{notice}</p> : null}
       </section> : null}
-      <button aria-label={communicationModule ? "Abrir comunicación y tema" : "Cambiar tema"} className="theme-toggle" onClick={() => {
+      <button aria-label={`Abrir comunicación con ${moduleLabel(destinationModule)}`} className="theme-toggle" onClick={() => {
         if (dragRef.current?.moved) { dragRef.current = null; return; }
         dragRef.current = null;
-        if (!communicationModule) toggleTheme();
-        else {
-          setMenuOpen((current) => !current);
-          void refreshMessages();
-          void acknowledge(unreadMessages.map((item) => item.id));
-        }
+        setMenuOpen((current) => !current);
+        void refreshMessages();
+        void acknowledge(unreadMessages.map((item) => item.id));
       }} onPointerCancel={(event) => { finishDrag(event); dragRef.current = null; }} onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         dragRef.current = { pointerId: event.pointerId, offsetX: event.clientX - position.x, offsetY: event.clientY - position.y, moved: false, position };
-      }} onPointerMove={moveToggle} onPointerUp={finishDrag} title={communicationModule ? `Comunicación con ${moduleLabel(destinationModule)}` : "Cambiar tema"} type="button">
-        {theme === "dark" ? <Sun aria-hidden="true" size={20} /> : <Moon aria-hidden="true" size={20} />}
+      }} onPointerMove={moveToggle} onPointerUp={finishDrag} title={`Comunicación con ${moduleLabel(destinationModule)}`} type="button">
+        <MessageCircle aria-hidden="true" size={20} />
         {communicationModule && unreadMessages.length ? <b className="operations-unread-badge">{unreadMessages.length > 9 ? "9+" : unreadMessages.length}</b> : null}
       </button>
       {communicationModule && composerOpen ? <div aria-modal="true" className="operations-message-dialog" role="dialog">
