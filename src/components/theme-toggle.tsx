@@ -77,6 +77,10 @@ export function ThemeToggle({ communicationModule }: { communicationModule?: Ope
   const [sending, setSending] = useState(false);
   const [calling, setCalling] = useState(false);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number; moved: boolean; position: TogglePosition } | null>(null);
+  const knownCommunicationIdsRef = useRef(new Set<string>());
+  const currentUserIdRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const [reconnectVersion, setReconnectVersion] = useState(0);
 
   const destinationModule = communicationModule === "caja" ? "cocina" : "caja";
   const unreadMessages = useMemo(() => messages.filter((item) => item.target_module === communicationModule && !item.acknowledged_at && item.sender_user_id !== currentUserId), [communicationModule, currentUserId, messages]);
@@ -105,22 +109,41 @@ export function ThemeToggle({ communicationModule }: { communicationModule?: Ope
     const supabase = createClient();
     let active = true;
     const load = async () => {
-      const [{ data: auth }, { data, error }] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.from("internal_operations_communications").select("id, origin_module, target_module, communication_kind, body, sender_user_id, sender_name_snapshot, created_at, acknowledged_at").order("created_at", { ascending: false }).limit(30)
-      ]);
-      if (!active) return;
-      setCurrentUserId(auth.user?.id ?? null);
-      if (!error) setMessages((data ?? []) as Communication[]);
+      try {
+        const [{ data: auth }, { data, error }] = await Promise.all([
+          supabase.auth.getUser(),
+          supabase.from("internal_operations_communications").select("id, origin_module, target_module, communication_kind, body, sender_user_id, sender_name_snapshot, created_at, acknowledged_at").order("created_at", { ascending: false }).limit(30)
+        ]);
+        if (!active) return;
+        const userId = auth.user?.id ?? null;
+        currentUserIdRef.current = userId;
+        setCurrentUserId(userId);
+        if (!error) {
+          for (const item of data ?? []) knownCommunicationIdsRef.current.add(item.id);
+          setMessages((data ?? []) as Communication[]);
+        }
+      } catch {
+        // The subscription retry below reconciles silently after a transient failure.
+      }
     };
     void load();
+
+    const retrySubscription = () => {
+      if (reconnectTimerRef.current !== null) return;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (active) setReconnectVersion((version) => version + 1);
+      }, 1200);
+    };
+
     const channel = supabase
-      .channel(`internal-operations-${communicationModule}`)
+      .channel(`internal-operations-${communicationModule}-${reconnectVersion}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_operations_communications" }, (payload) => {
         const item = payload.new as Communication;
-        if (!item?.id) return;
+        if (!item?.id || knownCommunicationIdsRef.current.has(item.id)) return;
+        knownCommunicationIdsRef.current.add(item.id);
         setMessages((current) => [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 30));
-        if (item.target_module === communicationModule && item.sender_user_id !== currentUserId) {
+        if (item.target_module === communicationModule && item.sender_user_id !== currentUserIdRef.current) {
           if (item.communication_kind === "call") {
             setIncomingCall(item);
             playAttentionTone();
@@ -131,16 +154,32 @@ export function ThemeToggle({ communicationModule }: { communicationModule?: Ope
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "internal_operations_communications" }, (payload) => {
         const item = payload.new as Communication;
-        setMessages((current) => current.map((entry) => (entry.id === item.id ? item : entry)));
+        if (!item?.id) return;
+        knownCommunicationIdsRef.current.add(item.id);
+        setMessages((current) => current.some((entry) => entry.id === item.id) ? current.map((entry) => (entry.id === item.id ? item : entry)) : [item, ...current].slice(0, 30));
       })
-      .subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
-  }, [communicationModule, currentUserId]);
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void load();
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") retrySubscription();
+      });
+    return () => {
+      active = false;
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      void supabase.removeChannel(channel);
+    };
+  }, [communicationModule, reconnectVersion]);
 
   async function refreshMessages() {
     if (!communicationModule) return;
     const { data } = await createClient().from("internal_operations_communications").select("id, origin_module, target_module, communication_kind, body, sender_user_id, sender_name_snapshot, created_at, acknowledged_at").order("created_at", { ascending: false }).limit(30);
-    if (data) setMessages(data as Communication[]);
+    if (data) {
+      for (const item of data) knownCommunicationIdsRef.current.add(item.id);
+      setMessages(data as Communication[]);
+    }
   }
 
   async function acknowledge(ids: string[]) {

@@ -275,7 +275,7 @@ export default async function CocinaPage() {
   return (
     <PanelShell active="cocina" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Cocina" userEmail={user.email ?? "usuario"}>
       {queryError ? <p className="alert">No se pudo actualizar Cocina. Reintenta en unos segundos.</p> : null}
-      <KitchenKdsBoard items={items} key={items.map((item) => `${item.id}:${item.status}:${item.prepared_at ?? ""}`).join("|")} settings={kitchenSettings} />
+      <KitchenKdsBoard items={items} settings={kitchenSettings} />
     </PanelShell>
   );
 }

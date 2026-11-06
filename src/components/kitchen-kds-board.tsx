@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Clock, Flame, PackageCheck } from "lucide-react";
@@ -153,11 +153,24 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
   });
   const [soundReady, setSoundReady] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const [reconnectVersion, setReconnectVersion] = useState(0);
+  const knownItemIdsRef = useRef(new Set(items.map((item) => item.id)));
+  const soundEnabledRef = useRef(soundEnabled);
+  const refreshTimerRef = useRef<number | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const normalizedQuery = normalizeMasterText(query);
 
   useEffect(() => {
     window.localStorage.setItem(soundPreferenceKey, String(soundEnabled));
+    soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
+
+  useEffect(() => {
+    // Server reconciliation must never be treated as a new order notification.
+    for (const item of items) knownItemIdsRef.current.add(item.id);
+    const timer = window.setTimeout(() => setBoardItems(items), 0);
+    return () => window.clearTimeout(timer);
+  }, [items]);
 
   function playKitchenTone() {
     try {
@@ -279,43 +292,98 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
 
   useEffect(() => {
     const supabase = createClient();
+    let active = true;
+
+    const reconcile = () => {
+      if (refreshTimerRef.current !== null) return;
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        if (active) router.refresh();
+      }, 160);
+    };
+
+    const retrySubscription = () => {
+      if (reconnectTimerRef.current !== null) return;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (active) setReconnectVersion((version) => version + 1);
+      }, 1200);
+    };
+
+    const upsertItem = (item: KitchenKdsItem) => {
+      setBoardItems((current) => {
+        const index = current.findIndex((existing) => existing.id === item.id);
+        if (index < 0) return [...current, item];
+        const next = [...current];
+        next[index] = item;
+        return next;
+      });
+    };
+
     const channel = supabase
-      .channel("kitchen-kds")
+      .channel(`kitchen-kds-${reconnectVersion}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "kitchen_order_items" }, async (payload) => {
         const id = (payload.new as { id?: string }).id;
-        if (!id) return;
-        const item = await fetchKitchenItem(id);
-        if (!item) return;
-        setBoardItems((current) => (current.some((existing) => existing.id === item.id) ? current : [...current, item]));
-        setNewItemIds((current) => [...current, item.id]);
-        window.setTimeout(() => setNewItemIds((current) => current.filter((newId) => newId !== item.id)), 2800);
-        router.refresh();
-        if (soundEnabled) {
-          const played = playKitchenTone();
-          if (!played) setSoundBlocked(true);
+        if (!id || knownItemIdsRef.current.has(id)) return;
+        knownItemIdsRef.current.add(id);
+        try {
+          const item = await fetchKitchenItem(id);
+          if (!active || !item) {
+            reconcile();
+            return;
+          }
+          upsertItem(item);
+          setNewItemIds((current) => (current.includes(item.id) ? current : [...current, item.id]));
+          window.setTimeout(() => setNewItemIds((current) => current.filter((newId) => newId !== item.id)), 2800);
+          if (soundEnabledRef.current) {
+            const played = playKitchenTone();
+            if (!played) setSoundBlocked(true);
+          }
+          reconcile();
+        } catch {
+          reconcile();
         }
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "kitchen_order_items" }, async (payload) => {
         const id = (payload.new as { id?: string }).id;
         if (!id) return;
-        const item = await fetchKitchenItem(id);
-        setBoardItems((current) => (item ? current.map((existing) => (existing.id === id ? item : existing)) : current.filter((existing) => existing.id !== id)));
+        knownItemIdsRef.current.add(id);
+        try {
+          const item = await fetchKitchenItem(id);
+          if (!active) return;
+          if (item) upsertItem(item);
+          else setBoardItems((current) => current.filter((existing) => existing.id !== id));
+          reconcile();
+        } catch {
+          reconcile();
+        }
       })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "kitchen_order_items" }, (payload) => {
         const id = (payload.old as { id?: string }).id;
         if (!id) return;
         setBoardItems((current) => current.filter((item) => item.id !== id));
+        reconcile();
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "pos_orders" }, () => router.refresh())
-      .on("postgres_changes", { event: "*", schema: "public", table: "pos_order_items" }, () => router.refresh())
-      .on("postgres_changes", { event: "*", schema: "public", table: "pos_order_item_additions" }, () => router.refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "pos_orders" }, reconcile)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pos_order_items" }, reconcile)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pos_order_item_additions" }, reconcile)
       .subscribe((status) => {
-        if (status === "SUBSCRIBED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") router.refresh();
+        if (status === "SUBSCRIBED") {
+          reconcile();
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") retrySubscription();
       });
+
     return () => {
+      active = false;
+      if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      refreshTimerRef.current = null;
+      reconnectTimerRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [router, soundEnabled]);
+  }, [reconnectVersion, router]);
 
   const filteredItems = useMemo(
     () =>
