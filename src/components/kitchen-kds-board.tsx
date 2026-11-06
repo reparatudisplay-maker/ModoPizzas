@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase-browser";
 import { normalizeMasterText } from "@/lib/master-normalization";
 
 export type KitchenItemStatus = "pending" | "in_preparation" | "prepared";
+type KitchenDateFilter = "today" | "yesterday" | "week" | "month" | "all";
 
 export type KitchenKdsItem = {
   id: string;
@@ -17,6 +18,7 @@ export type KitchenKdsItem = {
   order_item_id: string;
   order_code: string;
   order_kind: string;
+  order_table_name: string | null;
   order_notes: string | null;
   confirmed_at: string;
   received_at: string;
@@ -98,6 +100,36 @@ function dateLabel(value: string) {
   }).format(new Date(value));
 }
 
+function bogotaCalendarDay(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "America/Bogota"
+  }).formatToParts(value);
+  const read = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return { year: read("year"), month: read("month"), day: read("day") };
+}
+
+function calendarDayNumber(day: { year: number; month: number; day: number }) {
+  return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 86_400_000);
+}
+
+function matchesKitchenDateFilter(value: string, filter: KitchenDateFilter) {
+  if (filter === "all") return true;
+  const current = bogotaCalendarDay(new Date());
+  const item = bogotaCalendarDay(new Date(value));
+  const currentNumber = calendarDayNumber(current);
+  const itemNumber = calendarDayNumber(item);
+  if (filter === "today") return itemNumber === currentNumber;
+  if (filter === "yesterday") return itemNumber === currentNumber - 1;
+  if (filter === "week") {
+    const weekday = new Date(Date.UTC(current.year, current.month - 1, current.day)).getUTCDay() || 7;
+    return itemNumber >= currentNumber - weekday + 1 && itemNumber <= currentNumber;
+  }
+  return item.year === current.year && item.month === current.month;
+}
+
 function additionText(addition: KitchenKdsItem["additions"][number]) {
   const scope = addition.scope_label ? ` (${addition.scope_label})` : "";
   return `+ ${addition.name} x${addition.quantity}${scope}`;
@@ -111,6 +143,7 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
   const router = useRouter();
   const [boardItems, setBoardItems] = useState(items);
   const [query, setQuery] = useState("");
+  const [dateFilter, setDateFilter] = useState<KitchenDateFilter>("today");
   const [tick, setTick] = useState(0);
   const [newItemIds, setNewItemIds] = useState<string[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -180,7 +213,7 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
     const [{ data: order }, { data: orderItem }, { data: additions }] = await Promise.all([
       supabase
         .from("pos_orders")
-        .select("id, code, kind, notes, created_at, status")
+        .select("id, code, kind, table_name_snapshot, notes, created_at, status")
         .eq("id", kitchenRow.order_id)
         .maybeSingle(),
       supabase
@@ -203,6 +236,7 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
       order_item_id: kitchenRow.order_item_id,
       order_code: order.code,
       order_kind: order.kind,
+      order_table_name: order.table_name_snapshot,
       order_notes: order.notes,
       confirmed_at: order.created_at,
       received_at: kitchenRow.received_at ?? kitchenRow.created_at,
@@ -295,9 +329,10 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
           ...item.additions.map(additionText),
           ...item.recipe.map((component) => component.name)
         ].join(" ");
-        return !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
+        return (!normalizedQuery || normalizeMasterText(text).includes(normalizedQuery))
+          && matchesKitchenDateFilter(item.received_at, dateFilter);
       }),
-    [boardItems, normalizedQuery]
+    [boardItems, dateFilter, normalizedQuery]
   );
 
   const sortedItems = useMemo(
@@ -327,6 +362,13 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
           >
             {soundEnabled ? "🔊 Sonido activado" : "🔇 Sonido desactivado"}
           </button>
+          <select aria-label="Periodo de pedidos en cocina" className="kds-date-filter" onChange={(event) => setDateFilter(event.target.value as KitchenDateFilter)} value={dateFilter}>
+            <option value="today">Hoy</option>
+            <option value="yesterday">Ayer</option>
+            <option value="week">Semana</option>
+            <option value="month">Mes</option>
+            <option value="all">Todos</option>
+          </select>
           <label className="pos-search compact-search">
             <Flame size={18} />
             <input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar pedido o pizza" value={query} />
@@ -384,7 +426,7 @@ function KitchenCard({
       <header className="kds-card-header">
         <div>
           <strong>{item.order_code}</strong>
-          <span>{kindLabel(item.order_kind)}</span>
+          <span>{kindLabel(item.order_kind)}{item.order_table_name ? ` · ${item.order_table_name}` : ""}</span>
         </div>
         <span className="kds-timer"><Clock size={16} /> {elapsedLabel(item.received_at, tick, item.status === "prepared" ? item.prepared_at : null)}</span>
       </header>

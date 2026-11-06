@@ -2,11 +2,11 @@
 
 import Image from "next/image";
 import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
-import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
+import { BadgePercent, Banknote, Bell, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
+import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -104,6 +104,20 @@ export type PosPlatformPaymentSetting = {
   commission_percent: number;
   fixed_fee_cop: number;
   commission_tax_percent: number;
+};
+
+export type PosOrderTableOption = {
+  id: string;
+  name: string;
+};
+
+export type PosPendingPayment = {
+  id: string;
+  code: string;
+  ordered_at: string;
+  customer_name: string | null;
+  table_name: string | null;
+  total_cop: number;
 };
 
 type PizzaBaseOverride = Pick<PosPizzaBaseOption, "source_kind" | "source_id">;
@@ -358,7 +372,7 @@ function cartLineKey() {
 }
 
 function orderKindLabel(kind: OrderKind) {
-  if (kind === "local") return "Consumo en local";
+  if (kind === "local") return "Local";
   if (kind === "pickup") return "Recoger";
   return "Domicilio";
 }
@@ -440,6 +454,96 @@ function additionLabel(addition: CartAddition) {
   return addition.scope_label ? `+ ${addition.name} x${addition.quantity} (${addition.scope_label})` : `+ ${addition.name} x${addition.quantity}`;
 }
 
+function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendingPayment[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [selected, setSelected] = useState<PosPendingPayment | null>(null);
+  const [method, setMethod] = useState<"cash" | "transfer" | "mixed">("cash");
+  const [state, setState] = useState<FormActionState>(initialState);
+  const [mixedCash, setMixedCash] = useState("");
+  const [mixedTransfer, setMixedTransfer] = useState("");
+  const [mixedCashReceived, setMixedCashReceived] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (state.status !== "success") return;
+    setSelected(null);
+    setIsOpen(false);
+    router.refresh();
+  }, [router, state.status]);
+
+  function selectPayment(order: PosPendingPayment) {
+    setSelected(order);
+    setMethod("cash");
+    setMixedCash("");
+    setMixedTransfer("");
+    setMixedCashReceived("");
+    setState(initialState);
+  }
+
+  function submitPayment() {
+    if (!selected) return;
+    const formData = new FormData();
+    formData.set("order_id", selected.id);
+    formData.set("total_cop", String(selected.total_cop));
+    formData.set("reason", "COBRO PENDIENTE DESDE PEDIDOS");
+    formData.set("payment_method", method);
+    if (method === "cash") formData.set("cash_received_cop", String(selected.total_cop));
+    if (method === "mixed") {
+      formData.set("mixed_cash_cop", mixedCash);
+      formData.set("mixed_transfer_cop", mixedTransfer);
+      formData.set("mixed_cash_received_cop", mixedCashReceived);
+    }
+    startTransition(async () => setState(await updatePosOrderPaymentMethod(initialState, formData)));
+  }
+
+  return (
+    <div className="pos-pending-payments">
+      <button aria-expanded={isOpen} aria-label={`Cobros pendientes: ${pendingPayments.length}`} className="pos-pending-payments-trigger" onClick={() => setIsOpen((open) => !open)} title="Cobros pendientes" type="button">
+        <Bell size={17} />
+        {pendingPayments.length > 0 ? <span>{pendingPayments.length}</span> : null}
+      </button>
+      {isOpen ? (
+        <section className="pos-pending-payments-panel" aria-label="Cobros pendientes">
+          <header><strong>Cobros pendientes</strong><button aria-label="Cerrar cobros pendientes" className="icon-button" onClick={() => setIsOpen(false)} type="button"><X size={15} /></button></header>
+          {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
+            <div className="pos-pending-payments-list">
+              {pendingPayments.map((order) => (
+                <article key={order.id}>
+                  <div>
+                    <strong>{order.code}</strong>
+                    <small>{new Intl.DateTimeFormat("es-CO", { dateStyle: "short", timeZone: "America/Bogota" }).format(new Date(order.ordered_at))}</small>
+                    <small>{order.customer_name ?? "Sin cliente"}{order.table_name ? ` · ${order.table_name}` : ""}</small>
+                  </div>
+                  <b>{formatCop(order.total_cop)}</b>
+                  <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
+                </article>
+              ))}
+            </div>
+          )}
+          {selected ? (
+            <div className="pos-pending-payment-form">
+              <strong>{selected.code} · {formatCop(selected.total_cop)}</strong>
+              <div className="pos-pending-payment-methods">
+                {(["cash", "transfer", "mixed"] as const).map((item) => <button className={method === item ? "active" : ""} key={item} onClick={() => setMethod(item)} type="button">{paymentLabel(item)}</button>)}
+              </div>
+              {method === "mixed" ? (
+                <div className="pos-pending-payment-mixed">
+                  <input inputMode="numeric" min="1" onChange={(event) => setMixedCash(event.target.value)} placeholder="Efectivo" required type="number" value={mixedCash} />
+                  <input inputMode="numeric" min="1" onChange={(event) => setMixedTransfer(event.target.value)} placeholder="Transferencia" required type="number" value={mixedTransfer} />
+                  <input inputMode="numeric" min="1" onChange={(event) => setMixedCashReceived(event.target.value)} placeholder="Recibido efectivo" required type="number" value={mixedCashReceived} />
+                </div>
+              ) : null}
+              {state.status === "error" ? <p className="form-status error">{state.message}</p> : null}
+              <div className="modal-actions"><button className="secondary-button" onClick={() => setSelected(null)} type="button">Cancelar</button><button className="primary-button" disabled={isPending} onClick={submitPayment} type="button">{isPending ? "Cobrando..." : "Confirmar cobro"}</button></div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 export function PosOrderWorkspace({
   pizzas,
   additions,
@@ -450,6 +554,8 @@ export function PosOrderWorkspace({
   canEditSaleDate,
   canRecordPendingStock,
   platformPaymentSettings,
+  orderTables,
+  pendingPayments,
   isSystemAdmin,
   userId
 }: {
@@ -462,13 +568,14 @@ export function PosOrderWorkspace({
   canEditSaleDate: boolean;
   canRecordPendingStock: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
+  orderTables: PosOrderTableOption[];
+  pendingPayments: PosPendingPayment[];
   isSystemAdmin: boolean;
   userId: string;
 }) {
   const [state, action] = useActionState(createPosOrder, initialState);
   const [tab, setTab] = useState<CatalogTab>("pizzas");
   const [query, setQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [pizzaCardScale, setPizzaCardScale] = useState(1);
   const [productCardScale, setProductCardScale] = useState(1);
   const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(defaultProductViewSettings);
@@ -479,6 +586,7 @@ export function PosOrderWorkspace({
   const [directSaleQuickActions, setDirectSaleQuickActions] = useState<DirectSaleDraft[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
+  const [tableId, setTableId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
   const [saleDate, setSaleDate] = useState(todayBogota);
@@ -693,14 +801,6 @@ export function PosOrderWorkspace({
     return () => window.clearTimeout(timeout);
   }, [state]);
 
-  const categories = useMemo(() => {
-    const unique = new Map<string, string>();
-    for (const pizza of pizzas) {
-      if (pizza.category_id && pizza.category_name) unique.set(pizza.category_id, pizza.category_name);
-    }
-    return [...unique.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [pizzas]);
-
   const pizzaSuggestions = useMemo(() => pizzas.map((pizza) => pizza.flavor_name), [pizzas]);
   const productSuggestions = useMemo(() => saleProducts.map((product) => `${product.name} ${product.presentation ?? ""}`.trim()), [saleProducts]);
   const comboSuggestions = useMemo(() => combos.map((combo) => combo.name), [combos]);
@@ -710,10 +810,9 @@ export function PosOrderWorkspace({
       pizzas.filter((pizza) => {
         const text = `${pizza.flavor_name} ${pizza.category_name ?? ""} ${pizza.prices.map((price) => price.size_name).join(" ")}`;
         const matchesSearch = !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
-        const matchesCategory = categoryFilter === "all" || pizza.category_id === categoryFilter;
-        return matchesSearch && matchesCategory;
+        return matchesSearch;
       }),
-    [categoryFilter, normalizedQuery, pizzas]
+    [normalizedQuery, pizzas]
   );
 
   const filteredProducts = useMemo(
@@ -1592,6 +1691,7 @@ export function PosOrderWorkspace({
       <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
         <input name="kind" type="hidden" value={orderKind} />
+        <input name="table_id" type="hidden" value={orderKind === "local" ? tableId : ""} />
         <input name="payment_method" type="hidden" value={paymentMethod} />
         <input name="source_channel" type="hidden" value={platformPayment ?? "direct"} />
         <input name="collection_party" type="hidden" value={paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business"} />
@@ -1614,6 +1714,7 @@ export function PosOrderWorkspace({
               <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
               <button className={tab === "combos" ? "active" : ""} onClick={() => setTab("combos")} type="button">Combos</button>
               <button className="pos-direct-sale-button" onClick={() => setDirectSaleOpen(true)} type="button"><PackagePlus size={16} /> Venta libre</button>
+              <PendingPaymentsButton pendingPayments={pendingPayments} />
               <button
                 aria-label="Configurar vista de productos"
                 className="pos-products-settings-button"
@@ -1642,12 +1743,6 @@ export function PosOrderWorkspace({
             <datalist id="pos-combo-suggestions">
               {comboSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
             </datalist>
-            {tab === "pizzas" ? (
-              <select className="pos-category-filter" onChange={(event) => setCategoryFilter(event.target.value)} value={categoryFilter}>
-                <option value="all">Todas las categorias</option>
-                {categories.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            ) : null}
           </div>
 
           <div className={`pos-product-grid pos-card-scale-${activeCardScale}`}>
@@ -1719,9 +1814,22 @@ export function PosOrderWorkspace({
 
           <div className="pos-kind-grid">
             {(["local", "pickup", "delivery"] as OrderKind[]).map((kind) => (
-              <button className={orderKind === kind ? "active" : ""} key={kind} onClick={() => setOrderKind(kind)} type="button">
-                {orderKindLabel(kind)}
-              </button>
+              <Fragment key={kind}>
+                <button className={orderKind === kind ? "active" : ""} onClick={() => {
+                  setOrderKind(kind);
+                  if (kind !== "local") setTableId("");
+                }} type="button">
+                  {orderKindLabel(kind)}
+                </button>
+                {kind === "local" && orderKind === "local" ? (
+                  <label aria-label="Mesa" className="pos-table-selector">
+                    <select aria-label="Mesa" onChange={(event) => setTableId(event.target.value)} value={tableId}>
+                      <option value="">Sin mesa</option>
+                      {orderTables.map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+                    </select>
+                  </label>
+                ) : null}
+              </Fragment>
             ))}
           </div>
 

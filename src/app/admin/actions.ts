@@ -3272,6 +3272,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const cashReceivedCop = getDecimal(formData, "cash_received_cop", 0);
   const cashChangeCop = getDecimal(formData, "cash_change_cop", 0);
   const notes = getString(formData, "notes");
+  const tableId = getOptionalString(formData, "table_id");
   const saleDate = getString(formData, "sale_date");
   const sourceChannel = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : "direct";
   const collectionParty = paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business";
@@ -3279,6 +3280,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const allowPendingStock = getString(formData, "allow_pending_stock") === "true";
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
+  if (tableId && kind !== "local") return { status: "error", message: "La mesa solo aplica para consumo en local." };
   if (!["cash", "card", "transfer", "mixed", "pending", "rappi", "didi"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
   if (!["direct", "rappi", "didi"].includes(sourceChannel) || !["business", "platform"].includes(collectionParty)) return { status: "error", message: "Selecciona el canal de recaudo." };
   if (!["none", "percentage", "amount"].includes(discountType)) return { status: "error", message: "El tipo de descuento no es válido." };
@@ -3486,6 +3488,14 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error.message };
   }
   const order = data as PosOrderActionState["order"];
+  let postCreateWarning: string | null = null;
+  if (order?.id && tableId) {
+    const { error: tableError } = await supabase.rpc("assign_pos_order_table", {
+      p_order_id: order.id,
+      p_table_id: tableId
+    });
+    if (tableError) postCreateWarning = `El pedido fue confirmado, pero no se pudo asignar la mesa: ${tableError.message}`;
+  }
   if (order?.id && operationalSaleAt) {
     const { error: operationalDateError } = await supabase.rpc("update_pos_order_operational_date", {
       p_order_id: order.id,
@@ -3520,7 +3530,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   }
   return {
     status: "success",
-    message: "Pedido confirmado correctamente.",
+    message: postCreateWarning ?? "Pedido confirmado correctamente.",
     order
   };
 }

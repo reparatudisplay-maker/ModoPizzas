@@ -22,6 +22,7 @@ type OrderRow = {
   id: string;
   code: string;
   kind: string;
+  table_name_snapshot: string | null;
   notes: string | null;
   created_at: string;
 };
@@ -95,15 +96,36 @@ function sourceKey(sourceKind: "inventory_item" | "preparation", inventoryItemId
   return `${sourceKind}:${sourceKind === "inventory_item" ? inventoryItemId : preparationId}`;
 }
 
+type QueryResult<T> = { data: T | null; error: { message: string } | null };
+
+async function retryTransientQuery<T>(run: () => PromiseLike<QueryResult<T>>) {
+  const first = await run();
+  if (!first.error || !/fetch failed/i.test(first.error.message)) return first;
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return run();
+}
+
+async function queryByIdsInBatches<T>(ids: string[], run: (batch: string[]) => PromiseLike<QueryResult<T[]>>): Promise<QueryResult<T[]>> {
+  const rows: T[] = [];
+  for (let index = 0; index < ids.length; index += 24) {
+    const result = await retryTransientQuery(() => run(ids.slice(index, index + 24)));
+    if (result.error) return { data: null, error: result.error };
+    rows.push(...(result.data ?? []));
+  }
+  return { data: rows, error: null };
+}
+
 export default async function CocinaPage() {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "cocina");
 
-  const { data: kitchenRows, error: kitchenError } = await supabase
-    .from("kitchen_order_items")
-    .select("id, order_id, order_item_id, status, created_at, received_at, started_at, prepared_at")
-    .in("status", ["pending", "in_preparation", "prepared"])
-    .order("received_at", { ascending: true });
+  const { data: kitchenRows, error: kitchenError } = await retryTransientQuery(() =>
+    supabase
+      .from("kitchen_order_items")
+      .select("id, order_id, order_item_id, status, created_at, received_at, started_at, prepared_at")
+      .in("status", ["pending", "in_preparation", "prepared"])
+      .order("received_at", { ascending: true })
+  );
 
   const kitchenItems = (kitchenRows ?? []) as KitchenRow[];
   const orderIds = [...new Set(kitchenItems.map((item) => item.order_id))];
@@ -111,30 +133,41 @@ export default async function CocinaPage() {
 
   const [ordersResult, orderItemsResult, additionsResult, consumptionsResult, pizzaConfigsResult, settingsResult, sizeSettingsResult] = await Promise.all([
     orderIds.length
-      ? supabase.from("pos_orders").select("id, code, kind, notes, created_at").in("id", orderIds).neq("status", "cancelled").neq("status", "delivered")
+      ? queryByIdsInBatches(orderIds, (ids) => supabase.from("pos_orders").select("id, code, kind, table_name_snapshot, notes, created_at").in("id", ids).neq("status", "cancelled").neq("status", "delivered"))
       : Promise.resolve({ data: [], error: null }),
     orderItemIds.length
-      ? supabase.from("pos_order_items").select("id, quantity, product_name_snapshot, notes, base_used_source_kind, base_used_inventory_item_id, base_used_preparation_id, pizza_price_configs(id, size_id)").in("id", orderItemIds)
+      ? queryByIdsInBatches(orderItemIds, (ids) => supabase.from("pos_order_items").select("id, quantity, product_name_snapshot, notes, base_used_source_kind, base_used_inventory_item_id, base_used_preparation_id, pizza_price_configs(id, size_id)").in("id", ids))
       : Promise.resolve({ data: [], error: null }),
     orderItemIds.length
-      ? supabase.from("pos_order_item_additions").select("id, order_item_id, name_snapshot, quantity, scope_label").in("order_item_id", orderItemIds).order("created_at")
+      ? queryByIdsInBatches(orderItemIds, (ids) => supabase.from("pos_order_item_additions").select("id, order_item_id, name_snapshot, quantity, scope_label").in("order_item_id", ids).order("created_at"))
       : Promise.resolve({ data: [], error: null }),
     orderItemIds.length
-      ? supabase.from("pos_order_consumptions").select("order_item_id, order_item_addition_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit").in("order_item_id", orderItemIds)
+      ? queryByIdsInBatches(orderItemIds, (ids) => supabase.from("pos_order_consumptions").select("order_item_id, order_item_addition_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit").in("order_item_id", ids))
       : Promise.resolve({ data: [], error: null }),
-    supabase.from("pizza_price_configs").select("id, size_id, pizza_flavors(name), pizza_price_components(source_kind, inventory_item_id, source_preparation_id)").eq("is_active", true),
-    supabase.from("kitchen_settings").select("oven_count, oven_width_cm, oven_depth_cm, sound_enabled_default, warning_threshold_minutes, delay_threshold_minutes").eq("id", true).maybeSingle(),
-    supabase.from("kitchen_size_settings").select("pizza_size_id, simultaneous_capacity, assembly_minutes, baking_minutes, finishing_minutes")
+    retryTransientQuery(() => supabase.from("pizza_price_configs").select("id, size_id, pizza_flavors(name), pizza_price_components(source_kind, inventory_item_id, source_preparation_id)").eq("is_active", true)),
+    retryTransientQuery(() => supabase.from("kitchen_settings").select("oven_count, oven_width_cm, oven_depth_cm, sound_enabled_default, warning_threshold_minutes, delay_threshold_minutes").eq("id", true).maybeSingle()),
+    retryTransientQuery(() => supabase.from("kitchen_size_settings").select("pizza_size_id, simultaneous_capacity, assembly_minutes, baking_minutes, finishing_minutes"))
   ]);
 
   const consumptions = (consumptionsResult.data ?? []) as ConsumptionRow[];
   const inventorySourceIds = [...new Set(consumptions.flatMap((row) => row.source_kind === "inventory_item" && row.inventory_item_id ? [row.inventory_item_id] : []))];
   const preparationSourceIds = [...new Set(consumptions.flatMap((row) => row.source_kind === "preparation" && row.source_preparation_id ? [row.source_preparation_id] : []))];
   const [inventorySourcesResult, preparationSourcesResult] = await Promise.all([
-    inventorySourceIds.length ? supabase.from("inventory_items").select("id, name").in("id", inventorySourceIds) : Promise.resolve({ data: [], error: null }),
-    preparationSourceIds.length ? supabase.from("preparations").select("id, name").in("id", preparationSourceIds) : Promise.resolve({ data: [], error: null })
+    inventorySourceIds.length ? retryTransientQuery(() => supabase.from("inventory_items").select("id, name").in("id", inventorySourceIds)) : Promise.resolve({ data: [], error: null }),
+    preparationSourceIds.length ? retryTransientQuery(() => supabase.from("preparations").select("id, name").in("id", preparationSourceIds)) : Promise.resolve({ data: [], error: null })
   ]);
-  const error = kitchenError ?? ordersResult.error ?? orderItemsResult.error ?? additionsResult.error ?? consumptionsResult.error ?? pizzaConfigsResult.error ?? inventorySourcesResult.error ?? preparationSourcesResult.error ?? settingsResult.error ?? sizeSettingsResult.error;
+  const queryError = [
+    ["kitchen", kitchenError],
+    ["orders", ordersResult.error],
+    ["order_items", orderItemsResult.error],
+    ["additions", additionsResult.error],
+    ["consumptions", consumptionsResult.error],
+    ["pizza_configs", pizzaConfigsResult.error],
+    ["inventory_sources", inventorySourcesResult.error],
+    ["preparation_sources", preparationSourcesResult.error],
+    ["settings", settingsResult.error],
+    ["size_settings", sizeSettingsResult.error]
+  ].find(([, error]) => error) as [string, { message: string }] | undefined;
   const ordersById = new Map(((ordersResult.data ?? []) as OrderRow[]).map((order) => [order.id, order]));
   const orderItemsById = new Map(((orderItemsResult.data ?? []) as OrderItemRow[]).map((item) => [item.id, item]));
   const additionsByItemId = new Map<string, KitchenKdsItem["additions"]>();
@@ -206,6 +239,7 @@ export default async function CocinaPage() {
         order_item_id: item.order_item_id,
         order_code: order.code,
         order_kind: order.kind,
+        order_table_name: order.table_name_snapshot,
         order_notes: order.notes,
         confirmed_at: order.created_at,
         received_at: item.received_at ?? item.created_at,
@@ -240,7 +274,7 @@ export default async function CocinaPage() {
 
   return (
     <PanelShell active="cocina" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Cocina" userEmail={user.email ?? "usuario"}>
-      {error ? <p className="alert">{error.message}</p> : null}
+      {queryError ? <p className="alert">No se pudo actualizar Cocina. Reintenta en unos segundos.</p> : null}
       <KitchenKdsBoard items={items} key={items.map((item) => `${item.id}:${item.status}:${item.prepared_at ?? ""}`).join("|")} settings={kitchenSettings} />
     </PanelShell>
   );

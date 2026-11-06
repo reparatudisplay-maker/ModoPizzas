@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Ban, CalendarClock, CheckSquare, Eye, Search, Settings, Trash2, WalletCards, X } from "lucide-react";
@@ -25,6 +25,8 @@ export type PosOrderListRow = {
   kind: string;
   status: string;
   customer_name: string | null;
+  customer_phone: string | null;
+  table_name: string | null;
   subtotal_cop: number;
   combo_price_adjustment_cop: number;
   discount_cop: number;
@@ -81,7 +83,9 @@ export type PosOrderListRow = {
 
 const initialState: FormActionState = { status: "idle", message: "" };
 const orderColumnsKey = "modopizzas.pos-orders.columns";
+const orderColumnWidthsKey = "modopizzas.pos-orders.column-widths";
 type OrderColumn = "code" | "kind" | "customer" | "user" | "summary" | "items" | "subtotal" | "combo_adjustment" | "discount" | "delivery" | "total" | "payment" | "status" | "date" | "time" | "actions";
+type DatePreset = "" | "today" | "yesterday" | "week" | "last_15_days" | "current_month" | "previous_month";
 const allOrderColumns: OrderColumn[] = ["code", "kind", "customer", "user", "summary", "items", "subtotal", "combo_adjustment", "discount", "delivery", "total", "payment", "status", "date", "time", "actions"];
 const defaultOrderColumns: OrderColumn[] = ["code", "kind", "user", "summary", "combo_adjustment", "total", "payment", "status", "date", "actions"];
 const orderColumnLabels: Record<OrderColumn, string> = {
@@ -114,6 +118,55 @@ function initialOrderColumns() {
     return columns.includes("combo_adjustment") ? columns : [...columns, "combo_adjustment"] as OrderColumn[];
   } catch {
     return defaultOrderColumns;
+  }
+}
+
+function initialOrderColumnWidths(): Partial<Record<OrderColumn, number>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(orderColumnWidthsKey) ?? "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([column, width]) => allOrderColumns.includes(column as OrderColumn) && typeof width === "number" && width >= 80 && width <= 900)
+    ) as Partial<Record<OrderColumn, number>>;
+  } catch {
+    return {};
+  }
+}
+
+function dateKeyInBogota(value: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function localDateKey(value: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+}
+
+function addBogotaDays(value: Date, days: number) {
+  const [year, month, day] = localDateKey(value).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days, 12));
+}
+
+function datePresetRange(preset: DatePreset) {
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const yesterdayKey = localDateKey(addBogotaDays(today, -1));
+  const [year, month] = todayKey.split("-").map(Number);
+  const currentMonthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const previousMonthDate = new Date(Date.UTC(year, month - 2, 1, 12));
+  const previousMonthStart = localDateKey(previousMonthDate);
+  const previousMonthEnd = localDateKey(new Date(Date.UTC(year, month - 1, 0, 12)));
+  const weekday = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
+  const weekStart = localDateKey(addBogotaDays(today, -((weekday + 6) % 7)));
+
+  switch (preset) {
+    case "today": return { from: todayKey, to: todayKey };
+    case "yesterday": return { from: yesterdayKey, to: yesterdayKey };
+    case "week": return { from: weekStart, to: todayKey };
+    case "last_15_days": return { from: localDateKey(addBogotaDays(today, -14)), to: todayKey };
+    case "current_month": return { from: currentMonthStart, to: todayKey };
+    case "previous_month": return { from: previousMonthStart, to: previousMonthEnd };
+    default: return { from: "", to: "" };
   }
 }
 
@@ -150,7 +203,11 @@ function operationalDateParts(value: string) {
 export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEditPayment, orders }: { canDeleteForTests: boolean; canEditOperationalDate: boolean; canEditPayment: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [datePreset, setDatePreset] = useState<DatePreset>("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [columns, setColumns] = useState<OrderColumn[]>(defaultOrderColumns);
+  const [columnWidths, setColumnWidths] = useState<Partial<Record<OrderColumn, number>>>({});
   const [columnsReady, setColumnsReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<PosOrderListRow | null>(null);
@@ -164,6 +221,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setColumns(initialOrderColumns());
+      setColumnWidths(initialOrderColumnWidths());
       setColumnsReady(true);
     }, 0);
     return () => window.clearTimeout(timeout);
@@ -172,15 +230,22 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
     if (!columnsReady) return;
     window.localStorage.setItem(orderColumnsKey, JSON.stringify(columns));
   }, [columns, columnsReady]);
+  useEffect(() => {
+    if (!columnsReady) return;
+    window.localStorage.setItem(orderColumnWidthsKey, JSON.stringify(columnWidths));
+  }, [columnWidths, columnsReady]);
   const filteredOrders = useMemo(
     () =>
       orders.filter((order) => {
-        const text = `${order.code} ${order.customer_name ?? ""} ${order.created_by_name} ${order.status} ${order.kind} ${order.items.map((item) => item.product_name_snapshot).join(" ")}`;
+        const text = `${order.code} ${order.customer_name ?? ""} ${order.table_name ?? ""} ${order.created_by_name} ${order.status} ${order.kind} ${order.items.map((item) => item.product_name_snapshot).join(" ")}`;
         const matchesQuery = !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
         const matchesStatus = status ? order.status === status : true;
-        return matchesQuery && matchesStatus;
+        const date = dateKeyInBogota(order.ordered_at);
+        const matchesFrom = !dateFrom || date >= dateFrom;
+        const matchesTo = !dateTo || date <= dateTo;
+        return matchesQuery && matchesStatus && matchesFrom && matchesTo;
       }),
-    [normalizedQuery, orders, status]
+    [dateFrom, dateTo, normalizedQuery, orders, status]
   );
   const visibleColumn = (column: OrderColumn) => columns.includes(column);
   const toggleColumn = (column: OrderColumn) =>
@@ -210,10 +275,35 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
     setDeletionPreviewError("");
   };
   const visibleColumns = allOrderColumns.filter(visibleColumn);
+  const applyDatePreset = (preset: DatePreset) => {
+    const range = datePresetRange(preset);
+    setDatePreset(preset);
+    setDateFrom(range.from);
+    setDateTo(range.to);
+  };
+  const startColumnResize = (event: ReactPointerEvent<HTMLButtonElement>, column: OrderColumn) => {
+    event.preventDefault();
+    const header = event.currentTarget.closest("th");
+    if (!header) return;
+    const startX = event.clientX;
+    const startWidth = header.getBoundingClientRect().width;
+    const onMove = (moveEvent: PointerEvent) => setColumnWidths((current) => ({ ...current, [column]: Math.max(80, Math.min(900, Math.round(startWidth + moveEvent.clientX - startX)))}));
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd);
+  };
+  const resetColumnWidth = (column: OrderColumn) => setColumnWidths((current) => {
+    const next = { ...current };
+    delete next[column];
+    return next;
+  });
   const renderOrderCell = (order: PosOrderListRow, column: OrderColumn) => {
     switch (column) {
       case "code": return <strong>{order.code}</strong>;
-      case "kind": return kindLabel(order.kind);
+      case "kind": return `${kindLabel(order.kind)}${order.table_name ? ` · ${order.table_name}` : ""}`;
       case "customer": return order.customer_name ?? "Sin cliente";
       case "user": return order.created_by_name;
       case "summary": return <OrderSummary order={order} />;
@@ -256,18 +346,30 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
             <option value="delivered">Entregados</option>
             <option value="cancelled">Cancelados</option>
           </select>
+          <select aria-label="Período" onChange={(event) => applyDatePreset(event.target.value as DatePreset)} title="Período" value={datePreset}>
+            <option value="">Todas las fechas</option>
+            <option value="today">Hoy</option>
+            <option value="yesterday">Ayer</option>
+            <option value="week">Semana</option>
+            <option value="last_15_days">Últimos 15 días</option>
+            <option value="current_month">Mes en curso</option>
+            <option value="previous_month">Mes anterior</option>
+          </select>
+          <label className="order-date-filter">Desde<input aria-label="Fecha desde" max={dateTo || undefined} onChange={(event) => { setDatePreset(""); setDateFrom(event.target.value); }} type="date" value={dateFrom} /></label>
+          <label className="order-date-filter">Hasta<input aria-label="Fecha hasta" min={dateFrom || undefined} onChange={(event) => { setDatePreset(""); setDateTo(event.target.value); }} type="date" value={dateTo} /></label>
           <button className="ghost-button table-settings-button" onClick={() => setSettingsOpen(true)} type="button">
             <Settings size={18} /> Configuración
           </button>
         </form>
       </div>
       <div className="data-table-wrap">
-        <table className="data-table">
+        <table className="data-table resizable-order-table">
           <thead>
             <tr>
               {visibleColumns.map((column) => (
-                <th className={column === "actions" ? "actions-column compact-actions-column" : undefined} key={column}>
+                <th className={column === "actions" ? "actions-column compact-actions-column resizable-order-column" : "resizable-order-column"} key={column} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
                   {orderColumnLabels[column].toUpperCase()}
+                  <button aria-label={`Ajustar ancho de ${orderColumnLabels[column]}`} className="column-resize-handle" onDoubleClick={() => resetColumnWidth(column)} onPointerDown={(event) => startColumnResize(event, column)} title="Arrastra para ajustar. Doble clic para restablecer." type="button" />
                 </th>
               ))}
             </tr>
@@ -276,7 +378,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
             {filteredOrders.map((order) => (
               <tr key={order.id}>
                 {visibleColumns.map((column) => (
-                  <td className={column === "actions" ? "actions-column compact-actions-column" : undefined} key={column}>
+                  <td className={column === "actions" ? "actions-column compact-actions-column" : undefined} key={column} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
                     {renderOrderCell(order, column)}
                   </td>
                 ))}
@@ -544,6 +646,12 @@ function paymentLabel(method: string) {
   return labels[method] ?? method;
 }
 
+function paymentStatusLabel(method: string) {
+  if (method === "pending") return "Pendiente de cobro";
+  if (method === "rappi" || method === "didi") return "Liquidación pendiente";
+  return "Cobrado";
+}
+
 function kitchenLabel(status: "pending" | "in_preparation" | "prepared") {
   const labels = { pending: "Pendiente", in_preparation: "En preparación", prepared: "Preparado" };
   return labels[status];
@@ -695,6 +803,7 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
   const comboPriceAdjustmentCop = Number(order.combo_price_adjustment_cop ?? 0);
   const normalizedComboPriceAdjustmentCop = Number.isFinite(comboPriceAdjustmentCop) ? comboPriceAdjustmentCop : 0;
   const hasPriceBreakdown = normalizedComboPriceAdjustmentCop !== 0 || order.discount_cop > 0 || order.delivery_cop > 0;
+  const paymentStatus = paymentStatusLabel(order.payment_method);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -702,19 +811,38 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
         <header className="modal-header">
           <div>
             <strong>Pedido {order.code}</strong>
-            <span>{formatDateTime(order.ordered_at)} · {kindLabel(order.kind)}</span>
+            <span>Venta: {formatDateTime(order.ordered_at)}</span>
           </div>
-          <div className="order-detail-header-actions"><KitchenTicketPrintButton orderCode={order.code} orderId={order.id} /><CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} /><button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button></div>
+          <div className="order-detail-header-actions">
+            <KitchenTicketPrintButton orderCode={order.code} orderId={order.id} />
+            <CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} />
+            {canEditOperationalDate ? <button className="ghost-button kitchen-ticket-trigger" onClick={onEditDate} type="button"><CalendarClock size={15} /> Editar fecha</button> : null}
+            <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
+          </div>
         </header>
         <div className="order-detail-content">
-          <div className="order-detail-meta">
+          <section className="order-detail-overview" aria-label="Resumen operativo">
+            <span className="order-detail-code">{order.code}</span>
             <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span>
-            <span><b>Cliente:</b> {order.customer_name ?? "Sin cliente"}</span>
-            <span><b>Usuario:</b> {order.created_by_name}</span>
-            <span><b>Pago:</b> {paymentLabel(order.payment_method)}</span>
-            <span><b>Registro original:</b> {formatDateTime(order.created_at)}</span>
-            {canEditOperationalDate ? <button className="ghost-button compact-order-date-action" onClick={onEditDate} type="button"><CalendarClock size={15} /> Editar fecha</button> : null}
-          </div>
+            <span className="order-detail-badge">{kindLabel(order.kind)}</span>
+            <span className="order-detail-badge">{paymentLabel(order.payment_method)}</span>
+            <span className={`order-detail-badge ${order.payment_method === "pending" ? "pending" : ""}`}>{paymentStatus}</span>
+          </section>
+
+          <section className="order-detail-section" aria-label="Información general">
+            <h3>Información general</h3>
+            <div className="order-detail-general">
+              <div><span>Cliente</span><strong>{order.customer_name ?? "Sin cliente"}</strong></div>
+              {order.customer_phone ? <div><span>Teléfono</span><strong>{order.customer_phone}</strong></div> : null}
+              <div><span>Registrado por</span><strong>{order.created_by_name}</strong></div>
+              <div><span>Canal</span><strong>{kindLabel(order.kind)}</strong></div>
+              {order.table_name ? <div><span>Mesa</span><strong>{order.table_name}</strong></div> : null}
+              <div><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
+              <div><span>Estado de cobro</span><strong>{paymentStatus}</strong></div>
+              <div><span>Fecha de venta</span><strong>{formatDateTime(order.ordered_at)}</strong></div>
+              <div><span>Registro original</span><strong>{formatDateTime(order.created_at)}</strong></div>
+            </div>
+          </section>
 
           <section className="order-detail-section" aria-label="Items del pedido">
             <h3>Items</h3>
@@ -725,19 +853,17 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
                   : null;
                 return (
                   <article className="order-detail-item" key={item.id}>
-                    <div>
-                      <strong>{item.quantity} × {item.product_name_snapshot}{presentation ? ` ${presentation}` : ""}</strong>
-                      {item.item_kind === "pizza" ? <small>{item.product_name_snapshot.includes(" / ") ? "Mitad y mitad" : "Pizza"}</small> : null}
-                      {item.item_kind === "pizza" ? <small>Sin: {item.notes ?? "—"}</small> : null}
-                      {item.item_kind === "pizza" && item.base_used_name ? <small>Base prevista: {item.base_default_name ?? "—"}</small> : null}
-                      {item.item_kind === "pizza" && item.base_used_name ? <small>Base utilizada: {item.base_used_name}{item.base_replaced_by_name ? ` · Sustitución: ${item.base_replaced_by_name}` : ""}</small> : null}
-                      {item.additions.length > 0 ? (
-                        <small>Adiciones: {item.additions.map((addition) => `+ ${addition.name_snapshot} x${addition.quantity}${additionScope(addition)}`).join(", ")}</small>
-                      ) : item.item_kind === "pizza" ? <small>Adiciones: —</small> : null}
-                      {item.item_kind === "sale_product" ? <small>{formatCop(item.unit_price_cop)} c/u</small> : null}
+                    <div className="order-detail-item-copy">
+                      <strong><span className="order-detail-item-quantity">{item.quantity}×</span> {item.product_name_snapshot}{presentation ? ` ${presentation}` : ""}</strong>
+                      <div className="order-detail-item-notes">
+                        {item.item_kind === "pizza" && item.product_name_snapshot.includes(" / ") ? <small>Mitad y mitad</small> : null}
+                        {item.item_kind === "pizza" && item.base_used_name ? <small>Base: {item.base_used_name}{item.base_default_name && item.base_default_name !== item.base_used_name ? ` · Prevista: ${item.base_default_name}` : ""}{item.base_replaced_by_name ? ` · Sustituida por ${item.base_replaced_by_name}` : ""}</small> : null}
+                        {item.additions.length > 0 ? <small>Adiciones: {item.additions.map((addition) => `+ ${addition.name_snapshot} x${addition.quantity}${additionScope(addition)}`).join(", ")}</small> : null}
+                        {item.notes?.trim() ? <small>Observación: {item.notes}</small> : null}
+                      </div>
                     </div>
                     <div className="order-detail-line-total">
-                      <small>{formatCop(item.unit_price_cop)} c/u</small>
+                      <small>Unitario {formatCop(item.unit_price_cop)}</small>
                       <strong>{formatCop(item.line_subtotal_cop)}</strong>
                     </div>
                   </article>
@@ -746,17 +872,21 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
             </div>
           </section>
 
-          <section className="order-detail-summary" aria-label="Resumen del pedido">
-            {hasPriceBreakdown ? <div><span>Subtotal normal</span><strong>{formatCop(order.subtotal_cop)}</strong></div> : null}
+          <section className="order-detail-section" aria-label="Resumen económico">
+            <h3>Resumen económico</h3>
+            <div className="order-detail-summary">
+            <div><span>{hasPriceBreakdown ? "Subtotal normal" : "Subtotal"}</span><strong>{formatCop(order.subtotal_cop)}</strong></div>
             {normalizedComboPriceAdjustmentCop !== 0 ? <div><span>Ajuste precio combo</span><strong>{formatSignedCop(normalizedComboPriceAdjustmentCop)}</strong></div> : null}
             {order.discount_cop > 0 ? <div><span>{order.discount_type === "percentage" ? `Descuento (${order.discount_value}%)` : "Descuento"}</span><strong>-{formatCop(order.discount_cop)}</strong></div> : null}
             {order.delivery_cop > 0 ? <div><span>Domicilio</span><strong>+{formatCop(order.delivery_cop)}</strong></div> : null}
-            <div><span>Total pedido</span><strong>{formatCop(order.total_cop)}</strong></div>
-            <div><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
+            <div className="order-detail-total"><span>Total final</span><strong>{formatCop(order.total_cop)}</strong></div>
+            <div><span>Pago</span><strong>{paymentLabel(order.payment_method)} · {paymentStatus}</strong></div>
             {cashPayment ? <div><span>Efectivo recibido</span><strong>{cashPayment.cash_received_cop === null ? "—" : formatCop(cashPayment.cash_received_cop)}</strong></div> : null}
             {cashPayment ? <div><span>Cambio</span><strong>{cashPayment.cash_change_cop === null ? "—" : formatCop(cashPayment.cash_change_cop)}</strong></div> : null}
-            <div className="order-detail-wide"><span>Observaciones</span><strong>{order.notes ?? "—"}</strong></div>
+            </div>
           </section>
+
+          {order.notes?.trim() ? <section className="order-detail-section" aria-label="Observaciones"><h3>Observaciones</h3><p className="order-detail-observations">{order.notes}</p></section> : null}
 
           {kitchenItems.length > 0 ? (
             <section className="order-detail-section" aria-label="Estado de cocina">
@@ -765,9 +895,11 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
                 {kitchenItems.map((item, index) => (
                   <div className="order-detail-kitchen" key={`${item.received_at}-${index}`}>
                     <span className="stock-pill ok">{kitchenLabel(item.status)}</span>
-                    <small>Recibido: {formatDateTime(item.received_at)}</small>
-                    <small>Iniciado: {formatDateTime(item.started_at)}</small>
-                    <small>Preparado: {formatDateTime(item.prepared_at)}</small>
+                    <div className="order-detail-kitchen-timeline">
+                      <span><b>Recibido</b>{formatDateTime(item.received_at)}</span>
+                      <span className={item.started_at ? "complete" : ""}><b>Iniciado</b>{formatDateTime(item.started_at)}</span>
+                      <span className={item.prepared_at ? "complete" : ""}><b>Preparado</b>{formatDateTime(item.prepared_at)}</span>
+                    </div>
                   </div>
                 ))}
               </div>

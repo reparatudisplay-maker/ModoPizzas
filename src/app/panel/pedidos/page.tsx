@@ -13,6 +13,8 @@ type OrderRow = {
   kind: string;
   status: string;
   customer_name: string | null;
+  customer_phone: string | null;
+  table_name_snapshot: string | null;
   subtotal_cop: number;
   combo_price_adjustment_cop: number;
   discount_cop: number;
@@ -80,7 +82,7 @@ export default async function PedidosPage() {
   const [{ data, error }, publicRequestsResult] = await Promise.all([supabase
     .from("pos_orders")
     .select(`
-      id, code, kind, status, customer_name, subtotal_cop, combo_price_adjustment_cop, discount_cop, delivery_cop, discount_type, discount_value, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, ordered_at, created_at,
+      id, code, kind, status, customer_name, customer_phone, table_name_snapshot, subtotal_cop, combo_price_adjustment_cop, discount_cop, delivery_cop, discount_type, discount_value, total_cop, payment_method, notes, created_by, cancelled_at, cancelled_by, cancel_reason, ordered_at, created_at,
       pos_order_payments(method, amount_cop, cash_received_cop, cash_change_cop),
       pos_order_items(
         id, item_kind, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, line_subtotal_cop, notes, base_default_source_kind, base_used_source_kind, base_replaced_by,
@@ -117,6 +119,8 @@ export default async function PedidosPage() {
     kind: order.kind,
     status: order.status,
     customer_name: order.customer_name,
+    customer_phone: order.customer_phone,
+    table_name: order.table_name_snapshot,
     subtotal_cop: Number(order.subtotal_cop ?? 0),
     combo_price_adjustment_cop: Number(order.combo_price_adjustment_cop ?? 0),
     discount_cop: Number(order.discount_cop ?? 0),

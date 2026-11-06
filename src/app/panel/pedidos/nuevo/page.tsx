@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosOrderTableOption, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -99,6 +99,15 @@ type PlatformPaymentSettingRow = {
   commission_tax_percent: number | string | null;
 };
 
+type PendingPaymentRow = {
+  id: string;
+  code: string;
+  ordered_at: string;
+  customer_name: string | null;
+  table_name_snapshot?: string | null;
+  total_cop: number | string;
+};
+
 type ComboRow = {
   id: string;
   sku: string;
@@ -173,7 +182,9 @@ export default async function NuevoPedidoPage() {
     combosResult,
     baseOptionsResult,
     platformPaymentSettingsResult,
-    posImagesResult
+    posImagesResult,
+    orderTablesResult,
+    pendingPaymentsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -209,7 +220,9 @@ export default async function NuevoPedidoPage() {
       .from("platform_payment_settings")
       .select("platform, commission_percent, fixed_fee_cop, commission_tax_percent")
       .order("platform"),
-    supabase.from("pizza_flavors").select("id, pos_image_url")
+    supabase.from("pizza_flavors").select("id, pos_image_url"),
+    supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
+    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false })
   ]);
 
   const error =
@@ -358,6 +371,15 @@ export default async function NuevoPedidoPage() {
     fixed_fee_cop: Number(setting.fixed_fee_cop ?? 0),
     commission_tax_percent: Number(setting.commission_tax_percent ?? 0)
   }));
+  const orderTables: PosOrderTableOption[] = orderTablesResult.error ? [] : ((orderTablesResult.data ?? []) as PosOrderTableOption[]);
+  const pendingPayments: PosPendingPayment[] = ((pendingPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
+    id: order.id,
+    code: order.code,
+    ordered_at: order.ordered_at,
+    customer_name: order.customer_name,
+    table_name: order.table_name_snapshot ?? null,
+    total_cop: Number(order.total_cop ?? 0)
+  }));
   const priceByFlavorAndSize = new Map<string, { price_config_id: string; sale_price_cop: number }>();
   const flavorImageById = new Map(pizzas.map((pizza) => [pizza.flavor_id, pizza.image_src]));
   const sizeNameById = new Map(sizeRows.map((size) => [size.id, size.name]));
@@ -445,7 +467,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }
