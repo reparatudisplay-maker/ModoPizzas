@@ -5,7 +5,7 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, Bell, CheckCircle2, ChevronLeft, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, CircleDollarSign, Edit3, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -500,7 +500,7 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
   return (
     <div className="pos-pending-payments">
       <button aria-expanded={isOpen} aria-label={`Cobros pendientes: ${pendingPayments.length}`} className="pos-pending-payments-trigger" onClick={() => setIsOpen((open) => !open)} title="Cobros pendientes" type="button">
-        <Bell size={17} />
+        <CircleDollarSign size={18} />
         {pendingPayments.length > 0 ? <span>{pendingPayments.length}</span> : null}
       </button>
       {isOpen ? (
