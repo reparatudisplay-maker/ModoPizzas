@@ -6,7 +6,7 @@ import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
 import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
 import { formatCop } from "@/lib/format";
 import { defaultPrintTemplate, type PrintTemplate, type PrintTemplateElement } from "@/lib/print-templates";
-import { Download, LoaderCircle, Printer, X } from "lucide-react";
+import { Download, Eye, LoaderCircle, Printer, X } from "lucide-react";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 import { getBleErrorMessage, printBleThermalDocuments, shouldUseBlePrinter } from "@/lib/ble-thermal-printer";
@@ -77,7 +77,7 @@ export function CustomerReceiptDocument({ receipt, printRef, template = defaultP
   );
 }
 
-function CustomerReceiptPreview({ onClose, receipt, template }: { onClose: () => void; receipt: PosOrderReceipt; template: PrintTemplate }) {
+function CustomerReceiptPreview({ onClose, receipt, template, previewOnly = false }: { onClose: () => void; receipt: PosOrderReceipt; template: PrintTemplate; previewOnly?: boolean }) {
   const receiptRef = useRef<HTMLElement>(null);
   const [printError, setPrintError] = useState("");
   const [printMessage, setPrintMessage] = useState("");
@@ -121,26 +121,26 @@ function CustomerReceiptPreview({ onClose, receipt, template }: { onClose: () =>
     <div className="modal-backdrop kitchen-ticket-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section aria-label={`Vista previa de ticket ${receipt.order.code}`} aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header kitchen-ticket-preview-header">
-          <div><strong>Vista previa de ticket</strong><span>Formato térmico de 58 mm</span></div>
+          <div><strong>{previewOnly ? "Vista previa de orden" : "Vista previa de ticket"}</strong><span>Formato térmico de 58 mm</span></div>
           <div className="kitchen-ticket-preview-header-actions">
-            <button className="ghost-button kitchen-ticket-header-print" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir</button>
-            <button className="icon-button kitchen-ticket-print-action" onClick={handleDownload} title="Descargar PDF de ticket" type="button"><Download size={18} /></button>
+            {!previewOnly ? <button className="ghost-button kitchen-ticket-header-print" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir</button> : null}
+            {!previewOnly ? <button className="icon-button kitchen-ticket-print-action" onClick={handleDownload} title="Descargar PDF de ticket" type="button"><Download size={18} /></button> : null}
             <button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button>
           </div>
         </header>
         <div className="kitchen-ticket-print-root kitchen-ticket-print-root-58"><CustomerReceiptDocument printRef={receiptRef} receipt={receipt} template={template} /></div>
-        {printMessage ? <p className="form-status">{printMessage}</p> : null}
-        {printError ? <p className="form-status error">{printError}</p> : null}
+        {!previewOnly && printMessage ? <p className="form-status">{printMessage}</p> : null}
+        {!previewOnly && printError ? <p className="form-status error">{printError}</p> : null}
         <footer className="modal-footer kitchen-ticket-preview-footer">
           <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
-          <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir ticket</button></div>
+          {!previewOnly ? <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir ticket</button></div> : null}
         </footer>
       </section>
     </div>
   );
 }
 
-export function CustomerReceiptPrintButton({ orderCode, orderId }: { orderCode: string; orderId: string }) {
+export function CustomerReceiptPrintButton({ orderCode, orderId, label = "Ticket", previewOnly = false }: { orderCode: string; orderId: string; label?: string; previewOnly?: boolean }) {
   const [receipt, setReceipt] = useState<PosOrderReceipt | null>(null);
   const [template, setTemplate] = useState<PrintTemplate | null>(null);
   const [error, setError] = useState("");
@@ -161,12 +161,12 @@ export function CustomerReceiptPrintButton({ orderCode, orderId }: { orderCode: 
 
   return (
     <>
-      <button aria-label={`Ver e imprimir ticket de ${orderCode}`} className="ghost-button kitchen-ticket-trigger" disabled={loading} onClick={() => void openPreview()} type="button">
-        {loading ? <LoaderCircle className="spin" size={16} /> : <Printer size={16} />}
-        {loading ? "Cargando..." : "Ticket"}
+      <button aria-label={`Ver vista previa de ${previewOnly ? "orden" : "ticket"} de ${orderCode}`} className="ghost-button kitchen-ticket-trigger" disabled={loading} onClick={() => void openPreview()} type="button">
+        {loading ? <LoaderCircle className="spin" size={16} /> : previewOnly ? <Eye size={16} /> : <Printer size={16} />}
+        {loading ? "Cargando..." : label}
       </button>
       {error ? <span className="row-action-message error">{error}</span> : null}
-      {receipt && template ? <CustomerReceiptPreview onClose={() => { setReceipt(null); setTemplate(null); }} receipt={receipt} template={template} /> : null}
+      {receipt && template ? <CustomerReceiptPreview onClose={() => { setReceipt(null); setTemplate(null); }} previewOnly={previewOnly} receipt={receipt} template={template} /> : null}
     </>
   );
 }
@@ -174,10 +174,12 @@ export function CustomerReceiptPrintButton({ orderCode, orderId }: { orderCode: 
 export function CustomerReceiptPdfButton(props: { orderCode: string; orderId: string }) {
   return <CustomerReceiptPrintButton {...props} />;
 }
-export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; onError: (message: string) => void }) {
+export function PostPaymentPrintJob({ job, onClose, onError }: { job: PaymentPrintJob; onClose: () => void; onError: (message: string) => void }) {
   const [documents, setDocuments] = useState<Array<{ kind: "kitchen" | "receipt"; node: ReactNode }>>([]);
   const printRootRef = useRef<HTMLDivElement>(null);
-  const printedJobIdRef = useRef("");
+  const [printError, setPrintError] = useState("");
+  const [printMessage, setPrintMessage] = useState("");
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -213,35 +215,55 @@ export function PostPaymentPrintJob({ job, onError }: { job: PaymentPrintJob; on
     return () => { active = false; };
   }, [job, onError]);
 
-  useEffect(() => {
-    if (documents.length === 0 || !printRootRef.current || printedJobIdRef.current === job.id) return;
-    printedJobIdRef.current = job.id;
+  const handlePrint = async () => {
+    if (documents.length === 0 || !printRootRef.current) return;
+    setPrintError("");
+    setPrintMessage("");
+    setPrinting(true);
     const printables = Array.from(printRootRef.current.querySelectorAll<HTMLElement>(".post-payment-print-document > article"));
-    const printDocuments = async () => {
+    try {
       if (shouldUseBlePrinter()) {
-        try {
-          for (let index = 0; index < printables.length; index += 1) {
-            await printBleThermalDocuments([printables[index]], { connectIfNeeded: true });
-            if (documents[index]?.kind === "receipt" && documents.some((document) => document.kind === "kitchen")) {
-              await new Promise<void>((resolve) => window.setTimeout(resolve, 3000));
-            }
+        for (let index = 0; index < printables.length; index += 1) {
+          await printBleThermalDocuments([printables[index]], { connectIfNeeded: true });
+          if (documents[index]?.kind === "receipt" && documents.some((document) => document.kind === "kitchen")) {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 3000));
           }
-          return;
-        } catch (error) {
-          onError(`No se pudo enviar por Bluetooth; se abrirá la impresión original. ${getBleErrorMessage(error)}`);
         }
+        setPrintMessage("Documentos enviados por Bluetooth. Confirma la salida física.");
+        return;
       }
-      if (!printThermalDocuments(printables, "Documentos del pedido")) {
-        onError("No se pudo abrir el documento térmico para imprimir.");
-      }
-    };
-    void printDocuments();
-  }, [documents, job.id, onError]);
+      if (!printThermalDocuments(printables, "Documentos del pedido")) throw new Error("No se pudo abrir el documento térmico para imprimir.");
+      setPrintMessage("Se abrió el diálogo de impresión del navegador.");
+    } catch (error) {
+      const message = shouldUseBlePrinter() ? getBleErrorMessage(error) : error instanceof Error ? error.message : "No se pudo preparar la impresión.";
+      setPrintError(message);
+      onError(message);
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   if (documents.length === 0) return null;
   return (
-    <div className="post-payment-print-root" aria-hidden="true" ref={printRootRef}>
-      {documents.map((document) => <div className="post-payment-print-document" key={document.kind}>{document.node}</div>)}
+    <div className="modal-backdrop kitchen-ticket-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-label="Vista previa de impresión" aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog">
+        <header className="modal-header kitchen-ticket-preview-header">
+          <div><strong>Vista previa de impresión</strong><span>Formato térmico de 58 mm</span></div>
+          <div className="kitchen-ticket-preview-header-actions"><button className="ghost-button kitchen-ticket-header-print" disabled={printing} onClick={() => void handlePrint()} type="button"><Printer size={17} /> {printing ? "Imprimiendo..." : "Imprimir"}</button><button className="icon-button kitchen-ticket-print-action" onClick={onClose} title="Cerrar vista previa" type="button"><X size={18} /></button></div>
+        </header>
+        <div className="kitchen-ticket-print-root post-payment-preview-root">
+          {documents.map((document) => <div className="post-payment-preview-document" key={`preview-${document.kind}`}>{document.node}</div>)}
+        </div>
+        <div aria-hidden="true" className="post-payment-print-root" ref={printRootRef}>
+          {documents.map((document) => <div className="post-payment-print-document" key={document.kind}>{document.node}</div>)}
+        </div>
+        {printMessage ? <p className="form-status success">{printMessage}</p> : null}
+        {printError ? <p className="form-status error">{printError}</p> : null}
+        <footer className="modal-footer kitchen-ticket-preview-footer">
+          <button className="ghost-button" onClick={onClose} type="button">Cerrar</button>
+          <button className="primary-button" disabled={printing} onClick={() => void handlePrint()} type="button"><Printer size={17} /> {printing ? "Imprimiendo..." : "Imprimir documentos"}</button>
+        </footer>
+      </section>
     </div>
   );
 }

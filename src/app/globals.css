@@ -1726,6 +1726,12 @@ a {
   padding: 12px;
 }
 
+.cash-close-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .cash-close-card h3 {
   margin: 0 0 4px;
   font-size: 1rem;
@@ -1764,13 +1770,31 @@ a {
   padding: 4px 0 4px 12px;
 }
 
-.cash-group-detail p {
+.cash-group-detail p,
+.cash-group-detail-row {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   margin: 0;
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.cash-group-detail-row > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cash-group-detail-row > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.cash-group-detail-row .kitchen-ticket-trigger {
+  font-size: .72rem;
+  min-height: 28px;
+  padding: 4px 7px;
 }
 
 .cash-group-detail strong {
@@ -1787,6 +1811,12 @@ a {
 
 .cash-expected-row strong {
   font-size: 1.35rem;
+}
+
+@media (max-width: 900px) {
+  .cash-close-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .cash-action-modal {
@@ -2239,6 +2269,11 @@ a {
   gap: 8px;
 }
 
+.orders-list-panel > .section-title-row { align-items: center; }
+.orders-list-panel .table-filters { flex-wrap: wrap; justify-content: flex-end; }
+.orders-list-panel .table-filters select { min-width: 116px; width: auto; }
+.orders-list-panel .compact-search { min-width: 180px; }
+
 .purchase-toolbar {
   display: flex;
   align-items: center;
@@ -2414,12 +2449,24 @@ a {
 }
 
 .resizable-order-table {
+  border-collapse: separate;
+  border-radius: 8px;
+  border-spacing: 0;
+  overflow: hidden;
   table-layout: auto;
 }
 
 .resizable-order-column {
+  background: var(--panel-strong);
+  cursor: grab;
   position: relative;
+  user-select: none;
 }
+
+.resizable-order-column.is-dragging { opacity: 0.55; }
+
+.order-column-drag { cursor: grab; display: block; padding-right: 9px; }
+.order-column-drag:active { cursor: grabbing; }
 
 .column-resize-handle {
   background: transparent;
@@ -2461,6 +2508,13 @@ a {
 .resizable-order-table td {
   min-width: 80px;
 }
+
+.resizable-order-table th { position: sticky; top: 0; z-index: 1; }
+.resizable-order-table tbody tr { transition: background-color 120ms ease; }
+.resizable-order-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--panel-strong) 42%, transparent); }
+.resizable-order-table tbody tr:hover { background: color-mix(in srgb, var(--secondary) 11%, transparent); }
+.resizable-order-table td { padding: 9px 10px; vertical-align: middle; }
+.resizable-order-table td:first-child strong { color: var(--secondary); }
 
 .inventory-toolbar-row {
   align-items: center;
@@ -5155,7 +5209,6 @@ a {
 }
 
 .pos-pending-payments-panel > header,
-.pos-pending-payments-list article,
 .pos-pending-payment-form .modal-actions {
   align-items: center;
   display: flex;
@@ -5168,22 +5221,67 @@ a {
   gap: 7px;
 }
 
-.pos-pending-payments-list article,
 .pos-pending-payment-form {
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 9px;
 }
 
-.pos-pending-payments-list article > div,
 .pos-pending-payment-form {
   display: grid;
   gap: 3px;
 }
 
-.pos-pending-payments-list small {
+.pos-pending-payments-list small,
+.pos-pending-payment-party small {
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.pos-pending-payments-table-head,
+.pos-pending-payments-list article {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(62px, .8fr) minmax(88px, 1.25fr) auto auto;
+}
+
+.pos-pending-payments-table-head {
+  color: var(--muted);
+  font-size: .69rem;
+  font-weight: 800;
+  padding: 0 8px;
+  text-transform: uppercase;
+}
+
+.pos-pending-payments-list article {
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.pos-pending-payments-list article > div,
+.pos-pending-payment-party {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pos-pending-payment-party strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-pending-payments-list article > b {
+  font-size: .82rem;
+  white-space: nowrap;
+}
+
+.pos-pending-payments-list article > button {
+  min-height: 32px;
+  padding: 5px 8px;
 }
 
 .pos-pending-payment-form {
@@ -5210,6 +5308,65 @@ a {
 
 .pos-pending-payment-mixed {
   grid-template-columns: 1fr;
+}
+
+.pending-payment-modal {
+  width: min(620px, 100%);
+}
+
+.pending-payment-modal .cash-payment-header {
+  align-items: stretch;
+}
+
+.pending-payment-modal .cash-exact-button {
+  min-height: 64px;
+}
+
+.pending-payment-method-picker {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.pending-payment-method-picker > span {
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pending-payment-method-picker > div {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pending-payment-method-picker button {
+  font-size: .84rem;
+  min-height: 36px;
+  padding: 5px;
+  white-space: normal;
+}
+
+.pending-payment-method-picker button.active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.pending-payment-mixed {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pending-payment-mixed .pending-payment-mixed-summary {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  grid-column: 1 / -1;
+  padding: 9px;
 }
 
 .pos-direct-sale-button {
@@ -5766,23 +5923,23 @@ a {
   border: 1px solid var(--border);
   border-radius: 8px;
   display: grid;
-  gap: 7px;
+  gap: 5px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
-  padding: 8px;
+  padding: 5px 6px;
 }
 
 .pos-cart-line-content,
 .pos-combo-cart-content {
   display: grid;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
 }
 
 .pos-cart-line-title {
   align-items: center;
   display: flex;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -5798,9 +5955,9 @@ a {
   border: 1px solid var(--border);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 28px;
+  height: 24px;
   justify-content: center;
-  width: 28px;
+  width: 24px;
 }
 
 .pos-combo-cart-group {
@@ -5816,16 +5973,16 @@ a {
 .pos-combo-component-list {
   display: grid;
   gap: 2px;
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 .pos-combo-component-row {
   align-items: center;
   border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   display: flex;
-  gap: 6px;
+  gap: 4px;
   justify-content: space-between;
-  padding-top: 5px;
+  padding-top: 3px;
 }
 
 .pos-combo-component-row .icon-button {
@@ -5833,15 +5990,15 @@ a {
   border: 1px solid var(--border);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 24px;
+  height: 22px;
   justify-content: center;
-  width: 24px;
+  width: 22px;
 }
 
 .pos-cart-base {
   align-items: center;
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 
 .pos-cart-base small {
@@ -5854,9 +6011,9 @@ a {
   border: 1px solid var(--border);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 28px;
+  height: 24px;
   justify-content: center;
-  width: 28px;
+  width: 24px;
 }
 
 .pos-base-selector-modal {
@@ -5944,14 +6101,14 @@ a {
 }
 
 .pos-cart-line small {
-  line-height: 1.18;
+  line-height: 1.08;
 }
 
 .pos-cart-line-price {
   font-size: .9rem;
   font-weight: 750;
-  line-height: 1.2;
-  margin-top: 2px;
+  line-height: 1.08;
+  margin-top: 0;
 }
 
 .pos-qty-controls {
@@ -6358,6 +6515,13 @@ a {
   align-items: center;
   display: flex;
   gap: 8px;
+}
+
+.kds-arrival span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .kds-arrival strong {
@@ -8569,6 +8733,17 @@ a {
   width: min(510px, 100%);
 }
 
+.payment-confirmation-modal .cash-total-display {
+  min-width: 0;
+  padding: 12px;
+}
+
+.payment-confirmation-modal .cash-total-display strong {
+  font-size: clamp(1.7rem, 6.4vw, 3rem);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .payment-confirmation-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, 0.72fr);
@@ -8605,6 +8780,16 @@ a {
   width: 58mm;
   color: #000000;
   background: #ffffff;
+}
+
+.post-payment-preview-root {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+}
+
+.post-payment-preview-document {
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 45%, transparent);
 }
 
 .kitchen-ticket-58 {
@@ -8761,6 +8946,28 @@ a {
   }
 
   .payment-confirmation-body {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-pending-payments-table-head {
+    display: none;
+  }
+
+  .pos-pending-payments-list article {
+    grid-template-columns: minmax(60px, .8fr) minmax(88px, 1.2fr) auto;
+  }
+
+  .pos-pending-payments-list article > button {
+    grid-column: 1 / -1;
+  }
+
+  .pending-payment-mixed {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .pending-payment-modal .cash-payment-header {
     grid-template-columns: 1fr;
   }
 }

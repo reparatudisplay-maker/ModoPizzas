@@ -67,15 +67,21 @@ export function PrinterSettingsModule({ settings }: { settings: ThermalPrinterSe
   const sampleRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const supported = supportsWebBluetooth();
-    setBleSupported(supported);
-    setMethod(getDevicePrintMethod());
-    const configuration = getBluetoothPrinterConfiguration();
-    setBluetoothConfiguration(configuration);
-    const profile = getDefaultBluetoothProfile(configuration);
-    setSelectedProfileId(profile.id);
-    setProfileDraft(profile);
-    return subscribeBlePrinterStatus(setBleStatus);
+    const timeout = window.setTimeout(() => {
+      const supported = supportsWebBluetooth();
+      setBleSupported(supported);
+      setMethod(getDevicePrintMethod());
+      const configuration = getBluetoothPrinterConfiguration();
+      setBluetoothConfiguration(configuration);
+      const profile = getDefaultBluetoothProfile(configuration);
+      setSelectedProfileId(profile.id);
+      setProfileDraft(profile);
+    }, 0);
+    const unsubscribe = subscribeBlePrinterStatus(setBleStatus);
+    return () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
   }, []);
 
   const selectedProfile = bluetoothConfiguration.profiles.find((profile) => profile.id === selectedProfileId) ?? JP58W_BLUETOOTH_PROFILE;

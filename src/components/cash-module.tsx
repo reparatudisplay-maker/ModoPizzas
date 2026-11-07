@@ -14,6 +14,7 @@ import {
 } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
+import { CustomerReceiptPrintButton } from "@/components/pos-order-payment-print";
 
 export type CashRegisterOption = {
   id: string;
@@ -300,30 +301,32 @@ export function CashClosingModule({
       </div>
       {openSession ? (
         <>
-          <div className="cash-close-card">
-            <CashGroup label="Base inicial" total={openSession.opening_cash_cop} rows={[{ key: "base", label: `${formatHour(openSession.opened_at)} · ${openSession.opened_by_name}`, value: openSession.opening_cash_cop }]} />
-            <CashMovementGroup kind="sale_cash" label="Ventas efectivo" movements={movements} />
-            <CashMovementGroup kind="manual_income" label="Otros ingresos" movements={movements} />
-            <CashMovementGroup kind="expense_cash" label="Gastos pagados desde caja" movements={movements} negative />
-            <CashMovementGroup kind="withdrawal" label="Retiros" movements={movements} negative />
-            <CashMovementGroup kind="refund_cash" label="Devoluciones" movements={movements} negative />
-            <CashMovementGroup kind="manual_out" label="Otros egresos" movements={movements} negative />
-            <div className="cash-expected-row">
-              <span>Efectivo esperado</span>
-              <strong>{formatCop(expected)}</strong>
+          <div className="cash-close-summary-grid">
+            <div className="cash-close-card">
+              <CashGroup label="Base inicial" total={openSession.opening_cash_cop} rows={[{ key: "base", label: `${formatHour(openSession.opened_at)} · ${openSession.opened_by_name}`, value: openSession.opening_cash_cop }]} />
+              <CashMovementGroup kind="sale_cash" label="Ventas efectivo" movements={movements} />
+              <CashMovementGroup kind="manual_income" label="Otros ingresos" movements={movements} />
+              <CashMovementGroup kind="expense_cash" label="Gastos pagados desde caja" movements={movements} negative />
+              <CashMovementGroup kind="withdrawal" label="Retiros" movements={movements} negative />
+              <CashMovementGroup kind="refund_cash" label="Devoluciones" movements={movements} negative />
+              <CashMovementGroup kind="manual_out" label="Otros egresos" movements={movements} negative />
+              <div className="cash-expected-row">
+                <span>Efectivo esperado</span>
+                <strong>{formatCop(expected)}</strong>
+              </div>
             </div>
-          </div>
-          <div className="cash-close-card">
-            <h3>Ventas del turno</h3>
-            <SalesGroup label="Efectivo" sales={salesByMethod.cash} />
-            <SalesGroup label="Transferencias" sales={salesByMethod.transfer} />
-            <SalesGroup label="Mixto" sales={salesByMethod.mixed} />
-            <SalesGroup label="Pendiente" sales={salesByMethod.pending} />
-            <PlatformReceivablesGroup label="Rappi · liquidación" platform="rappi" receivables={platformReceivables} sales={salesByMethod.rappi} />
-            <PlatformReceivablesGroup label="DiDi · liquidación" platform="didi" receivables={platformReceivables} sales={salesByMethod.didi} />
-            <div className="cash-expected-row">
-              <span>Ventas totales</span>
-              <strong>{formatCop(sales.reduce((sum, sale) => sum + sale.total_cop, 0))}</strong>
+            <div className="cash-close-card">
+              <h3>Ventas del turno</h3>
+              <SalesGroup label="Efectivo" sales={salesByMethod.cash} />
+              <SalesGroup label="Transferencias" sales={salesByMethod.transfer} />
+              <SalesGroup label="Mixto" sales={salesByMethod.mixed} />
+              <SalesGroup label="Pendiente" sales={salesByMethod.pending} />
+              <PlatformReceivablesGroup label="Rappi · liquidación" platform="rappi" receivables={platformReceivables} sales={salesByMethod.rappi} />
+              <PlatformReceivablesGroup label="DiDi · liquidación" platform="didi" receivables={platformReceivables} sales={salesByMethod.didi} />
+              <div className="cash-expected-row">
+                <span>Ventas totales</span>
+                <strong>{formatCop(sales.reduce((sum, sale) => sum + sale.total_cop, 0))}</strong>
+              </div>
             </div>
           </div>
         </>
@@ -363,7 +366,7 @@ export function CashClosingModule({
   );
 }
 
-function CashGroup({ label, total, rows, negative = false }: { label: string; total: number; rows: Array<{ key: string; label: string; value: number }>; negative?: boolean }) {
+function CashGroup({ label, total, rows, negative = false }: { label: string; total: number; rows: Array<{ key: string; label: string; value: number; action?: ReactNode }>; negative?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="cash-group">
@@ -373,10 +376,9 @@ function CashGroup({ label, total, rows, negative = false }: { label: string; to
       </button>
       {open ? (
         <div className="cash-group-detail">
-          {rows.slice(0, 5).map((row) => (
-            <p key={row.key}><span>{row.label}</span><strong>{formatCop(row.value)}</strong></p>
+          {rows.map((row) => (
+            <div className="cash-group-detail-row" key={row.key}><span>{row.label}</span><span>{row.action}<strong>{formatCop(row.value)}</strong></span></div>
           ))}
-          {rows.length > 5 ? <small>Ver todas en Movimientos.</small> : null}
         </div>
       ) : null}
     </div>
@@ -398,7 +400,8 @@ function SalesGroup({ label, sales }: { label: string; sales: ShiftSaleRow[] }) 
   const rows = sales.map((sale) => ({
     key: sale.id,
     label: `${sale.code} · ${formatHour(sale.created_at)} · ${orderKindLabels[sale.kind] ?? sale.kind}`,
-    value: sale.total_cop
+    value: sale.total_cop,
+    action: <CustomerReceiptPrintButton label="Ver" orderCode={sale.code} orderId={sale.id} previewOnly />
   }));
   return <CashGroup label={label} rows={rows} total={sales.reduce((sum, sale) => sum + sale.total_cop, 0)} />;
 }

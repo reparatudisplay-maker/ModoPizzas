@@ -322,6 +322,21 @@ function todayBogota() {
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
+type SaleDatePreference = {
+  date: string;
+  savedFor: string;
+};
+
+function readSaleDatePreference(storageKey: string, today: string) {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "") as Partial<SaleDatePreference>;
+    if (saved.savedFor === today && /^\d{4}-\d{2}-\d{2}$/.test(saved.date ?? "") && saved.date! <= today) return saved.date!;
+  } catch {
+    // Old plain-text preferences intentionally fall back to the current day.
+  }
+  return today;
+}
+
 function cashQuickSuggestions(total: number) {
   if (total <= 0) return [];
   const denominationValues = new Set(cashDenominations);
@@ -459,22 +474,38 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
   const [selected, setSelected] = useState<PosPendingPayment | null>(null);
   const [method, setMethod] = useState<"cash" | "transfer" | "mixed">("cash");
   const [state, setState] = useState<FormActionState>(initialState);
+  const [cashReceived, setCashReceived] = useState("");
+  const [cashSelectedOption, setCashSelectedOption] = useState<string | null>(null);
   const [mixedCash, setMixedCash] = useState("");
   const [mixedTransfer, setMixedTransfer] = useState("");
   const [mixedCashReceived, setMixedCashReceived] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const selectedTotal = selected?.total_cop ?? 0;
+  const cashReceivedValue = Number(cashReceived || 0);
+  const cashChange = Math.max(0, cashReceivedValue - selectedTotal);
+  const cashSuggestions = useMemo(() => cashQuickSuggestions(selectedTotal), [selectedTotal]);
+  const validCashDenominations = useMemo(() => cashDenominations.filter((amount) => amount >= selectedTotal), [selectedTotal]);
+  const mixedCashValue = Number(mixedCash || 0);
+  const mixedTransferValue = Number(mixedTransfer || 0);
+  const mixedCashReceivedValue = Number(mixedCashReceived || 0);
+  const mixedChange = Math.max(0, mixedCashReceivedValue - mixedCashValue);
 
   useEffect(() => {
     if (state.status !== "success") return;
-    setSelected(null);
-    setIsOpen(false);
-    router.refresh();
+    const timeout = window.setTimeout(() => {
+      setSelected(null);
+      setIsOpen(false);
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [router, state.status]);
 
   function selectPayment(order: PosPendingPayment) {
     setSelected(order);
     setMethod("cash");
+    setCashReceived("");
+    setCashSelectedOption(null);
     setMixedCash("");
     setMixedTransfer("");
     setMixedCashReceived("");
@@ -488,7 +519,7 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
     formData.set("total_cop", String(selected.total_cop));
     formData.set("reason", "COBRO PENDIENTE DESDE PEDIDOS");
     formData.set("payment_method", method);
-    if (method === "cash") formData.set("cash_received_cop", String(selected.total_cop));
+    if (method === "cash") formData.set("cash_received_cop", cashReceived);
     if (method === "mixed") {
       formData.set("mixed_cash_cop", mixedCash);
       formData.set("mixed_transfer_cop", mixedTransfer);
@@ -508,37 +539,57 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
           <header><strong>Cobros pendientes</strong><button aria-label="Cerrar cobros pendientes" className="icon-button" onClick={() => setIsOpen(false)} type="button"><X size={15} /></button></header>
           {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
             <div className="pos-pending-payments-list">
+              <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Cliente / mesa</span><span>Total</span><span /></div>
               {pendingPayments.map((order) => (
                 <article key={order.id}>
                   <div>
                     <strong>{order.code}</strong>
                     <small>{new Intl.DateTimeFormat("es-CO", { dateStyle: "short", timeZone: "America/Bogota" }).format(new Date(order.ordered_at))}</small>
-                    <small>{order.customer_name ?? "Sin cliente"}{order.table_name ? ` · ${order.table_name}` : ""}</small>
                   </div>
+                  <div className="pos-pending-payment-party"><strong>{order.customer_name ?? "Sin cliente"}</strong>{order.table_name ? <small>{order.table_name}</small> : <small>Sin mesa</small>}</div>
                   <b>{formatCop(order.total_cop)}</b>
                   <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
                 </article>
               ))}
             </div>
           )}
-          {selected ? (
-            <div className="pos-pending-payment-form">
-              <strong>{selected.code} · {formatCop(selected.total_cop)}</strong>
-              <div className="pos-pending-payment-methods">
-                {(["cash", "transfer", "mixed"] as const).map((item) => <button className={method === item ? "active" : ""} key={item} onClick={() => setMethod(item)} type="button">{paymentLabel(item)}</button>)}
-              </div>
-              {method === "mixed" ? (
-                <div className="pos-pending-payment-mixed">
-                  <input inputMode="numeric" min="1" onChange={(event) => setMixedCash(event.target.value)} placeholder="Efectivo" required type="number" value={mixedCash} />
-                  <input inputMode="numeric" min="1" onChange={(event) => setMixedTransfer(event.target.value)} placeholder="Transferencia" required type="number" value={mixedTransfer} />
-                  <input inputMode="numeric" min="1" onChange={(event) => setMixedCashReceived(event.target.value)} placeholder="Recibido efectivo" required type="number" value={mixedCashReceived} />
-                </div>
-              ) : null}
-              {state.status === "error" ? <p className="form-status error">{state.message}</p> : null}
-              <div className="modal-actions"><button className="secondary-button" onClick={() => setSelected(null)} type="button">Cancelar</button><button className="primary-button" disabled={isPending} onClick={submitPayment} type="button">{isPending ? "Cobrando..." : "Confirmar cobro"}</button></div>
-            </div>
-          ) : null}
         </section>
+      ) : null}
+      {selected ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label={`Cobrar pedido ${selected.code}`} aria-modal="true" className="modal-panel cash-payment-modal pending-payment-modal" role="dialog">
+            <header className="modal-header">
+              <div><strong>Cobrar pedido {selected.code}</strong><span>Confirma el cobro antes de registrar el pago.</span></div>
+              <button className="icon-button" onClick={() => setSelected(null)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="cash-payment-body">
+              <div className="cash-payment-header">
+                <div className="cash-total-display"><span>Total pendiente</span><strong>{formatCop(selectedTotal)}</strong></div>
+                <div className="pending-payment-method-picker">
+                  <span>Método de pago</span>
+                  <div>{(["cash", "transfer", "mixed"] as const).map((item) => <button className={method === item ? "active" : ""} key={item} onClick={() => setMethod(item)} type="button">{paymentLabel(item)}</button>)}</div>
+                </div>
+              </div>
+              {method === "cash" ? (
+                <>
+                  <button className={["cash-exact-button", cashSelectedOption === "exact" ? "selected" : ""].filter(Boolean).join(" ")} onClick={() => { setCashReceived(String(selectedTotal)); setCashSelectedOption("exact"); }} type="button"><Banknote size={28} /><span>Pago exacto</span></button>
+                  <section className="cash-other-amounts" aria-label="Otros montos">
+                    <div className="cash-section-title"><Zap size={16} /><span>Montos rápidos</span></div>
+                    <div className="cash-denomination-grid">{validCashDenominations.map((amount) => <button className={["cash-denomination", cashSelectedOption === `denomination:${amount}` ? "selected" : ""].filter(Boolean).join(" ")} key={amount} onClick={() => { setCashReceived(String(amount)); setCashSelectedOption(`denomination:${amount}`); }} type="button">{formatCop(amount)}</button>)}</div>
+                    {cashSuggestions.length > 0 ? <div className="cash-denomination-grid">{cashSuggestions.map((amount) => <button className={["cash-denomination", cashSelectedOption === `suggestion:${amount}` ? "selected" : ""].filter(Boolean).join(" ")} key={amount} onClick={() => { setCashReceived(String(amount)); setCashSelectedOption(`suggestion:${amount}`); }} type="button">{formatCop(amount)}</button>)}</div> : null}
+                    <label className="field cash-manual-amount"><span>Otro monto</span><div className="cash-manual-input"><WalletCards size={22} /><input inputMode="numeric" onChange={(event) => { setCashReceived(event.target.value.replace(/\D/g, "")); setCashSelectedOption(null); }} placeholder="Ingresar monto" value={cashReceived} /></div></label>
+                  </section>
+                  <div className="cash-change-summary"><span className="cash-summary-received"><ReceiptText size={22} />Recibido:<strong>{cashReceivedValue > 0 ? formatCop(cashReceivedValue) : "-"}</strong></span><span className="cash-summary-change"><Repeat2 size={26} />Cambio:<strong>{cashReceivedValue >= selectedTotal ? formatCop(cashChange) : "-"}</strong></span></div>
+                  {cashReceivedValue > 0 && cashReceivedValue < selectedTotal ? <p className="form-status error">El monto recibido no cubre el total.</p> : null}
+                </>
+              ) : null}
+              {method === "mixed" ? <div className="pos-pending-payment-mixed pending-payment-mixed"><label className="field"><span>Efectivo</span><input inputMode="numeric" min="1" onChange={(event) => setMixedCash(event.target.value.replace(/\D/g, ""))} type="number" value={mixedCash} /></label><label className="field"><span>Transferencia</span><input inputMode="numeric" min="1" onChange={(event) => setMixedTransfer(event.target.value.replace(/\D/g, ""))} type="number" value={mixedTransfer} /></label><label className="field"><span>Recibido efectivo</span><input inputMode="numeric" min="1" onChange={(event) => setMixedCashReceived(event.target.value.replace(/\D/g, ""))} type="number" value={mixedCashReceived} /></label><span className="pending-payment-mixed-summary">Desglose: <strong>{formatCop(mixedCashValue + mixedTransferValue)} / {formatCop(selectedTotal)}</strong> · Cambio: <strong>{formatCop(mixedChange)}</strong></span></div> : null}
+              {method === "transfer" ? <p className="form-status success">El total se registrará como transferencia.</p> : null}
+              {state.status === "error" ? <p className="form-status error">{state.message}</p> : null}
+            </div>
+            <footer className="modal-footer"><button className="ghost-button" onClick={() => setSelected(null)} type="button">Cancelar</button><button className="positive-button" disabled={isPending || (method === "cash" && cashReceivedValue < selectedTotal) || (method === "mixed" && (Math.round(mixedCashValue + mixedTransferValue) !== Math.round(selectedTotal) || mixedCashReceivedValue < mixedCashValue))} onClick={submitPayment} type="button">{isPending ? "Cobrando..." : "Confirmar cobro"}</button></footer>
+          </section>
+        </div>
       ) : null}
     </div>
   );
@@ -648,12 +699,15 @@ export function PosOrderWorkspace({
   }, []);
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(window.localStorage.getItem(directSaleQuickActionsKey) ?? "[]");
-      if (Array.isArray(stored)) setDirectSaleQuickActions(stored.filter((item): item is DirectSaleDraft => Boolean(item && typeof item.name === "string")).slice(0, 12));
-    } catch {
-      setDirectSaleQuickActions([]);
-    }
+    const timeout = window.setTimeout(() => {
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(directSaleQuickActionsKey) ?? "[]");
+        setDirectSaleQuickActions(Array.isArray(stored) ? stored.filter((item): item is DirectSaleDraft => Boolean(item && typeof item.name === "string")).slice(0, 12) : []);
+      } catch {
+        setDirectSaleQuickActions([]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [directSaleQuickActionsKey]);
 
   function saveDirectSaleQuickAction() {
@@ -683,24 +737,36 @@ export function PosOrderWorkspace({
   }, [productViewSettings]);
 
   useEffect(() => {
-    setPrintSelection(readPrintSelection());
-    setPrintPreferencesReady(true);
+    const timeout = window.setTimeout(() => {
+      setPrintSelection(readPrintSelection());
+      setPrintPreferencesReady(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   useEffect(() => {
     if (!canEditSaleDate) return;
     try {
-      const saved = window.localStorage.getItem(saleDateStorageKey);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(saved ?? "") && saved! <= todayBogota()) setSaleDate(saved!);
+      setSaleDate(readSaleDatePreference(saleDateStorageKey, todayBogota()));
     } finally {
       setSaleDateReady(true);
     }
   }, [canEditSaleDate, saleDateStorageKey]);
 
   useEffect(() => {
+    if (!canEditSaleDate) return;
+    const interval = window.setInterval(() => {
+      const today = todayBogota();
+      setSaleDate((current) => current === today ? current : today);
+    }, 60_000);
+    return () => window.clearInterval(interval);
+  }, [canEditSaleDate]);
+
+  useEffect(() => {
     if (!canEditSaleDate || !saleDateReady) return;
     try {
-      window.localStorage.setItem(saleDateStorageKey, saleDate);
+      const preference: SaleDatePreference = { date: saleDate, savedFor: todayBogota() };
+      window.localStorage.setItem(saleDateStorageKey, JSON.stringify(preference));
     } catch {
       // The order remains usable when browser preferences are unavailable.
     }
@@ -717,19 +783,20 @@ export function PosOrderWorkspace({
 
   useEffect(() => {
     if (state.status !== "success" || !state.order || handledSuccessOrderIdRef.current === state.order.id) return;
+    const completedOrder = state.order;
 
     // useActionState preserves its last result. Record the order already handled so a
     // later change to the payment form cannot replay this success and clear a new cart.
-    handledSuccessOrderIdRef.current = state.order.id;
+    handledSuccessOrderIdRef.current = completedOrder.id;
     submittedPaymentMethodRef.current = null;
-    if (printSelection.kitchen || printSelection.receipt) {
-      setPrintJob({
-        id: `${state.order.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
-        orderId: state.order.id,
-        ...printSelection
-      });
-    }
     const timeout = window.setTimeout(() => {
+      if (printSelection.kitchen || printSelection.receipt) {
+        setPrintJob({
+          id: `${completedOrder.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
+          orderId: completedOrder.id,
+          ...printSelection
+        });
+      }
       setCart([]);
       setDelivery("");
       setCustomerName("");
@@ -912,6 +979,7 @@ export function PosOrderWorkspace({
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
   const total = Math.max(0, subtotal - discountCop + deliveryValue);
   const platformPayment = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : null;
+  const isPendingPayment = paymentMethod === "pending";
   const platformPaymentSetting = platformPayment
     ? platformPaymentSettings.find((setting) => setting.platform === platformPayment) ?? null
     : null;
@@ -2602,27 +2670,27 @@ export function PosOrderWorkspace({
 
       {paymentConfirmModalOpen ? (
         <div className="modal-backdrop" role="presentation">
-          <section aria-label="Confirmar pago" aria-modal="true" className="modal-panel cash-payment-modal payment-confirmation-modal" role="dialog">
+          <section aria-label={isPendingPayment ? "Registrar pedido pendiente" : "Confirmar pago"} aria-modal="true" className="modal-panel cash-payment-modal payment-confirmation-modal" role="dialog">
             <header className="modal-header">
-              <div><strong>Confirmar pago</strong><span>Verifica el pago antes de registrar el pedido.</span></div>
+              <div><strong>{isPendingPayment ? "Registrar pedido pendiente" : "Confirmar pago"}</strong><span>{isPendingPayment ? "El pedido quedará pendiente de cobro." : "Verifica el pago antes de registrar el pedido."}</span></div>
               <button className="icon-button" onClick={closePaymentConfirmModal} title="Cerrar" type="button"><X size={18} /></button>
             </header>
             <div className="payment-confirmation-body">
               <div className="cash-total-display"><span>{platformPayment ? "Total esperado" : "Total a registrar"}</span><strong>{formatCop(registrationTotalCop)}</strong></div>
-              <div className="payment-confirmation-method"><span>Método de pago</span><strong>{paymentLabel(paymentMethod)}</strong></div>
+              <div className="payment-confirmation-method"><span>{isPendingPayment ? "Estado de cobro" : "Método de pago"}</span><strong>{paymentLabel(paymentMethod)}</strong></div>
             </div>
             <footer className="form-actions modal-form-actions cash-payment-footer">
               <div className="cash-payment-footer-left">
                 <PaymentPrintSelector onChange={setPrintSelection} value={printSelection} />
                 <button className="ghost-button" onClick={closePaymentConfirmModal} type="button">Cancelar</button>
               </div>
-              <button className="positive-button" disabled={paymentSubmitting} onClick={confirmNonCashPayment} type="button">{paymentSubmitting ? "Registrando..." : "Registrar pago"}</button>
+              <button className="positive-button" disabled={paymentSubmitting} onClick={confirmNonCashPayment} type="button">{paymentSubmitting ? "Registrando..." : isPendingPayment ? "Registrar pedido pendiente" : "Registrar pago"}</button>
             </footer>
           </section>
         </div>
       ) : null}
 
-      {printJob ? <PostPaymentPrintJob job={printJob} onError={setPrintNotice} /> : null}
+      {printJob ? <PostPaymentPrintJob job={printJob} onClose={() => setPrintJob(null)} onError={setPrintNotice} /> : null}
     </>
   );
 }

@@ -499,6 +499,7 @@ function KitchenCard({
         <span className="kds-timer"><Clock size={16} /> {elapsedLabel(item.received_at, tick, item.status === "prepared" ? item.prepared_at : null)}</span>
       </header>
       <div className="kds-arrival">
+        <span>Recibido</span>
         <strong>{timeLabel(item.received_at)}</strong>
         <small>{dateLabel(item.received_at)}</small>
       </div>

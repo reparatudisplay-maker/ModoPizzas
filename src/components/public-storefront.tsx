@@ -121,7 +121,12 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
         }
         return [];
       });
-      if (restored.length) { setCart(restored); setCartOpen(true); }
+      if (restored.length) {
+        window.setTimeout(() => {
+          setCart(restored);
+          setCartOpen(true);
+        }, 0);
+      }
     } catch {
       // An invalid local draft cannot affect the active cart.
     }

@@ -306,6 +306,19 @@ export async function connectBlePrinter(profile = getDefaultBluetoothProfile()) 
     optionalServices: [normalizedProfile.serviceUuid]
   });
 
+  if (!savedDevice && nextDevice.id) {
+    const printerId = `${normalizedProfile.id}:${nextDevice.id}`;
+    const printers = configuration.printers.some((printer) => printer.id === printerId)
+      ? configuration.printers
+      : [...configuration.printers, {
+        id: printerId,
+        name: nextDevice.name ?? normalizedProfile.name,
+        deviceId: nextDevice.id,
+        profileId: normalizedProfile.id
+      }];
+    saveBluetoothPrinterConfiguration({ ...configuration, printers, defaultPrinterId: printerId });
+  }
+
   return connectDevice(nextDevice, normalizedProfile);
 }
 

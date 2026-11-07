@@ -222,7 +222,7 @@ export default async function NuevoPedidoPage() {
       .order("platform"),
     supabase.from("pizza_flavors").select("id, pos_image_url"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
-    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false })
+    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false })
   ]);
 
   const error =

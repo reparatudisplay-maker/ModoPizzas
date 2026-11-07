@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useState } from "react";
 import { reconcilePlatformReceivableAction, registerPlatformSettlementAction, savePlatformPaymentSettings, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 
@@ -14,11 +14,11 @@ export function PlatformSettlementsModule({ settings, receivables }: { settings:
   const [overrides, setOverrides] = useState<Record<string, { gross: string; commission: string; net: string }>>({});
   const available = receivables.filter((row) => row.platform === platform && row.status === "pending");
   const selectedRows = available.filter((row) => selected.includes(row.id));
-  const allocations = useMemo(() => selectedRows.map((row) => {
+  const allocations = selectedRows.map((row) => {
     const remainingGross = Math.max(0, row.gross_cop - row.settled_gross_cop);
     const remainingNet = Math.max(0, row.net_expected_cop - row.settled_net_cop);
     return { receivable_id: row.id, gross_cop: Number(overrides[row.id]?.gross || remainingGross), commission_cop: Number(overrides[row.id]?.commission || Math.max(0, remainingGross - remainingNet)), net_cop: Number(overrides[row.id]?.net || remainingNet) };
-  }), [overrides, selectedRows]);
+  });
   const expected = allocations.reduce((sum, row) => sum + row.net_cop, 0);
   const [settlementState, settlementAction] = useActionState(registerPlatformSettlementAction, idle);
 

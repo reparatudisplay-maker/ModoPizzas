@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useActionState, useEffect, useMemo, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Ban, CalendarClock, CheckSquare, Eye, Search, Settings, Trash2, WalletCards, X } from "lucide-react";
@@ -102,7 +102,7 @@ const orderColumnLabels: Record<OrderColumn, string> = {
   total: "Total",
   payment: "Pago",
   status: "Estado",
-  date: "Fecha",
+  date: "Fecha venta",
   time: "Hora",
   actions: "Acciones"
 };
@@ -203,9 +203,10 @@ function operationalDateParts(value: string) {
 export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEditPayment, orders }: { canDeleteForTests: boolean; canEditOperationalDate: boolean; canEditPayment: boolean; orders: PosOrderListRow[] }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
-  const [datePreset, setDatePreset] = useState<DatePreset>("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [datePreset, setDatePreset] = useState<DatePreset>("today");
+  const [dateFrom, setDateFrom] = useState(() => datePresetRange("today").from);
+  const [dateTo, setDateTo] = useState(() => datePresetRange("today").to);
   const [columns, setColumns] = useState<OrderColumn[]>(defaultOrderColumns);
   const [columnWidths, setColumnWidths] = useState<Partial<Record<OrderColumn, number>>>({});
   const [columnsReady, setColumnsReady] = useState(false);
@@ -217,6 +218,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
   const [deletionPreview, setDeletionPreview] = useState<PosOrderTestDeletionPreview | null>(null);
   const [deletionPreviewError, setDeletionPreviewError] = useState("");
   const [deletionPreviewLoading, setDeletionPreviewLoading] = useState(false);
+  const [draggingColumn, setDraggingColumn] = useState<OrderColumn | null>(null);
   const normalizedQuery = normalizeMasterText(query);
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -240,12 +242,13 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
         const text = `${order.code} ${order.customer_name ?? ""} ${order.table_name ?? ""} ${order.created_by_name} ${order.status} ${order.kind} ${order.items.map((item) => item.product_name_snapshot).join(" ")}`;
         const matchesQuery = !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
         const matchesStatus = status ? order.status === status : true;
+        const matchesPaymentMethod = paymentMethod ? order.payment_method === paymentMethod : true;
         const date = dateKeyInBogota(order.ordered_at);
         const matchesFrom = !dateFrom || date >= dateFrom;
         const matchesTo = !dateTo || date <= dateTo;
-        return matchesQuery && matchesStatus && matchesFrom && matchesTo;
+        return matchesQuery && matchesStatus && matchesPaymentMethod && matchesFrom && matchesTo;
       }),
-    [dateFrom, dateTo, normalizedQuery, orders, status]
+    [dateFrom, dateTo, normalizedQuery, orders, paymentMethod, status]
   );
   const visibleColumn = (column: OrderColumn) => columns.includes(column);
   const toggleColumn = (column: OrderColumn) =>
@@ -274,7 +277,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
     setDeletionPreview(null);
     setDeletionPreviewError("");
   };
-  const visibleColumns = allOrderColumns.filter(visibleColumn);
+  const visibleColumns = columns;
   const applyDatePreset = (preset: DatePreset) => {
     const range = datePresetRange(preset);
     setDatePreset(preset);
@@ -295,11 +298,39 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onEnd);
   };
-  const resetColumnWidth = (column: OrderColumn) => setColumnWidths((current) => {
-    const next = { ...current };
-    delete next[column];
-    return next;
-  });
+  const fitColumnWidth = (column: OrderColumn) => {
+    const cells = Array.from(document.querySelectorAll<HTMLElement>(`[data-order-column="${column}"]`));
+    const width = Math.max(80, ...cells.map((cell) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "left:-9999px;position:fixed;visibility:hidden;white-space:nowrap;";
+      probe.textContent = cell.innerText;
+      document.body.appendChild(probe);
+      const measured = Math.ceil(probe.getBoundingClientRect().width + 30);
+      probe.remove();
+      return measured;
+    }));
+    setColumnWidths((current) => ({ ...current, [column]: Math.min(900, width) }));
+  };
+  const moveColumn = (column: OrderColumn, target: OrderColumn) => {
+    if (column === target) return;
+    setColumns((current) => {
+      const next = current.filter((item) => item !== column);
+      const targetIndex = next.indexOf(target);
+      next.splice(targetIndex, 0, column);
+      return next;
+    });
+  };
+  const startColumnDrag = (event: DragEvent<HTMLSpanElement>, column: OrderColumn) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", column);
+    setDraggingColumn(column);
+  };
+  const dropColumn = (event: DragEvent<HTMLTableCellElement>, target: OrderColumn) => {
+    event.preventDefault();
+    const source = draggingColumn ?? event.dataTransfer.getData("text/plain");
+    if (allOrderColumns.includes(source as OrderColumn)) moveColumn(source as OrderColumn, target);
+    setDraggingColumn(null);
+  };
   const renderOrderCell = (order: PosOrderListRow, column: OrderColumn) => {
     switch (column) {
       case "code": return <strong>{order.code}</strong>;
@@ -330,7 +361,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
   };
 
   return (
-    <section className="form-panel">
+    <section className="form-panel orders-list-panel">
       <div className="section-title-row inventory-toolbar-row">
         <h2>Listado de pedidos</h2>
         <form className="table-filters" onSubmit={(event) => event.preventDefault()}>
@@ -345,6 +376,12 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
             <option value="ready">Listos</option>
             <option value="delivered">Entregados</option>
             <option value="cancelled">Cancelados</option>
+          </select>
+          <select aria-label="Tipo de pago" onChange={(event) => setPaymentMethod(event.target.value)} title="Tipo de pago" value={paymentMethod}>
+            <option value="">Todos los pagos</option>
+            <option value="cash">Efectivo</option>
+            <option value="transfer">Transferencia</option>
+            <option value="mixed">Mixto</option>
           </select>
           <select aria-label="Período" onChange={(event) => applyDatePreset(event.target.value as DatePreset)} title="Período" value={datePreset}>
             <option value="">Todas las fechas</option>
@@ -367,9 +404,9 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
           <thead>
             <tr>
               {visibleColumns.map((column) => (
-                <th className={column === "actions" ? "actions-column compact-actions-column resizable-order-column" : "resizable-order-column"} key={column} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
-                  {orderColumnLabels[column].toUpperCase()}
-                  <button aria-label={`Ajustar ancho de ${orderColumnLabels[column]}`} className="column-resize-handle" onDoubleClick={() => resetColumnWidth(column)} onPointerDown={(event) => startColumnResize(event, column)} title="Arrastra para ajustar. Doble clic para restablecer." type="button" />
+                <th className={`${column === "actions" ? "actions-column compact-actions-column " : ""}resizable-order-column${draggingColumn === column ? " is-dragging" : ""}`} data-order-column={column} key={column} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropColumn(event, column)} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
+                  <span className="order-column-drag" draggable onDragEnd={() => setDraggingColumn(null)} onDragStart={(event) => startColumnDrag(event, column)} title="Arrastra para mover la columna">{orderColumnLabels[column].toUpperCase()}</span>
+                  <button aria-label={`Ajustar ancho de ${orderColumnLabels[column]}`} className="column-resize-handle" onDoubleClick={() => fitColumnWidth(column)} onPointerDown={(event) => startColumnResize(event, column)} title="Arrastra para ajustar. Doble clic para ajustar al contenido." type="button" />
                 </th>
               ))}
             </tr>
@@ -378,7 +415,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
             {filteredOrders.map((order) => (
               <tr key={order.id}>
                 {visibleColumns.map((column) => (
-                  <td className={column === "actions" ? "actions-column compact-actions-column" : undefined} key={column} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
+                  <td className={column === "actions" ? "actions-column compact-actions-column" : undefined} data-order-column={column} key={column} style={columnWidths[column] ? { width: columnWidths[column] } : undefined}>
                     {renderOrderCell(order, column)}
                   </td>
                 ))}

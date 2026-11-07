@@ -16,7 +16,8 @@ export function ThemePreferencesModule() {
   const [theme, setTheme] = useState<ThemeMode>("light");
 
   useEffect(() => {
-    setTheme(getInitialTheme());
+    const timeout = window.setTimeout(() => setTheme(getInitialTheme()), 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   function selectTheme(nextTheme: ThemeMode) {
