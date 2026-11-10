@@ -2294,23 +2294,28 @@ a {
 }
 
 .pending-regularization-modal { display: flex; flex-direction: column; max-width: 760px; width: min(760px, 100%); }
-.pending-regularization-content { display: grid; gap: 10px; max-height: min(60dvh, 560px); overflow-y: auto; padding: 16px; }
-.pending-regularization-group, .pending-regularization-production { background: var(--surface-muted); border: 1px solid var(--border); border-radius: 8px; }
-.pending-regularization-row { align-items: end; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr); padding: 12px; }
+.pending-regularization-content { background: color-mix(in srgb, var(--surface-muted) 86%, var(--panel)); display: grid; gap: 10px; max-height: min(60dvh, 560px); overflow-y: auto; padding: 16px; }
+.pending-regularization-intro { background: color-mix(in srgb, var(--secondary) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--secondary) 42%, var(--border)); border-radius: 6px; color: var(--muted); font-size: .84rem; margin: 0; padding: 10px 12px; }
+.pending-regularization-group, .pending-regularization-production { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 9px color-mix(in srgb, #000 12%, transparent); }
+.pending-regularization-row { align-items: center; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(180px, .55fr); padding: 12px; }
 .pending-regularization-row strong, .pending-regularization-production strong { display: block; }
 .pending-regularization-row span, .pending-regularization-production span, .pending-regularization-production p { color: var(--muted); display: block; font-size: .82rem; margin: 3px 0 0; }
-.pending-regularization-row label { color: var(--muted); display: grid; font-size: .76rem; font-weight: 750; gap: 4px; }
-.pending-regularization-row select { min-height: 38px; width: 100%; }
+.pending-regularization-eyebrow { color: var(--secondary) !important; font-size: .68rem !important; font-weight: 850; letter-spacing: .04em; margin: 0 !important; text-transform: uppercase; }
+.pending-regularization-fifo { border-left: 2px solid var(--secondary); min-width: 0; padding-left: 10px; }
+.pending-regularization-fifo strong { font-size: .8rem; }
+.pending-regularization-shortage { background: color-mix(in srgb, var(--danger) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border)); border-radius: 6px; color: var(--danger); font-size: .82rem; margin: 0 12px 12px; padding: 9px 10px; }
 .pending-regularization-production { padding: 12px; }
 .pending-regularization-production-detail { color: var(--muted); font-size: .8rem; }
 .pending-regularization-details { border-top: 1px solid var(--border); }
 .pending-regularization-details summary { cursor: pointer; font-size: .82rem; font-weight: 750; padding: 9px 12px; }
-.pending-regularization-details > div { display: grid; gap: 8px; padding: 0 12px 12px; }
-.pending-regularization-detail { align-items: center; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); display: grid; font-size: .8rem; gap: 8px; grid-template-columns: minmax(0, 1fr) minmax(220px, .8fr); padding-top: 8px; }
-.pending-regularization-detail label { color: var(--muted); display: grid; font-size: .72rem; font-weight: 750; gap: 3px; }
-.pending-regularization-detail select { min-height: 34px; width: 100%; }
-.pending-regularization-detail small { color: var(--danger); }
-@media (max-width: 680px) { .pending-regularization-row, .pending-regularization-detail { align-items: stretch; grid-template-columns: 1fr; } }
+.pending-regularization-breakdown { display: grid; gap: 8px; padding: 0 12px 12px; }
+.pending-regularization-breakdown table { border-collapse: collapse; font-size: .78rem; width: 100%; }
+.pending-regularization-breakdown th { color: var(--muted); font-size: .7rem; text-align: left; }
+.pending-regularization-breakdown th, .pending-regularization-breakdown td { border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); padding: 7px 8px; }
+.pending-regularization-breakdown td:last-child, .pending-regularization-breakdown th:last-child { text-align: right; }
+.pending-regularization-confirm { align-items: flex-start; background: color-mix(in srgb, var(--warning) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--border)); border-radius: 6px; display: flex; font-size: .82rem; gap: 8px; line-height: 1.35; padding: 10px 12px; }
+.pending-regularization-confirm input { margin-top: 2px; }
+@media (max-width: 680px) { .pending-regularization-row { align-items: stretch; grid-template-columns: 1fr; } }
 
 .table-filters input,
 .table-filters select {

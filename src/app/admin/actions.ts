@@ -35,32 +35,23 @@ export type FormActionState = {
   message: string;
 };
 
-export async function regularizePendingInventoryDebtsWithLotReferences(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+export async function regularizePendingInventoryDebtsFifo(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
-  const lotReferences = formData.get("lot_references");
-  if (typeof lotReferences !== "string") return { status: "error", message: "Selecciona los lotes de referencia antes de continuar." };
-
-  let selections: Array<{ debt_id: string; lot_id: string }>;
-  try {
-    selections = JSON.parse(lotReferences) as Array<{ debt_id: string; lot_id: string }>;
-  } catch {
-    return { status: "error", message: "La selección de lotes no es válida." };
-  }
-
-  const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts_with_lot_references", {
-    p_lot_references: selections,
-    p_notes: "REGULARIZACION TECNICA DE FALTANTES POS. LOTES DE REFERENCIA SELECCIONADOS. SIN CAMBIO DE STOCK FISICO."
+  const allowShortage = formData.get("allow_shortage") === "true";
+  const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts_fifo", {
+    p_allow_shortage: allowShortage,
+    p_notes: "REGULARIZACION TECNICA FIFO DE FALTANTES POS. ASIGNACION A LOTES EXISTENTES SIN CREAR COMPRAS NUEVAS."
   });
   if (error) return { status: "error", message: error.message };
 
-  const result = data as { debt_count?: number; item_count?: number; total_cop?: number } | null;
+  const result = data as { regularized_count?: number; partial_count?: number; total_cop?: number } | null;
   revalidatePath("/panel/compras");
   revalidatePath("/panel/inventario");
   revalidatePath("/panel/reportes");
   revalidatePath("/panel/pedidos");
   return {
     status: "success",
-    message: `Regularización registrada: ${result?.item_count ?? 0} líneas y ${result?.debt_count ?? 0} faltantes asociados. Total ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(Number(result?.total_cop ?? 0))}.`
+    message: `Regularización FIFO registrada: ${result?.regularized_count ?? 0} faltantes cubiertos${result?.partial_count ? ` y ${result.partial_count} con saldo pendiente` : ""}. Costo asignado ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(Number(result?.total_cop ?? 0))}.`
   };
 }
 
