@@ -3,7 +3,7 @@ import { ComboPricesWorkspace, type ComboPizzaFlavorOption, type ComboPriceRecor
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
-import { canonicalStockUnit, convertStockQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
+import { canonicalStockUnit, convertStockQuantity, formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
@@ -233,7 +233,7 @@ export default async function MenuPreciosCombosPage() {
       image_src: await signedImage(supabase, product.image_url),
       presentation:
         product.presentation_quantity && product.presentation_unit
-          ? formatStockQuantity(Number(product.presentation_quantity), product.presentation_unit)
+          ? formatPresentationQuantity(Number(product.presentation_quantity), product.presentation_unit)
           : "Sin presentacion",
       sale_price_cop: Number(product.sale_price_cop ?? 0),
       sale_is_enabled: Boolean(product.sale_is_enabled),

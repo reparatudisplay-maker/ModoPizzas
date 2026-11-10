@@ -15,7 +15,7 @@ import {
 } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
-import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 import { KitchenTicketPrintButton } from "@/components/kitchen-ticket-print";
 import { CustomerReceiptPrintButton } from "@/components/pos-order-payment-print";
 
@@ -886,7 +886,7 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
             <div className="order-detail-items">
               {order.items.map((item) => {
                 const presentation = item.item_kind === "sale_product" && item.presentation_quantity !== null && item.presentation_unit
-                  ? formatStockQuantity(item.presentation_quantity, item.presentation_unit)
+                  ? formatPresentationQuantity(item.presentation_quantity, item.presentation_unit)
                   : null;
                 return (
                   <article className="order-detail-item" key={item.id}>

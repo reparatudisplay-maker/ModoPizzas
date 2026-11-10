@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Clock, Flame, PackageCheck } from "lucide-react";
+import { Clock, Flame, PackageCheck, Settings2 } from "lucide-react";
 import { updateKitchenOrderItemStatus, type FormActionState } from "@/app/admin/actions";
 import { estimateKitchenMinutes, kitchenTimingState, type KitchenSettings } from "@/lib/kitchen-estimates";
 import { createClient } from "@/lib/supabase-browser";
@@ -50,6 +50,14 @@ export type KitchenKdsItem = {
 
 const initialState: FormActionState = { status: "idle", message: "" };
 const soundPreferenceKey = "modo-kitchen-sound-enabled";
+const soundTonePreferenceKey = "modo-kitchen-sound-tone";
+type KitchenSoundTone = "bell" | "double" | "urgent";
+
+const kitchenSoundTones: Array<{ value: KitchenSoundTone; label: string }> = [
+  { value: "bell", label: "Campana" },
+  { value: "double", label: "Doble aviso" },
+  { value: "urgent", label: "Urgente" }
+];
 
 const statusGroups: Array<{ key: KitchenItemStatus; title: string }> = [
   { key: "pending", title: "Pendientes" },
@@ -153,9 +161,16 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
   });
   const [soundReady, setSoundReady] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const [showSoundSettings, setShowSoundSettings] = useState(false);
+  const [soundTone, setSoundTone] = useState<KitchenSoundTone>(() => {
+    if (typeof window === "undefined") return "bell";
+    const saved = window.localStorage.getItem(soundTonePreferenceKey);
+    return saved === "double" || saved === "urgent" ? saved : "bell";
+  });
   const [reconnectVersion, setReconnectVersion] = useState(0);
   const knownItemIdsRef = useRef(new Set(items.map((item) => item.id)));
   const soundEnabledRef = useRef(soundEnabled);
+  const soundToneRef = useRef(soundTone);
   const refreshTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const normalizedQuery = normalizeMasterText(query);
@@ -166,46 +181,59 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
   }, [soundEnabled]);
 
   useEffect(() => {
+    window.localStorage.setItem(soundTonePreferenceKey, soundTone);
+    soundToneRef.current = soundTone;
+  }, [soundTone]);
+
+  useEffect(() => {
     // Server reconciliation must never be treated as a new order notification.
     for (const item of items) knownItemIdsRef.current.add(item.id);
     const timer = window.setTimeout(() => setBoardItems(items), 0);
     return () => window.clearTimeout(timer);
   }, [items]);
 
-  function playKitchenTone() {
+  async function playKitchenTone(tone = soundToneRef.current) {
+    let context: AudioContext | null = null;
     try {
       const AudioContextClass = window.AudioContext;
       if (!AudioContextClass) return false;
-      const context = new AudioContextClass();
-      if (context.state === "suspended") {
-        void context.close();
-        return false;
-      }
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 880;
-      gain.gain.setValueAtTime(0.001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.22);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.24);
-      window.setTimeout(() => void context.close(), 320);
+      context = new AudioContextClass();
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") return false;
+      const notes = tone === "double"
+        ? [[880, 0, 0.16], [988, 0.22, 0.2]]
+        : tone === "urgent"
+          ? [[740, 0, 0.12], [880, 0.16, 0.12], [1046, 0.32, 0.2]]
+          : [[784, 0, 0.26]];
+      notes.forEach(([frequency, offset, duration]) => {
+        const oscillator = context!.createOscillator();
+        const gain = context!.createGain();
+        oscillator.type = tone === "urgent" ? "square" : "sine";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.001, context!.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.16, context!.currentTime + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, context!.currentTime + offset + duration);
+        oscillator.connect(gain);
+        gain.connect(context!.destination);
+        oscillator.start(context!.currentTime + offset);
+        oscillator.stop(context!.currentTime + offset + duration + 0.02);
+      });
+      const closeAfter = tone === "urgent" ? 620 : tone === "double" ? 500 : 360;
+      window.setTimeout(() => void context?.close(), closeAfter);
       setSoundReady(true);
       setSoundBlocked(false);
       return true;
     } catch {
+      void context?.close();
       return false;
     }
   }
 
-  function toggleSound() {
+  async function toggleSound() {
     const next = !soundEnabled;
     setSoundEnabled(next);
     if (next) {
-      const played = playKitchenTone();
+      const played = await playKitchenTone();
       setSoundReady(played);
       setSoundBlocked(!played);
     } else {
@@ -276,11 +304,24 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
   }, []);
 
   useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 12000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [router]);
+
+  useEffect(() => {
     if (!soundEnabled || soundReady) return undefined;
     const unlock = () => {
-      const played = playKitchenTone();
-      setSoundReady(played);
-      setSoundBlocked(!played);
+      void playKitchenTone().then((played) => {
+        setSoundReady(played);
+        setSoundBlocked(!played);
+      });
     };
     window.addEventListener("pointerdown", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
@@ -336,8 +377,9 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
           setNewItemIds((current) => (current.includes(item.id) ? current : [...current, item.id]));
           window.setTimeout(() => setNewItemIds((current) => current.filter((newId) => newId !== item.id)), 2800);
           if (soundEnabledRef.current) {
-            const played = playKitchenTone();
-            if (!played) setSoundBlocked(true);
+            void playKitchenTone().then((played) => {
+              if (!played) setSoundBlocked(true);
+            });
           }
           reconcile();
         } catch {
@@ -425,11 +467,15 @@ export function KitchenKdsBoard({ items, settings }: { items: KitchenKdsItem[]; 
         <form className="table-filters" onSubmit={(event) => event.preventDefault()}>
           <button
             className="ghost-button icon-text-button"
-            onClick={toggleSound}
+            onClick={() => void toggleSound()}
             type="button"
           >
             {soundEnabled ? "🔊 Sonido activado" : "🔇 Sonido desactivado"}
           </button>
+          <div className="kds-sound-settings">
+            <button aria-expanded={showSoundSettings} aria-label="Configurar tono de cocina" className="icon-button" onClick={() => setShowSoundSettings((current) => !current)} title="Configurar tono" type="button"><Settings2 size={16} /></button>
+            {showSoundSettings ? <div className="kds-sound-popover"><strong>Tono</strong><div>{kitchenSoundTones.map((tone) => <button className={soundTone === tone.value ? "selected" : ""} key={tone.value} onClick={() => { setSoundTone(tone.value); void playKitchenTone(tone.value); }} type="button">{tone.label}</button>)}</div></div> : null}
+          </div>
           <select aria-label="Periodo de pedidos en cocina" className="kds-date-filter" onChange={(event) => setDateFilter(event.target.value as KitchenDateFilter)} value={dateFilter}>
             <option value="today">Hoy</option>
             <option value="yesterday">Ayer</option>

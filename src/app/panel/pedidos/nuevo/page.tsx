@@ -2,7 +2,7 @@ import { PanelShell } from "@/components/panel-shell";
 import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosOrderTableOption, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
-import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
@@ -108,6 +108,16 @@ type PendingPaymentRow = {
   total_cop: number | string;
 };
 
+function bogotaDayRange() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  const date = `${value("year")}-${value("month")}-${value("day")}`;
+  const start = new Date(`${date}T00:00:00-05:00`);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
 type ComboRow = {
   id: string;
   sku: string;
@@ -184,7 +194,8 @@ export default async function NuevoPedidoPage() {
     platformPaymentSettingsResult,
     posImagesResult,
     orderTablesResult,
-    pendingPaymentsResult
+    pendingPaymentsResult,
+    paidPaymentsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -222,7 +233,11 @@ export default async function NuevoPedidoPage() {
       .order("platform"),
     supabase.from("pizza_flavors").select("id, pos_image_url"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
-    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false })
+    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
+    (() => {
+      const today = bogotaDayRange();
+      return supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
+    })()
   ]);
 
   const error =
@@ -346,7 +361,7 @@ export default async function NuevoPedidoPage() {
         image_src: await signedCachedImage(product.image_url),
         presentation:
           product.presentation_quantity && product.presentation_unit
-            ? formatStockQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
+            ? formatPresentationQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
             : null,
         sale_price_cop: Number(product.sale_price_cop ?? 0),
         stock_base: Number(product.stock_base ?? 0),
@@ -373,6 +388,14 @@ export default async function NuevoPedidoPage() {
   }));
   const orderTables: PosOrderTableOption[] = orderTablesResult.error ? [] : ((orderTablesResult.data ?? []) as PosOrderTableOption[]);
   const pendingPayments: PosPendingPayment[] = ((pendingPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
+    id: order.id,
+    code: order.code,
+    ordered_at: order.ordered_at,
+    customer_name: order.customer_name,
+    table_name: order.table_name_snapshot ?? null,
+    total_cop: Number(order.total_cop ?? 0)
+  }));
+  const paidTodayPayments: PosPendingPayment[] = ((paidPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
     id: order.id,
     code: order.code,
     ordered_at: order.ordered_at,
@@ -467,7 +490,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

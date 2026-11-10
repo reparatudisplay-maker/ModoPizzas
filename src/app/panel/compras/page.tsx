@@ -3,7 +3,7 @@ import { PanelShell } from "@/components/panel-shell";
 import { PurchaseListWorkspace } from "@/components/purchase-list-workspace";
 import { type EditablePurchase, PurchaseModal } from "@/components/purchase-form";
 import { PurchaseSearchFilters } from "@/components/purchase-search-filters";
-import { PendingInventoryRegularizationAction } from "@/components/pending-inventory-regularization-action";
+import { PendingInventoryRegularizationAction, type PendingRegularizationDebt } from "@/components/pending-inventory-regularization-action";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { formatCop } from "@/lib/format";
@@ -273,7 +273,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     purchasesQuery = purchasesQuery.gte("purchased_at", periodStart);
   }
 
-  const [itemsResult, suppliersResult, brandsResult, purchasesResult, directPurchasesResult, pendingRegularizationResult] = await Promise.all([
+  const [itemsResult, suppliersResult, brandsResult, purchasesResult, directPurchasesResult, pendingRegularizationResult, pendingRegularizationPreviewResult] = await Promise.all([
     supabase
       .from("inventory_items")
       .select("id, name, sku, unit, item_kind, purchase_mode, brand_id, image_url, presentation_quantity, presentation_unit, is_active")
@@ -290,7 +290,8 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     supabase
       .from("pos_inventory_regularization_debts")
       .select("id", { count: "exact", head: true })
-      .eq("status", "pending")
+      .eq("status", "pending"),
+    supabase.rpc("preview_pending_pos_inventory_regularization")
   ]);
   let purchaseData = purchasesResult.data;
   let purchasesError = purchasesResult.error;
@@ -364,8 +365,14 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
         }
       : null;
   const editPurchaseError = editId && !editPurchase ? "No se pudo cargar la compra seleccionada. Revisa que tenga una linea de compra y producto relacionado." : "";
-  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError ?? pendingRegularizationResult.error;
-  const pendingRegularizationCount = pendingRegularizationResult.count ?? 0;
+  const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError ?? pendingRegularizationResult.error ?? pendingRegularizationPreviewResult.error;
+  const pendingRegularizationRows = (pendingRegularizationPreviewResult.data ?? []) as Array<{ debt_id: string; order_code: string; source_kind: string; item_name: string; quantity_base: number; base_unit: StockUnit; lot_id: string | null; lot_available_base: number | null; lot_purchased_at: string | null; lot_unit_cost_cop: number | null }>;
+  const pendingRegularizationDebts = Array.from(pendingRegularizationRows.reduce<Map<string, PendingRegularizationDebt>>((debts, source) => {
+    const debt = debts.get(source.debt_id) ?? { id: source.debt_id, orderCode: source.order_code, name: source.item_name, sourceKind: source.source_kind, quantity: Number(source.quantity_base), unit: source.base_unit, lots: [] } satisfies PendingRegularizationDebt;
+    if (source.lot_id) debt.lots.push({ id: source.lot_id, available: Number(source.lot_available_base ?? 0), purchasedAt: source.lot_purchased_at, unitCost: Number(source.lot_unit_cost_cop ?? 0) });
+    debts.set(source.debt_id, debt);
+    return debts;
+  }, new Map<string, PendingRegularizationDebt>()).values());
   const normalizedQuery = query.toLowerCase();
   const searchedPurchases = normalizedQuery
     ? purchases.filter((purchase) =>
@@ -483,7 +490,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
                 key={editPurchase?.id ?? "new-purchase"}
                 suppliers={suppliers}
               />
-              <PendingInventoryRegularizationAction pendingCount={pendingRegularizationCount} />
+              <PendingInventoryRegularizationAction debts={pendingRegularizationDebts} />
             </div>
           )}
         </div>

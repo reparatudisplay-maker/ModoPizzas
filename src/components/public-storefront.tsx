@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, LogOut, MapPin, MessageCircle, Minus, Moon, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, UserRound, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
-import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 import type { PosComboOption } from "@/components/pos-order-workspace";
 import { PublicAuthModal } from "@/components/public-auth-modal";
 import { createClient } from "@/lib/supabase-browser";
@@ -23,7 +23,7 @@ type CartLine = { key: string; kind: "pizza" | "sale_product"; id: string; secon
 type PizzaGroup = { id: string; price: PublicPizzaPrice; prices: PublicPizzaPrice[] };
 type PizzaDraft = { line: CartLine; initial: PublicPizzaPrice };
 
-function presentation(product: PublicProduct) { return product.presentation_quantity && product.presentation_unit ? formatStockQuantity(product.presentation_quantity, product.presentation_unit) : ""; }
+function presentation(product: PublicProduct) { return product.presentation_quantity && product.presentation_unit ? formatPresentationQuantity(product.presentation_quantity, product.presentation_unit) : ""; }
 function additionsValue(line: CartLine) { return line.additions.reduce((sum, addition) => sum + addition.price_cop * addition.quantity, 0); }
 function lineTotal(line: CartLine) { return (line.unit_price_cop + additionsValue(line)) * line.quantity; }
 function cartKey(prefix: string) { return `${prefix}:${crypto.randomUUID()}`; }

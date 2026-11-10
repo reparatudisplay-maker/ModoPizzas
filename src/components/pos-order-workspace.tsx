@@ -5,12 +5,12 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, CheckCircle2, ChevronLeft, Edit3, HandCoins, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingCart, Star, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, Bike, CarFront, CheckCircle2, ChevronLeft, Clock, Edit3, HandCoins, Landmark, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingBag, ShoppingCart, Star, Store, Truck, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
-import { PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
+import { CustomerReceiptPrintButton, PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
 
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending" | "rappi" | "didi";
@@ -26,6 +26,7 @@ type DirectFundsOrigin = "cash_session" | "external";
 type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
 type AdditionScope = "whole" | "left" | "right";
+type PickupMode = "pickup" | "takeaway";
 
 type FlavorIngredientOption = {
   source_id: string;
@@ -402,6 +403,14 @@ function paymentLabel(method: PaymentMethod) {
   return "Pendiente";
 }
 
+function paymentIcon(method: PaymentMethod) {
+  if (method === "cash") return Banknote;
+  if (method === "transfer") return Landmark;
+  if (method === "mixed") return WalletCards;
+  if (method === "pending") return Clock;
+  return method === "rappi" ? Bike : CarFront;
+}
+
 function formatPosUnitCost(value: number | null) {
   if (!value || !Number.isFinite(value) || value <= 0) return "Sin costo";
   return `Costo: ${formatCop(value, { decimals: !Number.isInteger(value) })} / UND`;
@@ -469,7 +478,7 @@ function additionLabel(addition: CartAddition) {
   return addition.scope_label ? `+ ${addition.name} x${addition.quantity} (${addition.scope_label})` : `+ ${addition.name} x${addition.quantity}`;
 }
 
-function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendingPayment[] }) {
+function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTodayPayments: PosPendingPayment[]; pendingPayments: PosPendingPayment[] }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState<PosPendingPayment | null>(null);
   const [method, setMethod] = useState<"cash" | "transfer" | "mixed">("cash");
@@ -490,6 +499,7 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
   const mixedTransferValue = Number(mixedTransfer || 0);
   const mixedCashReceivedValue = Number(mixedCashReceived || 0);
   const mixedChange = Math.max(0, mixedCashReceivedValue - mixedCashValue);
+  const orderTime = (value: string) => new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" }).format(new Date(value));
 
   useEffect(() => {
     if (state.status !== "success") return;
@@ -535,24 +545,40 @@ function PendingPaymentsButton({ pendingPayments }: { pendingPayments: PosPendin
         {pendingPayments.length > 0 ? <span>{pendingPayments.length}</span> : null}
       </button>
       {isOpen ? (
-        <section className="pos-pending-payments-panel" aria-label="Cobros pendientes">
-          <header><strong>Cobros pendientes</strong><button aria-label="Cerrar cobros pendientes" className="icon-button" onClick={() => setIsOpen(false)} type="button"><X size={15} /></button></header>
-          {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
-            <div className="pos-pending-payments-list">
-              <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Cliente / mesa</span><span>Total</span><span /></div>
-              {pendingPayments.map((order) => (
-                <article key={order.id}>
-                  <div>
-                    <strong>{order.code}</strong>
-                    <small>{new Intl.DateTimeFormat("es-CO", { dateStyle: "short", timeZone: "America/Bogota" }).format(new Date(order.ordered_at))}</small>
-                  </div>
-                  <div className="pos-pending-payment-party"><strong>{order.customer_name ?? "Sin cliente"}</strong>{order.table_name ? <small>{order.table_name}</small> : <small>Sin mesa</small>}</div>
-                  <b>{formatCop(order.total_cop)}</b>
-                  <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
-                </article>
-              ))}
-            </div>
-          )}
+        <section className="pos-pending-payments-panel" aria-label="Cobros del día">
+          <header><strong>Cobros del día</strong><button aria-label="Cerrar cobros del día" className="icon-button" onClick={() => setIsOpen(false)} type="button"><X size={15} /></button></header>
+          <section className="pos-payment-order-section" aria-labelledby="pending-payments-title">
+            <div className="pos-payment-order-section-title"><strong id="pending-payments-title">Pendientes</strong><span>{pendingPayments.length}</span></div>
+            {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
+              <div className="pos-pending-payments-list">
+                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span /></div>
+                {pendingPayments.map((order) => (
+                  <article key={order.id}>
+                    <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
+                    <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
+                    <b>{formatCop(order.total_cop)}</b>
+                    <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="pos-payment-order-section" aria-labelledby="paid-payments-title">
+            <div className="pos-payment-order-section-title paid"><strong id="paid-payments-title">Cobrados hoy</strong><span>{paidTodayPayments.length}</span></div>
+            {paidTodayPayments.length === 0 ? <p className="empty-state">No hay cobros registrados hoy.</p> : (
+              <div className="pos-pending-payments-list paid">
+                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span /></div>
+                {paidTodayPayments.map((order) => (
+                  <article key={order.id}>
+                    <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
+                    <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
+                    <b>{formatCop(order.total_cop)}</b>
+                    <span className="pos-payment-order-actions"><CustomerReceiptPrintButton label="" orderCode={order.code} orderId={order.id} previewOnly /></span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
         </section>
       ) : null}
       {selected ? (
@@ -606,6 +632,7 @@ export function PosOrderWorkspace({
   canRecordPendingStock,
   platformPaymentSettings,
   orderTables,
+  paidTodayPayments,
   pendingPayments,
   isSystemAdmin,
   userId
@@ -620,6 +647,7 @@ export function PosOrderWorkspace({
   canRecordPendingStock: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
   orderTables: PosOrderTableOption[];
+  paidTodayPayments: PosPendingPayment[];
   pendingPayments: PosPendingPayment[];
   isSystemAdmin: boolean;
   userId: string;
@@ -637,6 +665,7 @@ export function PosOrderWorkspace({
   const [directSaleQuickActions, setDirectSaleQuickActions] = useState<DirectSaleDraft[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderKind, setOrderKind] = useState<OrderKind>("local");
+  const [pickupMode, setPickupMode] = useState<PickupMode>("pickup");
   const [tableId, setTableId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
@@ -1782,7 +1811,7 @@ export function PosOrderWorkspace({
               <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
               <button className={tab === "combos" ? "active" : ""} onClick={() => setTab("combos")} type="button">Combos</button>
               <button className="pos-direct-sale-button" onClick={() => setDirectSaleOpen(true)} type="button"><PackagePlus size={16} /> Venta libre</button>
-              <PendingPaymentsButton pendingPayments={pendingPayments} />
+              <PendingPaymentsButton paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} />
               <button
                 aria-label="Configurar vista de productos"
                 className="pos-products-settings-button"
@@ -1881,24 +1910,13 @@ export function PosOrderWorkspace({
           </div>
 
           <div className="pos-kind-grid">
-            {(["local", "pickup", "delivery"] as OrderKind[]).map((kind) => (
-              <Fragment key={kind}>
-                <button className={orderKind === kind ? "active" : ""} onClick={() => {
-                  setOrderKind(kind);
-                  if (kind !== "local") setTableId("");
-                }} type="button">
-                  {orderKindLabel(kind)}
-                </button>
-                {kind === "local" && orderKind === "local" ? (
-                  <label aria-label="Mesa" className="pos-table-selector">
-                    <select aria-label="Mesa" onChange={(event) => setTableId(event.target.value)} value={tableId}>
-                      <option value="">Sin mesa</option>
-                      {orderTables.map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
-                    </select>
-                  </label>
-                ) : null}
-              </Fragment>
-            ))}
+            <div className={`pos-local-service ${orderKind === "local" ? "active" : ""}`}>
+              <button onClick={() => setOrderKind("local")} type="button"><Store size={15} />Local</button>
+              {orderKind === "local" ? <label aria-label="Mesa" className="pos-table-selector"><select aria-label="Mesa" onChange={(event) => setTableId(event.target.value)} value={tableId}><option value="">S/M</option>{orderTables.map((table, index) => <option key={table.id} value={table.id}>{`M${index + 1}`}</option>)}</select></label> : null}
+            </div>
+            <button className={orderKind === "pickup" && pickupMode === "pickup" ? "active" : ""} onClick={() => { setOrderKind("pickup"); setPickupMode("pickup"); setTableId(""); }} type="button"><ShoppingBag size={15} />Recoger</button>
+            <button className={orderKind === "pickup" && pickupMode === "takeaway" ? "active" : ""} onClick={() => { setOrderKind("pickup"); setPickupMode("takeaway"); setTableId(""); }} type="button"><PackagePlus size={15} />Llevar</button>
+            <button className={orderKind === "delivery" ? "active" : ""} onClick={() => { setOrderKind("delivery"); setTableId(""); }} type="button"><Truck size={15} />Domicilio</button>
           </div>
 
           <div className="pos-cart-lines">
@@ -2044,9 +2062,12 @@ export function PosOrderWorkspace({
           ) : null}
           <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" value={notes} />
 
-          <div className="pos-payment-grid">
-            {(["cash", "transfer", "mixed", "pending", "rappi", "didi"] as PaymentMethod[]).map((method) => (
-              <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => {
+          <fieldset className="pos-payment-fieldset">
+            <legend>Forma de pago</legend>
+            <div className="pos-payment-grid">
+              {(["cash", "transfer", "mixed", "pending", "rappi", "didi"] as PaymentMethod[]).map((method) => {
+                const Icon = paymentIcon(method);
+                return <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => {
                 setPaymentMethod(method);
                 if (method === "rappi" || method === "didi") {
                   setDiscount(null);
@@ -2054,10 +2075,11 @@ export function PosOrderWorkspace({
                   setDiscountModalOpen(false);
                 }
               }} type="button">
-                {paymentLabel(method)}
-              </button>
-            ))}
-          </div>
+                <Icon size={15} /><span>{paymentLabel(method)}</span>
+              </button>;
+              })}
+            </div>
+          </fieldset>
           {platformPayment ? (
             <section className="pos-platform-estimate" aria-label={`Liquidación estimada de ${paymentLabel(platformPayment)}`}>
               <h2>Liquidación estimada</h2>
@@ -2861,13 +2883,14 @@ function PizzaCustomizationModal({
                 {groups.map((group) => (
                   <section className="pos-ingredient-group" key={group.title}>
                     <h4>{group.title}</h4>
-                    <div className="pos-ingredient-options">
+                    <div className="pos-ingredient-table" role="table">
+                      <div className="pos-ingredient-table-header" role="row"><span role="columnheader">Ingrediente</span><span role="columnheader">Incluir</span></div>
                       {group.choices.map((choice) => {
                         const checked = !removedKeys.includes(choice.key);
                         return (
                           <label className={checked ? "pos-ingredient-option selected" : "pos-ingredient-option"} key={choice.key}>
-                            <input checked={checked} onChange={() => onToggle(choice.key)} type="checkbox" />
                             <span>{choice.source_name}</span>
+                            <input aria-label={`${checked ? "Quitar" : "Incluir"} ${choice.source_name}`} checked={checked} onChange={() => onToggle(choice.key)} type="checkbox" />
                           </label>
                         );
                       })}

@@ -47,6 +47,15 @@ export function formatStockQuantityInUnit(value: number, unit: StockUnit) {
   return `${formatColombianNumber(value, canonicalStockUnit(unit) === "unit" ? 0 : 2)} ${unitLabel(unit)}`;
 }
 
+export function formatPresentationQuantity(value: number, unit: StockUnit) {
+  const preferred = toPreferredDisplayQuantity(value, unit);
+  const quantity = new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0
+  }).format(Number.isFinite(preferred.value) ? preferred.value : 0);
+  return `${quantity} ${unitLabel(preferred.unit)}`;
+}
+
 export function toPreferredDisplayQuantity(value: number, unit: StockUnit): { value: number; unit: StockUnit } {
   const baseUnit = canonicalStockUnit(unit);
   const baseValue = unit === "kg" || unit === "l" ? value * 1000 : value;

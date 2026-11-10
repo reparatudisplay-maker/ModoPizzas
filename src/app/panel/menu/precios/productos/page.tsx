@@ -2,7 +2,7 @@ import { PanelShell } from "@/components/panel-shell";
 import { SaleProductPricesWorkspace, type SaleProductPriceReference } from "@/components/sale-product-prices-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
-import { convertStockQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
+import { convertStockQuantity, formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 
 const productImageBucket = "product-images";
 
@@ -122,7 +122,7 @@ export default async function MenuPreciosProductosPage() {
         image_src: await signedImage(supabase, reference.image_url),
         presentation:
           reference.presentation_quantity && reference.presentation_unit
-            ? formatStockQuantity(Number(reference.presentation_quantity), reference.presentation_unit)
+            ? formatPresentationQuantity(Number(reference.presentation_quantity), reference.presentation_unit)
             : "Sin presentacion",
         current_cost_cop: cost && cost.quantity > 0 && cost.total > 0 ? cost.total / cost.quantity : null,
         sale_price_cop: Number(reference.sale_price_cop ?? 0),
