@@ -3,7 +3,7 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Instagram, Leaf, LogOut, MapPin, MessageCircle, Minus, Moon, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, UserRound, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Edit3, Facebook, Flame, Gift, Instagram, Leaf, LogOut, MapPin, MessageCircle, Minus, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, TreePine, UserRound, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
 import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 import type { PosComboOption } from "@/components/pos-order-workspace";
@@ -132,38 +132,34 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
     }
   }, [catalog.additions, catalog.pizzas, catalog.products]);
 
-  return <main className="public-site">
-    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a href="#informacion">Información</a></nav><div className="public-account-actions">{customer ? <><Link className="public-login" href="/mi-cuenta"><UserRound size={16}/>Mi cuenta</Link><button aria-label="Cerrar sesión" className="public-account-signout" onClick={signOut} type="button"><LogOut size={16}/></button></> : <button className="public-login" onClick={() => setAuthOpen(true)} type="button">Ingresar</button>}<button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
+  return <main className="public-site public-site--holiday">
+    <header className="public-header"><a className="public-logo" href="#inicio" onClick={() => setCategory("PIZZAS")}><img alt="Modo Pizzas" height="214" src="/brand/modo-pizzas-header-black.png" width="640"/></a><nav aria-label="Navegacion principal"><a href="#inicio">Inicio</a><a href="#menu" onClick={() => setCategory("PIZZAS")}>Menú</a><a href="#combos">Combos</a><a href="#informacion">Información</a></nav><div className="public-account-actions">{customer ? <><Link className="public-login" href="/mi-cuenta"><UserRound size={16}/>Mi cuenta</Link><button aria-label="Cerrar sesión" className="public-account-signout" onClick={signOut} type="button"><LogOut size={16}/></button></> : <button className="public-login" onClick={() => setAuthOpen(true)} type="button">Ingresar</button>}<button aria-label="Abrir carrito" className="public-cart-button" onClick={() => setCartOpen(true)} type="button"><ShoppingBag size={20}/>{itemCount ? <b>{itemCount}</b> : null}</button></div></header>
     <section className="public-hero" id="inicio">
       <div className="public-hero-copy">
-        <span className="public-eyebrow">PIZZA HORNEADA AL MOMENTO</span>
-        <h1><span>HAS</span><span>ENTRADO EN</span><em>MODO PIZZAS</em></h1>
-        <p>{catalog.business.info_text || "Sabores que convierten cualquier plan en una buena historia."}</p>
-        <div aria-hidden="true" className="public-hero-activation">
-          <div><span>HORNO ACTIVO</span><b>CALOR EN MARCHA</b></div>
-          <i><span/></i>
-          <strong>100%</strong>
-        </div>
-        <div className="public-hero-actions"><a className="public-primary" href="#menu">Pedir ahora <ChevronRight size={18}/></a><a className="public-secondary" href="#informacion">Visitanos</a></div>
+        <span className="public-eyebrow"><Sparkles size={14}/> PROMOCIÓN ESPECIAL DE DICIEMBRE</span>
+        <h1><span>Navidad llegó a</span><em>Modo Pizzas</em></h1>
+        <p>Comparte el sabor que une esta temporada: pizzas recién horneadas, promociones únicas y combos para disfrutar en familia.</p>
+        <div className="public-hero-actions"><a className="public-primary" href="#menu">Pedir ahora <ChevronRight size={18}/></a><a className="public-secondary" href="#menu" onClick={() => setCategory("PIZZAS")}>Ver menú</a></div>
         <div className="public-hero-benefits"><span><Flame size={23}/><b>HORNEADA<br/>AL MOMENTO</b></span><span><Leaf size={23}/><b>INGREDIENTES<br/>DE CALIDAD</b></span><span><Star size={23}/><b>SABORES QUE<br/>TE CONQUISTAN</b></span></div>
       </div>
       <div className="public-hero-photo" aria-live="polite">
+        <div aria-hidden="true" className="public-holiday-hero-decoration public-holiday-hero-decoration--tree"><TreePine size={36}/></div><div aria-hidden="true" className="public-holiday-hero-decoration public-holiday-hero-decoration--gift"><Gift size={32}/></div>
         <div aria-hidden="true" className="public-hero-heat"/>
         {hero?.image_url ? <img alt={hero.flavor_name} className="public-hero-slide" key={hero.id} src={hero.image_url}/> : <div className="public-pizza-art"/>}
         {hero ? <div className="public-hero-caption"><strong>{hero.flavor_name}</strong><span>Desde {formatCop(Math.min(...(pizzaGroups.find((group) => group.id === hero.flavor_id)?.prices.map((price) => price.sale_price_cop) ?? [hero.sale_price_cop])))}</span></div> : null}
         {heroGroups.length > 1 ? <div className="public-hero-controls"><button aria-label="Sabor anterior" onClick={() => setHeroIndex((current) => (current - 1 + heroGroups.length) % heroGroups.length)} type="button"><ChevronLeft size={18}/></button><span>{heroGroups.map((group, index) => <i className={index === activeHeroIndex ? "active" : ""} key={group.id}/>)}</span><button aria-label="Siguiente sabor" onClick={() => setHeroIndex((current) => (current + 1) % heroGroups.length)} type="button"><ChevronRight size={18}/></button></div> : null}
       </div>
     </section>
-    <section className="public-halloween-banner" aria-labelledby="halloween-title">
-      <div className="public-halloween-symbols" aria-hidden="true"><Moon size={28}/><span>🎃</span><Sparkles size={24}/></div>
+    <section className="public-holiday-banner" aria-labelledby="holiday-title">
+      <div className="public-holiday-banner-symbols" aria-hidden="true"><Gift size={24}/><TreePine size={26}/><Sparkles size={22}/></div>
       <div>
-        <span>ESPECIAL DE TEMPORADA</span>
-        <h2 id="halloween-title">Halloween llego a Modo Pizzas</h2>
-        <p>Activa tu antojo con pizzas recien horneadas y una experiencia tematica especial.</p>
+        <span>COMBOS NAVIDEÑOS</span>
+        <h2 id="holiday-title">Ahorra y comparte esta temporada</h2>
+        <p>Promociones especiales de diciembre para celebrar con el mejor sabor.</p>
       </div>
-      <a className="public-halloween-cta" href="#menu">Explorar el menu <ChevronRight size={17}/></a>
+      <a className="public-holiday-cta" href="#combos">Descubre los combos <ChevronRight size={17}/></a>
     </section>
-    <section className="public-menu" id="menu"><div className="public-section-heading"><span>HECHO PARA COMPARTIR</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menu" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PIZZAS" ? <div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PIZZAS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
+    <section className="public-menu" id="menu"><div className="public-section-heading"><span>NUESTRO MENÚ</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menú" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PIZZAS" ? <section className="public-holiday-combos" id="combos"><div className="public-holiday-combos-heading"><div><span>PARA COMPARTIR</span><h2>Combos navideños</h2></div><a href="#menu">Ver todo el menú <ChevronRight size={16}/></a></div><div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div></section> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PIZZAS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
     <BusinessSection business={catalog.business} />
     <PublicFooter business={catalog.business} />
     {whatsapp ? <a aria-label="Escribir por WhatsApp" className="public-whatsapp-float" href={`https://wa.me/${whatsapp}`} rel="noreferrer" target="_blank"><MessageCircle size={24}/><span>WhatsApp</span></a> : null}

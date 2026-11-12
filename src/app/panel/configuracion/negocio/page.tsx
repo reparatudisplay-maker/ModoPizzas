@@ -1,5 +1,6 @@
 import { PublicBusinessSettings, type PublicBusinessSettingsData } from "@/components/public-business-settings";
 import { PanelShell } from "@/components/panel-shell";
+import { ConfigurationTabs } from "@/components/configuration-tabs";
 import { requireAdminPanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -17,7 +18,7 @@ export default async function PublicBusinessSettingsPage() {
   if (error) throw new Error(error.message);
   return (
     <PanelShell active="configuracion-negocio" moduleKeys={moduleKeys} roleNames={roleNames} title="Informacion publica" userEmail={user.email ?? "usuario"}>
-      <PublicBusinessSettings settings={data as PublicBusinessSettingsData} />
+      <ConfigurationTabs active="public" isAdmin><PublicBusinessSettings settings={data as PublicBusinessSettingsData} /></ConfigurationTabs>
     </PanelShell>
   );
 }

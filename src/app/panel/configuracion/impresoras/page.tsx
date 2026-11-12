@@ -1,5 +1,6 @@
 import { PrinterSettingsModule } from "@/components/printer-settings-module";
 import { PanelShell } from "@/components/panel-shell";
+import { ConfigurationTabs, PrintingSubtabs } from "@/components/configuration-tabs";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -17,14 +18,14 @@ export default async function PrinterSettingsPage() {
   if (error || !data) throw new Error(error?.message ?? "No se encontró la configuración de impresora.");
   return (
     <PanelShell active="configuracion-impresoras" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Impresoras" userEmail={user.email ?? "usuario"}>
-      <PrinterSettingsModule settings={{
+      <ConfigurationTabs active="printing" isAdmin={roleNames.includes("admin_sistema")}><PrintingSubtabs active="connection" /><PrinterSettingsModule settings={{
         ip_address: String(data.ip_address).replace(/\/\d+$/, ""),
         port: Number(data.port),
         model: String(data.model),
         paper_width_mm: Number(data.paper_width_mm),
         printable_width_mm: Number(data.printable_width_mm),
         preferred_print_method: data.preferred_print_method === "browser" ? "browser" : "auto"
-      }} />
+      }} /></ConfigurationTabs>
     </PanelShell>
   );
 }

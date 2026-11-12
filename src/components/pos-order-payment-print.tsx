@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { getKitchenTicket, getPosOrderReceipt, getPrintTemplates, type PosOrderReceipt } from "@/app/admin/actions";
 import { KitchenTicketDocument } from "@/components/kitchen-ticket-print";
 import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
@@ -117,7 +118,9 @@ function CustomerReceiptPreview({ onClose, receipt, template, previewOnly = fals
     else if (result !== "cancelled") setPrintError("No se pudo preparar el PDF térmico.");
   };
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div className="modal-backdrop kitchen-ticket-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section aria-label={`Vista previa de ticket ${receipt.order.code}`} aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header kitchen-ticket-preview-header">
@@ -136,7 +139,8 @@ function CustomerReceiptPreview({ onClose, receipt, template, previewOnly = fals
           {!previewOnly ? <div className="kitchen-ticket-preview-actions"><button className="ghost-button" onClick={handleDownload} type="button"><Download size={16} /> Descargar PDF</button><button className="primary-button" onClick={() => void handlePrint()} type="button"><Printer size={17} /> Imprimir ticket</button></div> : null}
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
 

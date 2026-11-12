@@ -20,11 +20,13 @@ export type PanelActiveKey =
   | "categorias"
   | "perfiles-conservacion"
   | "configuracion"
+  | "configuracion-general"
   | "configuracion-negocio"
   | "configuracion-cocina"
   | "configuracion-impresoras"
   | "configuracion-plantillas-impresion"
   | "menu-pizzas"
+  | "menu-empaques"
   | "menu-precios-adiciones"
   | "menu-precios-combos"
   | "menu-precios-pizzas"
@@ -75,11 +77,13 @@ export const activeModuleMap: Record<PanelActiveKey, SystemModuleKey> = {
   categorias: "maestros",
   "perfiles-conservacion": "maestros",
   configuracion: "configuracion",
+  "configuracion-general": "configuracion",
   "configuracion-negocio": "configuracion",
   "configuracion-cocina": "configuracion",
   "configuracion-impresoras": "configuracion",
   "configuracion-plantillas-impresion": "configuracion",
   "menu-pizzas": "menu",
+  "menu-empaques": "menu",
   "menu-precios-adiciones": "menu",
   "menu-precios-combos": "menu",
   "menu-precios-pizzas": "menu",

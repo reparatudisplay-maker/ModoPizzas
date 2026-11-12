@@ -1,5 +1,6 @@
 import { KitchenSettingsModule, type KitchenSettingsFormData, type KitchenSizeSettingsFormData } from "@/components/kitchen-settings-module";
 import { PanelShell } from "@/components/panel-shell";
+import { ConfigurationTabs } from "@/components/configuration-tabs";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 
@@ -73,8 +74,10 @@ export default async function KitchenSettingsPage() {
 
   return (
     <PanelShell active="configuracion-cocina" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Configuracion de cocina" userEmail={user.email ?? "usuario"}>
-      {error ? <p className="alert">{error.message}</p> : null}
-      <KitchenSettingsModule settings={settings} sizes={sizes} />
+      <ConfigurationTabs active="kitchen" isAdmin={roleNames.includes("admin_sistema")}>
+        {error ? <p className="alert">{error.message}</p> : null}
+        <KitchenSettingsModule settings={settings} sizes={sizes} />
+      </ConfigurationTabs>
     </PanelShell>
   );
 }

@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosOrderTableOption, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosOrderTableOption, type PosPackagingRule, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -97,6 +97,9 @@ type PlatformPaymentSettingRow = {
   commission_percent: number | string;
   fixed_fee_cop: number | string;
   commission_tax_percent: number | string | null;
+  didi_tu_negocio_commission_percent: number | string | null;
+  didi_tu_negocio_fixed_fee_cop: number | string | null;
+  didi_tu_negocio_commission_tax_percent: number | string | null;
 };
 
 type PendingPaymentRow = {
@@ -106,6 +109,17 @@ type PendingPaymentRow = {
   customer_name: string | null;
   table_name_snapshot?: string | null;
   total_cop: number | string;
+};
+
+type PackagingRuleRow = {
+  id: string;
+  target_kind: "pizza_size" | "sale_product";
+  pizza_size_id: string | null;
+  sale_product_id: string | null;
+  service_kind: "local" | "pickup" | "takeaway" | "delivery";
+  packaging_inventory_item_id: string;
+  quantity_base: number | string;
+  packaging_item: { name: string } | null;
 };
 
 function bogotaDayRange() {
@@ -195,7 +209,8 @@ export default async function NuevoPedidoPage() {
     posImagesResult,
     orderTablesResult,
     pendingPaymentsResult,
-    paidPaymentsResult
+    paidPaymentsResult,
+    packagingRulesResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -229,7 +244,7 @@ export default async function NuevoPedidoPage() {
     supabase.rpc("get_pos_pizza_base_options"),
     supabase
       .from("platform_payment_settings")
-      .select("platform, commission_percent, fixed_fee_cop, commission_tax_percent")
+      .select("*")
       .order("platform"),
     supabase.from("pizza_flavors").select("id, pos_image_url"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
@@ -237,7 +252,11 @@ export default async function NuevoPedidoPage() {
     (() => {
       const today = bogotaDayRange();
       return supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
-    })()
+    })(),
+    supabase
+      .from("pos_packaging_rules")
+      .select("id, target_kind, pizza_size_id, sale_product_id, service_kind, packaging_inventory_item_id, quantity_base, packaging_item:inventory_items!pos_packaging_rules_packaging_inventory_item_id_fkey(name)")
+      .eq("is_active", true)
   ]);
 
   const error =
@@ -384,7 +403,10 @@ export default async function NuevoPedidoPage() {
     platform: setting.platform,
     commission_percent: Number(setting.commission_percent ?? 0),
     fixed_fee_cop: Number(setting.fixed_fee_cop ?? 0),
-    commission_tax_percent: Number(setting.commission_tax_percent ?? 0)
+    commission_tax_percent: Number(setting.commission_tax_percent ?? 0),
+    didi_tu_negocio_commission_percent: Number(setting.didi_tu_negocio_commission_percent ?? 9.5),
+    didi_tu_negocio_fixed_fee_cop: Number(setting.didi_tu_negocio_fixed_fee_cop ?? 0),
+    didi_tu_negocio_commission_tax_percent: Number(setting.didi_tu_negocio_commission_tax_percent ?? 0)
   }));
   const orderTables: PosOrderTableOption[] = orderTablesResult.error ? [] : ((orderTablesResult.data ?? []) as PosOrderTableOption[]);
   const pendingPayments: PosPendingPayment[] = ((pendingPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
@@ -403,6 +425,17 @@ export default async function NuevoPedidoPage() {
     table_name: order.table_name_snapshot ?? null,
     total_cop: Number(order.total_cop ?? 0)
   }));
+  const packagingRules: PosPackagingRule[] = packagingRulesResult.error ? [] : ((packagingRulesResult.data ?? []) as unknown as PackagingRuleRow[])
+    .map((rule) => ({
+      id: rule.id,
+      target_kind: rule.target_kind,
+      target_id: rule.target_kind === "pizza_size" ? rule.pizza_size_id ?? "" : rule.sale_product_id ?? "",
+      service_kind: rule.service_kind,
+      packaging_inventory_item_id: rule.packaging_inventory_item_id,
+      packaging_name: rule.packaging_item?.name ?? "Empaque",
+      quantity_base: Number(rule.quantity_base ?? 0)
+    }))
+    .filter((rule) => rule.target_id && rule.quantity_base > 0);
   const priceByFlavorAndSize = new Map<string, { price_config_id: string; sale_price_cop: number }>();
   const flavorImageById = new Map(pizzas.map((pizza) => [pizza.flavor_id, pizza.image_src]));
   const sizeNameById = new Map(sizeRows.map((size) => [size.id, size.name]));
@@ -490,7 +523,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

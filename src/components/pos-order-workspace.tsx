@@ -14,6 +14,9 @@ import { CustomerReceiptPrintButton, PostPaymentPrintJob, type PaymentPrintJob, 
 
 type OrderKind = "local" | "pickup" | "delivery";
 type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending" | "rappi" | "didi";
+type OrderChannel = "direct" | "rappi" | "didi";
+type DidiService = "didi_standard" | "didi_tu_negocio";
+type CollectionParty = "business" | "platform";
 type DiscountType = "percentage" | "amount";
 
 type AppliedDiscount = {
@@ -89,6 +92,16 @@ export type PosSaleProductOption = {
   unit: StockUnit;
 };
 
+export type PosPackagingRule = {
+  id: string;
+  target_kind: "pizza_size" | "sale_product";
+  target_id: string;
+  service_kind: "local" | "pickup" | "takeaway" | "delivery";
+  packaging_inventory_item_id: string;
+  packaging_name: string;
+  quantity_base: number;
+};
+
 export type PosPizzaBaseOption = {
   pizza_size_id: string;
   source_kind: "inventory_item" | "preparation";
@@ -105,6 +118,9 @@ export type PosPlatformPaymentSetting = {
   commission_percent: number;
   fixed_fee_cop: number;
   commission_tax_percent: number;
+  didi_tu_negocio_commission_percent: number;
+  didi_tu_negocio_fixed_fee_cop: number;
+  didi_tu_negocio_commission_tax_percent: number;
 };
 
 export type PosOrderTableOption = {
@@ -573,7 +589,7 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
                     <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
                     <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
                     <b>{formatCop(order.total_cop)}</b>
-                    <span className="pos-payment-order-actions"><CustomerReceiptPrintButton label="" orderCode={order.code} orderId={order.id} previewOnly /></span>
+                    <span className="pos-payment-order-actions"><CustomerReceiptPrintButton label="" orderCode={order.code} orderId={order.id} /></span>
                   </article>
                 ))}
               </div>
@@ -631,6 +647,7 @@ export function PosOrderWorkspace({
   canEditSaleDate,
   canRecordPendingStock,
   platformPaymentSettings,
+  packagingRules,
   orderTables,
   paidTodayPayments,
   pendingPayments,
@@ -646,6 +663,7 @@ export function PosOrderWorkspace({
   canEditSaleDate: boolean;
   canRecordPendingStock: boolean;
   platformPaymentSettings: PosPlatformPaymentSetting[];
+  packagingRules: PosPackagingRule[];
   orderTables: PosOrderTableOption[];
   paidTodayPayments: PosPendingPayment[];
   pendingPayments: PosPendingPayment[];
@@ -668,7 +686,10 @@ export function PosOrderWorkspace({
   const [pickupMode, setPickupMode] = useState<PickupMode>("pickup");
   const [tableId, setTableId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
-  const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | "didi", Record<string, number>>>({ rappi: {}, didi: {} });
+  const [orderChannel, setOrderChannel] = useState<OrderChannel>("direct");
+  const [didiService, setDidiService] = useState<DidiService>("didi_standard");
+  const [didiCollectionParty, setDidiCollectionParty] = useState<CollectionParty>("platform");
+  const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | DidiService, Record<string, number>>>({ rappi: {}, didi_standard: {}, didi_tu_negocio: {} });
   const [saleDate, setSaleDate] = useState(todayBogota);
   const [saleDateReady, setSaleDateReady] = useState(!canEditSaleDate);
   const [allowPendingStock, setAllowPendingStock] = useState(false);
@@ -676,6 +697,7 @@ export function PosOrderWorkspace({
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [notes, setNotes] = useState("");
+  const [packagingQuantities, setPackagingQuantities] = useState<Record<string, number>>({});
   const [wizard, setWizard] = useState<PizzaWizard | null>(null);
   const [comboWizard, setComboWizard] = useState<PosComboOption | null>(null);
   const [selectedComboVariantId, setSelectedComboVariantId] = useState<string | null>(null);
@@ -833,8 +855,11 @@ export function PosOrderWorkspace({
       setNotes("");
       setOrderKind("local");
       setPaymentMethod("cash");
+      setOrderChannel("direct");
+      setDidiService("didi_standard");
+      setDidiCollectionParty("platform");
       setAllowPendingStock(false);
-      setPlatformLineUnitPriceOverrides({ rappi: {}, didi: {} });
+      setPlatformLineUnitPriceOverrides({ rappi: {}, didi_standard: {}, didi_tu_negocio: {} });
       setDiscount(null);
       setDiscountInput("");
       setDiscountModalOpen(false);
@@ -935,6 +960,32 @@ export function PosOrderWorkspace({
     () => new Map(pizzas.flatMap((pizza) => pizza.prices.filter((price): price is PosPizzaSizePrice & { id: string } => Boolean(price.id)).map((price) => [price.id, price]))),
     [pizzas]
   );
+  const packagingServiceKind = orderKind === "delivery" ? "delivery" : orderKind === "local" ? "local" : pickupMode === "takeaway" ? "takeaway" : "pickup";
+  const automaticPackaging = useMemo(() => {
+    const quantities = new Map<string, { name: string; quantity: number }>();
+    for (const line of cart) {
+      if (line.kind === "direct_sale") continue;
+      const target = line.kind === "pizza"
+        ? { kind: "pizza_size" as const, id: pizzaPriceById.get(line.id)?.size_id ?? "" }
+        : line.kind === "sale_product" ? { kind: "sale_product" as const, id: line.id } : null;
+      if (!target?.id) continue;
+      for (const rule of packagingRules) {
+        if (rule.target_kind !== target.kind || rule.target_id !== target.id || rule.service_kind !== packagingServiceKind) continue;
+        const current = quantities.get(rule.packaging_inventory_item_id) ?? { name: rule.packaging_name, quantity: 0 };
+        current.quantity += rule.quantity_base * line.quantity;
+        quantities.set(rule.packaging_inventory_item_id, current);
+      }
+    }
+    return quantities;
+  }, [cart, packagingRules, packagingServiceKind, pizzaPriceById]);
+  const packagingEntries = useMemo(() => {
+    const ids = new Set([...automaticPackaging.keys(), ...Object.keys(packagingQuantities)]);
+    return [...ids].map((id) => {
+      const automatic = automaticPackaging.get(id);
+      const quantity = Math.max(0, packagingQuantities[id] ?? automatic?.quantity ?? 0);
+      return { inventory_item_id: id, name: automatic?.name ?? "Empaque", automatic_quantity_base: automatic?.quantity ?? 0, quantity_base: quantity };
+    }).filter((entry) => entry.quantity_base > 0 || entry.automatic_quantity_base > 0);
+  }, [automaticPackaging, packagingQuantities]);
 
   function saleProductCartQuantity(productId: string, lines = cart) {
     return lines
@@ -1007,11 +1058,17 @@ export function PosOrderWorkspace({
   const rawDiscountCop = discount?.type === "percentage" ? Math.round(subtotal * discount.value / 100) : discount?.amount_cop ?? 0;
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
   const total = Math.max(0, subtotal - discountCop + deliveryValue);
-  const platformPayment = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : null;
+  const platformPayment = orderChannel === "rappi" || (orderChannel === "didi" && didiCollectionParty === "platform") ? orderChannel : null;
   const isPendingPayment = paymentMethod === "pending";
-  const platformPaymentSetting = platformPayment
-    ? platformPaymentSettings.find((setting) => setting.platform === platformPayment) ?? null
-    : null;
+  const didiSetting = platformPaymentSettings.find((setting) => setting.platform === "didi") ?? null;
+  const didiTuNegocioChargeSetting = orderChannel === "didi" && didiService === "didi_tu_negocio" ? didiSetting : null;
+  const platformPaymentSetting = platformPayment === "didi" && didiService === "didi_tu_negocio" && didiSetting
+    ? { ...didiSetting, commission_percent: didiSetting.didi_tu_negocio_commission_percent, fixed_fee_cop: didiSetting.didi_tu_negocio_fixed_fee_cop, commission_tax_percent: didiSetting.didi_tu_negocio_commission_tax_percent }
+    : platformPayment ? platformPaymentSettings.find((setting) => setting.platform === platformPayment) ?? null : null;
+  const didiTuNegocioBillingChargeCop = didiTuNegocioChargeSetting && didiCollectionParty === "business"
+    ? Math.max(0, Math.round((total * didiTuNegocioChargeSetting.didi_tu_negocio_commission_percent / 100 + didiTuNegocioChargeSetting.didi_tu_negocio_fixed_fee_cop) * (1 + didiTuNegocioChargeSetting.didi_tu_negocio_commission_tax_percent / 100)))
+    : 0;
+  const didiTuNegocioNetAfterBillingCop = Math.max(0, total - didiTuNegocioBillingChargeCop);
   const platformLineBases = cart.map((line) => {
     const additionsCop = line.additions.reduce((sum, addition) => sum + addition.quantity * addition.unit_price_cop, 0);
     const componentPriceCop = line.combo_instance_id ? line.combo_component_normal_price_cop ?? line.unit_price_cop : line.unit_price_cop;
@@ -1028,7 +1085,8 @@ export function PosOrderWorkspace({
     platformPaymentSetting?.fixed_fee_cop ?? 0,
     platformLineBases.map((line) => line.original_cop)
   );
-  const platformLineOverrides = platformPayment ? platformLineUnitPriceOverrides[platformPayment] : {};
+  const platformOverrideKey: "rappi" | DidiService = platformPayment === "didi" ? didiService : "rappi";
+  const platformLineOverrides = platformPayment ? platformLineUnitPriceOverrides[platformOverrideKey] : {};
   const platformLineDrafts = platformLineBases.map((line, index) => {
     const original_unit_cop = line.quantity > 0 ? Math.round(line.original_cop / line.quantity) : 0;
     const commissionBaseCop = Math.round(
@@ -1680,7 +1738,13 @@ export function PosOrderWorkspace({
     setInventoryPreviewLoading(true);
     setInventoryPreviewError("");
     setInventoryPreview(null);
-    const result = await getPosInventoryConsumptionPreview(JSON.stringify(inventoryPayload));
+    const result = await getPosInventoryConsumptionPreview(
+      JSON.stringify(inventoryPayload),
+      JSON.stringify(packagingEntries.map((entry) => ({
+        inventory_item_id: entry.inventory_item_id,
+        quantity_base: entry.quantity_base
+      })))
+    );
     setInventoryPreviewLoading(false);
     if (result.status === "error" || !result.preview) {
       setInventoryPreviewError(result.message);
@@ -1787,11 +1851,14 @@ export function PosOrderWorkspace({
     <>
       <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
+        <input name="packaging_adjustments" type="hidden" value={JSON.stringify(packagingEntries.map((entry) => ({ inventory_item_id: entry.inventory_item_id, quantity_base: entry.quantity_base })))} />
         <input name="kind" type="hidden" value={orderKind} />
+        <input name="pickup_mode" type="hidden" value={pickupMode} />
         <input name="table_id" type="hidden" value={orderKind === "local" ? tableId : ""} />
         <input name="payment_method" type="hidden" value={paymentMethod} />
-        <input name="source_channel" type="hidden" value={platformPayment ?? "direct"} />
-        <input name="collection_party" type="hidden" value={paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business"} />
+        <input name="source_channel" type="hidden" value={orderChannel} />
+        <input name="collection_party" type="hidden" value={platformPayment ? "platform" : "business"} />
+        <input name="platform_service" type="hidden" value={orderChannel === "rappi" ? "rappi_standard" : orderChannel === "didi" ? didiService : "none"} />
         <input name="sale_date" type="hidden" value={canEditSaleDate ? saleDate : ""} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
@@ -2060,26 +2127,54 @@ export function PosOrderWorkspace({
               ) : null}
             </div>
           ) : null}
-          <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" value={notes} />
+          <textarea onChange={(event) => setNotes(uppercaseMasterName(event.target.value))} placeholder="Observaciones" rows={1} value={notes} />
+
+          {packagingEntries.length > 0 ? <section className="pos-packaging-summary" aria-label="Empaques previstos">
+            <header><PackagePlus size={14} /><strong>Empaques</strong><span>Incluidos en el costo</span></header>
+            <div>
+              {packagingEntries.map((entry) => <label key={entry.inventory_item_id}>
+                <span title={entry.automatic_quantity_base > 0 ? `Automático: ${formatInteger(entry.automatic_quantity_base)}` : entry.name}><PackagePlus size={13} />{entry.name}</span>
+                <button aria-label={`Reducir ${entry.name}`} disabled={entry.quantity_base <= 0} onClick={() => setPackagingQuantities((current) => ({ ...current, [entry.inventory_item_id]: Math.max(0, entry.quantity_base - 1) }))} type="button"><Minus size={13} /></button>
+                <strong>{formatInteger(entry.quantity_base)}</strong>
+                <button aria-label={`Agregar ${entry.name}`} onClick={() => setPackagingQuantities((current) => ({ ...current, [entry.inventory_item_id]: entry.quantity_base + 1 }))} type="button"><Plus size={13} /></button>
+              </label>)}
+            </div>
+          </section> : null}
 
           <fieldset className="pos-payment-fieldset">
             <legend>Forma de pago</legend>
             <div className="pos-payment-grid">
               {(["cash", "transfer", "mixed", "pending", "rappi", "didi"] as PaymentMethod[]).map((method) => {
                 const Icon = paymentIcon(method);
-                return <button className={paymentMethod === method ? "active" : ""} key={method} onClick={() => {
-                setPaymentMethod(method);
-                if (method === "rappi" || method === "didi") {
-                  setDiscount(null);
-                  setDiscountInput("");
-                  setDiscountModalOpen(false);
-                }
-              }} type="button">
-                <Icon size={15} /><span>{paymentLabel(method)}</span>
-              </button>;
+                const selected = method === "rappi" ? orderChannel === "rappi" : method === "didi" ? orderChannel === "didi" : orderChannel === "direct" && paymentMethod === method;
+                return <button className={selected ? "active" : ""} key={method} onClick={() => {
+                  if (method === "rappi") {
+                    setOrderChannel("rappi");
+                    setPaymentMethod("rappi");
+                  } else if (method === "didi") {
+                    setOrderChannel("didi");
+                    setDidiCollectionParty("platform");
+                    setPaymentMethod("didi");
+                  } else {
+                    setOrderChannel("direct");
+                    setPaymentMethod(method);
+                  }
+                  if (method === "rappi" || method === "didi") {
+                    setDiscount(null);
+                    setDiscountInput("");
+                    setDiscountModalOpen(false);
+                  }
+                }} type="button">
+                  <Icon size={15} /><span>{paymentLabel(method)}</span>
+                </button>;
               })}
             </div>
           </fieldset>
+          {orderChannel === "didi" ? <section className="pos-didi-service-panel" aria-label="Configuración del servicio DiDi">
+            <fieldset><legend>Servicio DiDi</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiService === "didi_standard"} className={didiService === "didi_standard" ? "active" : ""} onClick={() => setDidiService("didi_standard")} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Food</span></button><button aria-pressed={didiService === "didi_tu_negocio"} className={didiService === "didi_tu_negocio" ? "active" : ""} onClick={() => setDidiService("didi_tu_negocio")} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Tu Negocio</span></button></div></fieldset>
+            <fieldset><legend>¿Quién paga?</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiCollectionParty === "business"} className={didiCollectionParty === "business" ? "active" : ""} onClick={() => { setDidiCollectionParty("business"); setPaymentMethod("cash"); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Mensajero</span></button><button aria-pressed={didiCollectionParty === "platform"} className={didiCollectionParty === "platform" ? "active" : ""} onClick={() => { setDidiCollectionParty("platform"); setPaymentMethod("didi"); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Cliente por DiDi</span></button></div></fieldset>
+            {didiCollectionParty === "business" ? <fieldset><legend>Pago recibido por la tienda</legend><div className="pos-didi-choice-grid">{(["cash", "transfer", "mixed", "pending"] as PaymentMethod[]).map((method) => <button aria-pressed={paymentMethod === method} className={paymentMethod === method ? "active" : ""} key={method} onClick={() => setPaymentMethod(method)} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>{paymentLabel(method)}</span></button>)}</div></fieldset> : null}
+          </section> : null}
           {platformPayment ? (
             <section className="pos-platform-estimate" aria-label={`Liquidación estimada de ${paymentLabel(platformPayment)}`}>
               <h2>Liquidación estimada</h2>
@@ -2097,14 +2192,15 @@ export function PosOrderWorkspace({
                             const value = Number(event.target.value.replace(/\D/g, "") || 0);
                             setPlatformLineUnitPriceOverrides((current) => ({
                               ...current,
-                              [platformPayment]: { ...current[platformPayment], [line.cart_line_key]: value }
+                              [platformOverrideKey]: { ...current[platformOverrideKey], [line.cart_line_key]: value }
                             }));
                           }} value={formatInteger(line.final_unit_cop)} />
                           <button aria-label={`Restablecer venta unitaria de ${line.name}`} className="icon-button pos-platform-unit-reset" onClick={() => {
                             if (!platformPayment) return;
                             setPlatformLineUnitPriceOverrides((current) => {
-                              const { [line.cart_line_key]: _removed, ...remaining } = current[platformPayment];
-                              return { ...current, [platformPayment]: remaining };
+                              const remaining = { ...current[platformOverrideKey] };
+                              delete remaining[line.cart_line_key];
+                              return { ...current, [platformOverrideKey]: remaining };
                             });
                           }} title="Restablecer valor sugerido" type="button"><RotateCcw size={15} /></button>
                         </div>
@@ -2115,6 +2211,15 @@ export function PosOrderWorkspace({
                 </table>
               </div>
               {hasInvalidPlatformPricing ? <small className="text-danger">La venta unitaria no puede superar el precio original.</small> : null}
+            </section>
+          ) : null}
+          {didiTuNegocioChargeSetting && didiCollectionParty === "business" ? (
+            <section className="pos-didi-billing-estimate" aria-label="Factura estimada de DiDi Tu Negocio">
+              <h2>Factura DiDi estimada</h2>
+              <span>Venta cobrada por la tienda <strong>{formatCop(total)}</strong></span>
+              <span>Monto de facturación DiDi <strong>-{formatCop(didiTuNegocioBillingChargeCop)}</strong></span>
+              <span className="pos-didi-billing-net">Neto después de DiDi <strong>{formatCop(didiTuNegocioNetAfterBillingCop)}</strong></span>
+              <small>El cobro completo se registra según la forma de pago elegida; la comisión queda pendiente de pago a DiDi.</small>
             </section>
           ) : null}
 
@@ -3203,7 +3308,8 @@ function InventoryConsumptionPreviewModal({
 }) {
   const [view, setView] = useState<"consolidated" | "detailed">("consolidated");
   const [openOrigins, setOpenOrigins] = useState<string[]>([]);
-  const affectedCount = preview?.consolidated.length ?? 0;
+  const packagingPreview = preview?.packaging ?? [];
+  const affectedCount = (preview?.consolidated.length ?? 0) + packagingPreview.length;
   const plannedCount = preview?.lines.reduce((sum, line) => sum + line.consumptions.length, 0) ?? 0;
   const shortages = preview?.shortages ?? [];
   const lineGroups = useMemo(() => {
@@ -3241,6 +3347,23 @@ function InventoryConsumptionPreviewModal({
                 <span>Consumos previstos <strong>{plannedCount}</strong></span>
                 <span>Alertas de stock <strong>{shortages.length}</strong></span>
               </div>
+              {packagingPreview.length > 0 ? (
+                <section className="pos-inventory-preview-packaging">
+                  <h3>Empaques previstos</h3>
+                  <div className="pos-inventory-preview-table-wrap">
+                    <table className="pos-inventory-preview-table pos-inventory-preview-packaging-table">
+                      <thead><tr><th>Empaque/Insumo</th><th>Stock actual</th><th>Consumirá</th><th>Quedará</th><th /></tr></thead>
+                      <tbody>{packagingPreview.map((entry) => <tr key={entry.inventory_item_id}>
+                        <td><strong>{entry.name}</strong><small>Empaque / insumo</small></td>
+                        <td>{formatPreviewStockQuantity(entry.stock_before, "unit")}</td>
+                        <td>{formatPreviewStockQuantity(entry.consumption_quantity, "unit")}</td>
+                        <td>{formatPreviewStockQuantity(entry.stock_after, "unit")}</td>
+                        <td />
+                      </tr>)}</tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
               <div className="pos-inventory-preview-tabs" role="tablist" aria-label="Vista de auditoría">
                 <button aria-selected={view === "consolidated"} className={view === "consolidated" ? "active" : ""} onClick={() => setView("consolidated")} role="tab" type="button">Consolidado</button>
                 <button aria-selected={view === "detailed"} className={view === "detailed" ? "active" : ""} onClick={() => setView("detailed")} role="tab" type="button">Desglosado</button>

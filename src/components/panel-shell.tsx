@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, MapPin, Menu, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, Menu, Package, PackagePlus, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -152,7 +152,10 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
   const kitchenLinks: NavLink[] = [
     { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canAccess("cocina") }
   ];
-  const menuMainLinks: NavLink[] = [{ key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: canAccess("menu") }];
+  const menuMainLinks: NavLink[] = [
+    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: canAccess("menu") },
+    { key: "menu-empaques", href: "/panel/menu/empaques", label: "Empaques", icon: PackagePlus, show: canAccess("menu") }
+  ];
 const menuPriceLinks: NavLink[] = [
   { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: canAccess("menu") },
   { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") },
@@ -167,8 +170,7 @@ const menuPriceLinks: NavLink[] = [
     { key: "reportes-ventas", href: "/panel/reportes", label: "Ventas y rentabilidad", icon: ChartNoAxesCombined, show: canAccess("reportes") }
   ];
   const adminLinks: NavLink[] = [
-    { key: "configuracion", href: "/panel/configuracion", label: "Usuarios y permisos", icon: UserCog, show: isAdmin },
-    { key: "configuracion-negocio", href: "/panel/configuracion/negocio", label: "Informacion publica", icon: MapPin, show: isAdmin },
+    { key: "configuracion-general", href: "/panel/configuracion/general", label: "General", icon: Settings, show: isAdmin },
     { key: "configuracion-cocina", href: "/panel/configuracion/cocina", label: "Cocina", icon: ChefHat, show: canAccess("configuracion") },
     { key: "configuracion-impresoras", href: "/panel/configuracion/impresoras", label: "Impresoras", icon: Printer, show: canAccess("configuracion") },
     { key: "configuracion-plantillas-impresion", href: "/panel/configuracion/plantillas-impresion", label: "Plantillas de impresion", icon: FilePenLine, show: canAccess("configuracion") }
@@ -279,6 +281,7 @@ const menuPriceLinks: NavLink[] = [
 
   const menuRootItems: RootItem[] = [
     { kind: "link", key: "menu-pizzas", link: menuMainLinks[0] },
+    { kind: "link", key: "menu-empaques", link: menuMainLinks[1] },
     { kind: "group", key: "menu-prices", label: "Precios", title: "Precios", icon: ReceiptText, show: canAccess("menu"), active: menuPricesActive, links: menuPriceLinks }
   ];
 

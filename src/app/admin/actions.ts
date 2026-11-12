@@ -35,6 +35,55 @@ export type FormActionState = {
   message: string;
 };
 
+export async function savePosPackagingRule(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const ruleId = getString(formData, "rule_id");
+  const targetKind = getString(formData, "target_kind");
+  const targetId = getString(formData, "target_id");
+  const serviceKind = getString(formData, "service_kind");
+  const packagingItemId = getString(formData, "packaging_inventory_item_id");
+  const quantity = getDecimal(formData, "quantity_base", 0);
+  if (!(["pizza_size", "sale_product"] as string[]).includes(targetKind) || !targetId || !(["local", "pickup", "takeaway", "delivery"] as string[]).includes(serviceKind) || !packagingItemId || quantity <= 0) {
+    return { status: "error", message: "Completa un destino, modalidad, empaque y cantidad válidos." };
+  }
+  const { data: packagingItem, error: packagingError } = await supabase.from("inventory_items").select("id").eq("id", packagingItemId).eq("item_kind", "supply").eq("unit", "unit").maybeSingle();
+  if (packagingError || !packagingItem) return { status: "error", message: packagingError?.message ?? "Selecciona un insumo de empaque válido." };
+  const targetQuery = targetKind === "pizza_size"
+    ? supabase.from("pizza_sizes").select("id").eq("id", targetId).maybeSingle()
+    : supabase.from("inventory_items").select("id").eq("id", targetId).eq("item_kind", "sale_product").maybeSingle();
+  const { data: target, error: targetError } = await targetQuery;
+  if (targetError || !target) return { status: "error", message: targetError?.message ?? "El producto configurado ya no está disponible." };
+  const payload = {
+    target_kind: targetKind,
+    pizza_size_id: targetKind === "pizza_size" ? targetId : null,
+    sale_product_id: targetKind === "sale_product" ? targetId : null,
+    service_kind: serviceKind,
+    packaging_inventory_item_id: packagingItemId,
+    quantity_base: quantity
+  };
+  const { data: savedRule, error } = ruleId
+    ? await supabase.from("pos_packaging_rules").update(payload).eq("id", ruleId).select("id").maybeSingle()
+    : await supabase.from("pos_packaging_rules").insert(payload).select("id").maybeSingle();
+  if (error || !savedRule) {
+    const message = error?.message ?? "No fue posible confirmar el guardado del empaque.";
+    return { status: "error", message: /duplicate/i.test(message) ? "Ese empaque ya está configurado para este destino y modalidad." : message };
+  }
+  revalidatePath("/panel/menu/empaques");
+  revalidatePath("/panel/pedidos/nuevo");
+  return { status: "success", message: ruleId ? "Empaque actualizado." : "Empaque configurado." };
+}
+
+export async function deletePosPackagingRule(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const id = getString(formData, "rule_id");
+  if (!id) return { status: "error", message: "Selecciona una regla válida." };
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.from("pos_packaging_rules").delete().eq("id", id);
+  if (error) return { status: "error", message: error.message };
+  revalidatePath("/panel/menu/empaques");
+  revalidatePath("/panel/pedidos/nuevo");
+  return { status: "success", message: "Empaque eliminado." };
+}
+
 export async function regularizePendingInventoryDebtsFifo(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const allowShortage = formData.get("allow_shortage") === "true";
@@ -202,6 +251,13 @@ export type PosOrderTestDeletionPreviewState = {
 export type PosInventoryConsumptionPreview = {
   status: "ok" | "insufficient";
   shortages: PosStockShortage[];
+  packaging: Array<{
+    inventory_item_id: string;
+    name: string;
+    stock_before: number;
+    consumption_quantity: number;
+    stock_after: number;
+  }>;
   consolidated: Array<{
     source_kind: "inventory_item" | "preparation";
     source_id: string;
@@ -699,6 +755,7 @@ function revalidateInventory() {
   revalidatePath("/panel/produccion");
   revalidatePath("/panel/produccion/registrar");
   revalidatePath("/panel/menu/pizzas");
+  revalidatePath("/panel/menu/empaques");
   revalidatePath("/panel/menu/precios/adiciones");
   revalidatePath("/panel/menu/precios/pizzas");
   revalidatePath("/panel/menu/precios/productos");
@@ -2178,16 +2235,26 @@ function parsePosInventoryConsumptionPreview(value: unknown): PosInventoryConsum
       })
     }];
   });
-  return { status, shortages, consolidated, lines };
+  return { status, shortages, packaging: [], consolidated, lines };
 }
 
-export async function getPosInventoryConsumptionPreview(itemsRaw: string): Promise<PosInventoryConsumptionPreviewState> {
+export async function getPosInventoryConsumptionPreview(itemsRaw: string, packagingRaw = "[]"): Promise<PosInventoryConsumptionPreviewState> {
   const supabase = await createServerSupabaseClient();
   let items: unknown;
+  let packagingEntries: Array<{ inventory_item_id: string; quantity_base: number }>;
   try {
     items = JSON.parse(itemsRaw);
+    const parsedPackaging = JSON.parse(packagingRaw);
+    if (!Array.isArray(parsedPackaging)) throw new Error();
+    packagingEntries = parsedPackaging.map((entry) => {
+      const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : null;
+      const inventoryItemId = typeof record?.inventory_item_id === "string" ? record.inventory_item_id : "";
+      const quantity = Number(record?.quantity_base);
+      if (!inventoryItemId || !Number.isFinite(quantity) || quantity < 0) throw new Error();
+      return { inventory_item_id: inventoryItemId, quantity_base: quantity };
+    }).filter((entry) => entry.quantity_base > 0);
   } catch {
-    return { status: "error", message: "El pedido no tiene productos válidos." };
+    return { status: "error", message: "El pedido o sus empaques no son válidos." };
   }
   if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
 
@@ -2197,8 +2264,8 @@ export async function getPosInventoryConsumptionPreview(itemsRaw: string): Promi
     if (error) return { status: "error", message: error.message };
     const preview = parsePosInventoryConsumptionPreview(data);
     if (!preview) return { status: "error", message: "La vista previa de inventario no devolvió datos válidos." };
+    const stockClient = createSupabaseAdminClient() ?? supabase;
     if (preview.status === "ok") {
-      const stockClient = createSupabaseAdminClient() ?? supabase;
       for (const row of preview.consolidated) {
         const adjusted = await getAdjustedSourceStock(stockClient, row.source_kind, row.source_id, row.unit);
         row.stock_before = adjusted.stock;
@@ -2209,6 +2276,28 @@ export async function getPosInventoryConsumptionPreview(itemsRaw: string): Promi
           origin.stock_before = adjusted.originStock.get(originId) ?? 0;
           origin.stock_after = Number((origin.stock_before - origin.consumption_quantity).toFixed(3));
         }
+      }
+    }
+    preview.packaging = [];
+    if (packagingEntries.length > 0) {
+      const itemIds = [...new Set(packagingEntries.map((entry) => entry.inventory_item_id))];
+      const { data: packagingItems, error: packagingError } = await stockClient
+        .from("inventory_items")
+        .select("id, name")
+        .in("id", itemIds)
+        .eq("item_kind", "supply")
+        .eq("unit", "unit");
+      if (packagingError || (packagingItems?.length ?? 0) !== itemIds.length) throw new Error(packagingError?.message ?? "No fue posible consultar los empaques del pedido.");
+      const namesById = new Map((packagingItems ?? []).map((item) => [item.id, item.name]));
+      for (const entry of packagingEntries) {
+        const adjusted = await getAdjustedSourceStock(stockClient, "inventory_item", entry.inventory_item_id, "unit");
+        preview.packaging.push({
+          inventory_item_id: entry.inventory_item_id,
+          name: namesById.get(entry.inventory_item_id) ?? "Empaque",
+          stock_before: adjusted.stock,
+          consumption_quantity: entry.quantity_base,
+          stock_after: Number((adjusted.stock - entry.quantity_base).toFixed(3))
+        });
       }
     }
     return { status: "success", message: preview.status === "insufficient" ? "El pedido tiene faltantes de inventario." : "Consumo de inventario calculado.", preview };
@@ -3294,15 +3383,24 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const notes = getString(formData, "notes");
   const tableId = getOptionalString(formData, "table_id");
   const saleDate = getString(formData, "sale_date");
-  const sourceChannel = paymentMethod === "rappi" || paymentMethod === "didi" ? paymentMethod : "direct";
-  const collectionParty = paymentMethod === "rappi" || paymentMethod === "didi" ? "platform" : "business";
+  const sourceChannel = getString(formData, "source_channel") || "direct";
+  const collectionParty = getString(formData, "collection_party") || "business";
+  const platformService = getString(formData, "platform_service") || "none";
   const platformLinePricingRaw = getString(formData, "platform_line_pricing");
+  const packagingAdjustmentsRaw = getString(formData, "packaging_adjustments");
+  const pickupMode = getString(formData, "pickup_mode") || "pickup";
   const allowPendingStock = getString(formData, "allow_pending_stock") === "true";
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
   if (tableId && kind !== "local") return { status: "error", message: "La mesa solo aplica para consumo en local." };
   if (!["cash", "card", "transfer", "mixed", "pending", "rappi", "didi"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago." };
   if (!["direct", "rappi", "didi"].includes(sourceChannel) || !["business", "platform"].includes(collectionParty)) return { status: "error", message: "Selecciona el canal de recaudo." };
+  if (!["none", "rappi_standard", "didi_standard", "didi_tu_negocio"].includes(platformService)) return { status: "error", message: "Selecciona el servicio de plataforma." };
+  if (sourceChannel === "direct" && (collectionParty !== "business" || platformService !== "none")) return { status: "error", message: "El recaudo directo no admite un servicio de plataforma." };
+  if (sourceChannel === "rappi" && (collectionParty !== "platform" || paymentMethod !== "rappi" || platformService !== "rappi_standard")) return { status: "error", message: "La configuración de Rappi no es válida." };
+  if (sourceChannel === "didi" && !["didi_standard", "didi_tu_negocio"].includes(platformService)) return { status: "error", message: "Selecciona el servicio de DiDi." };
+  if (sourceChannel === "didi" && collectionParty === "platform" && paymentMethod !== "didi") return { status: "error", message: "DiDi debe recaudar este pedido cuando paga el cliente." };
+  if (sourceChannel === "didi" && collectionParty === "business" && !["cash", "card", "transfer", "mixed", "pending"].includes(paymentMethod)) return { status: "error", message: "Selecciona la forma de pago recibida por la tienda." };
   if (!["none", "percentage", "amount"].includes(discountType)) return { status: "error", message: "El tipo de descuento no es válido." };
   if (discountType === "none" && (discountValue !== 0 || discountCop !== 0)) return { status: "error", message: "El descuento no es válido." };
   if (discountType === "percentage" && (discountValue <= 0 || discountValue >= 100)) return { status: "error", message: "El descuento porcentual debe ser mayor que cero y menor al 100%." };
@@ -3384,6 +3482,21 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     }
   }
 
+  let packagingQuantities: Array<{ inventory_item_id: string; quantity_base: number }> = [];
+  try {
+    const parsed = JSON.parse(packagingAdjustmentsRaw || "[]");
+    if (!Array.isArray(parsed)) throw new Error();
+    packagingQuantities = parsed.map((entry) => {
+      const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : null;
+      const inventoryItemId = typeof value?.inventory_item_id === "string" ? value.inventory_item_id : "";
+      const quantity = Number(value?.quantity_base);
+      if (!inventoryItemId || !Number.isFinite(quantity) || quantity < 0) throw new Error();
+      return { inventory_item_id: inventoryItemId, quantity_base: quantity };
+    });
+  } catch {
+    return { status: "error", message: "Los empaques del pedido no son válidos." };
+  }
+
   let rpcItems = items;
   let comboSnapshots: Awaited<ReturnType<typeof expandComboItemsForPos>>["snapshots"] = [];
   try {
@@ -3402,7 +3515,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
     return record?.kind !== "direct_sale";
   });
-  if (directSaleItems.length > 0 && collectionParty === "platform") return { status: "error", message: "La venta libre no puede liquidarse como Rappi o DiDi." };
+  if (directSaleItems.length > 0 && sourceChannel !== "direct") return { status: "error", message: "La venta libre no puede liquidarse como Rappi o DiDi." };
 
   const directSalesPayload = directSaleItems.map((item) => {
     const line = item && typeof item === "object" ? item as Record<string, unknown> : null;
@@ -3458,9 +3571,27 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     p_cash_received_cop: paymentMethod === "cash" ? cashReceivedCop : null,
     p_cash_change_cop: paymentMethod === "cash" ? cashChangeCop : null
   };
+  const platformServiceArgs = { ...platformPaymentArgs, p_platform_service: platformService };
   let data: unknown;
   let error: { code?: string; message: string; details?: string | null } | null;
-  if (directSaleItems.length > 0) {
+  if (packagingQuantities.length > 0) {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_packaging", {
+      ...platformServiceArgs,
+      p_items: directSaleItems.length > 0 ? operationalItems : rpcItems,
+      p_pickup_mode: pickupMode,
+      p_line_pricing: platformLinePricing,
+      p_direct_sales: directSalesPayload.flatMap((item) => item.payload ? [item.payload] : []),
+      p_allow_pending_stock: allowPendingStock,
+      p_packaging_quantities: packagingQuantities
+    }));
+    if (error?.code === "PGRST202") return { status: "error", message: "Los empaques estarán disponibles cuando se aplique la actualización pendiente." };
+  } else if (sourceChannel === "didi" && collectionParty === "business") {
+    ({ data, error } = await supabase.rpc("create_pos_order_with_platform_payment_service", platformServiceArgs));
+    if (error?.code === "PGRST202") return { status: "error", message: "DiDi estará disponible cuando se aplique la actualización pendiente." };
+  } else if (sourceChannel === "didi" && collectionParty === "platform") {
+    ({ data, error } = await supabase.rpc(allowPendingStock ? "create_pos_order_with_platform_line_pricing_service_and_pending_stock" : "create_pos_order_with_platform_line_pricing_service", { ...platformServiceArgs, p_line_pricing: platformLinePricing }));
+    if (error?.code === "PGRST202") return { status: "error", message: "DiDi estará disponible cuando se aplique la actualización pendiente." };
+  } else if (directSaleItems.length > 0) {
     ({ data, error } = await supabase.rpc("create_pos_order_with_direct_sales", {
       ...platformPaymentArgs,
       p_items: operationalItems,
@@ -4445,8 +4576,25 @@ export async function savePlatformPaymentSettings(_previousState: FormActionStat
   const commissionTaxPercent = getDecimal(formData, "commission_tax_percent", 0);
   const fixedFeeCop = getDecimal(formData, "fixed_fee_cop", 0);
   const dueDays = Math.round(getDecimal(formData, "settlement_due_days", 7));
+  const didiTuNegocioCommissionPercent = getDecimal(formData, "didi_tu_negocio_commission_percent", 9.5);
+  const didiTuNegocioCommissionTaxPercent = getDecimal(formData, "didi_tu_negocio_commission_tax_percent", 0);
+  const didiTuNegocioFixedFeeCop = getDecimal(formData, "didi_tu_negocio_fixed_fee_cop", 0);
+  const didiTuNegocioDueDays = Math.round(getDecimal(formData, "didi_tu_negocio_settlement_due_days", 7));
   if (!["rappi", "didi"].includes(platform) || commissionPercent < 0 || commissionPercent > 100 || commissionTaxPercent < 0 || commissionTaxPercent > 100 || fixedFeeCop < 0 || dueDays < 0 || dueDays > 60) return { status: "error", message: "La configuración de plataforma no es válida." };
-  const settingsUpdate = { commission_percent: commissionPercent, commission_tax_percent: commissionTaxPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() };
+  if (platform === "didi" && (didiTuNegocioCommissionPercent < 0 || didiTuNegocioCommissionPercent > 100 || didiTuNegocioCommissionTaxPercent < 0 || didiTuNegocioCommissionTaxPercent > 100 || didiTuNegocioFixedFeeCop < 0 || didiTuNegocioDueDays < 0 || didiTuNegocioDueDays > 60)) return { status: "error", message: "La configuración de DiDi Tu Negocio no es válida." };
+  const settingsUpdate = {
+    commission_percent: commissionPercent,
+    commission_tax_percent: commissionTaxPercent,
+    fixed_fee_cop: fixedFeeCop,
+    settlement_due_days: dueDays,
+    ...(platform === "didi" ? {
+      didi_tu_negocio_commission_percent: didiTuNegocioCommissionPercent,
+      didi_tu_negocio_commission_tax_percent: didiTuNegocioCommissionTaxPercent,
+      didi_tu_negocio_fixed_fee_cop: didiTuNegocioFixedFeeCop,
+      didi_tu_negocio_settlement_due_days: didiTuNegocioDueDays
+    } : {}),
+    updated_at: new Date().toISOString()
+  };
   let { error } = await supabase.from("platform_payment_settings").update(settingsUpdate).eq("platform", platform);
   if (error?.code === "PGRST204") {
     ({ error } = await supabase.from("platform_payment_settings").update({ commission_percent: commissionPercent, fixed_fee_cop: fixedFeeCop, settlement_due_days: dueDays, updated_at: new Date().toISOString() }).eq("platform", platform));

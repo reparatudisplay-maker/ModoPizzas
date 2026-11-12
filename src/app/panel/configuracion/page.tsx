@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { ThemePreferencesModule } from "@/components/theme-preferences-module";
+import { ConfigurationTabs } from "@/components/configuration-tabs";
 import {
   type SystemModuleRecord,
   UsersPermissionsModule,
@@ -142,25 +142,26 @@ export default async function SettingsPanelPage() {
 
   return (
     <PanelShell active="configuracion" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Configuración" userEmail={user.email ?? "usuario"}>
-      <ThemePreferencesModule />
-      <UsersPermissionsModule
-        authAdminConfigured={Boolean(admin)}
-        currentUserId={user.id}
-        modules={systemModules
-          .filter((module) => module.active)
-          .map((module) => ({
-            key: module.key,
-            name: module.name,
-            route: module.route,
-            icon: module.icon,
-            sort_order: module.order,
-            is_active: module.active,
-            parent_key: null
-          })) as SystemModuleRecord[]}
-        permissions={(permissionsResult.data ?? []) as PermissionRecord[]}
-        roles={appRoles}
-        users={[...usersById.values()]}
-      />
+      <ConfigurationTabs active="users" isAdmin>
+        <UsersPermissionsModule
+          authAdminConfigured={Boolean(admin)}
+          currentUserId={user.id}
+          modules={systemModules
+            .filter((module) => module.active)
+            .map((module) => ({
+              key: module.key,
+              name: module.name,
+              route: module.route,
+              icon: module.icon,
+              sort_order: module.order,
+              is_active: module.active,
+              parent_key: null
+            })) as SystemModuleRecord[]}
+          permissions={(permissionsResult.data ?? []) as PermissionRecord[]}
+          roles={appRoles}
+          users={[...usersById.values()]}
+        />
+      </ConfigurationTabs>
     </PanelShell>
   );
 }

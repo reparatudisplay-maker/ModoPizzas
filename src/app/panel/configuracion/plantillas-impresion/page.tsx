@@ -1,5 +1,6 @@
 import { PrintTemplateEditor } from "@/components/print-template-editor";
 import { PanelShell } from "@/components/panel-shell";
+import { ConfigurationTabs, PrintingSubtabs } from "@/components/configuration-tabs";
 import { normalizePrintTemplate } from "@/lib/print-templates";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -28,6 +29,6 @@ export default async function PrintTemplatesPage() {
   };
 
   return <PanelShell active="configuracion-plantillas-impresion" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Plantillas de impresión" userEmail={user.email ?? "usuario"}>
-    <PrintTemplateEditor templates={{ kitchen: readTemplate("kitchen"), receipt: readTemplate("receipt") }} />
+    <ConfigurationTabs active="printing" isAdmin={roleNames.includes("admin_sistema")}><PrintingSubtabs active="templates" /><PrintTemplateEditor templates={{ kitchen: readTemplate("kitchen"), receipt: readTemplate("receipt") }} /></ConfigurationTabs>
   </PanelShell>;
 }
