@@ -7,13 +7,28 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ range?: string; from?: string; to?: string; compare?: string }>;
 
-function dayStart(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const BOGOTA_TIME_ZONE = "America/Bogota";
+
+function bogotaDateParts(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BOGOTA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+  return { year: value("year"), month: value("month"), day: value("day") };
+}
+
+function bogotaDayStart(date: Date) {
+  const { year, month, day } = bogotaDateParts(date);
+  // Colombia has a fixed UTC-5 offset, so this is midnight in America/Bogota.
+  return new Date(Date.UTC(year, month - 1, day, 5));
 }
 
 function rangeFromParams(params: { range?: string; from?: string; to?: string }) {
   const now = new Date();
-  const today = dayStart(now);
+  const today = bogotaDayStart(now);
   const range = params.range ?? "today";
   let from = today;
   let to = new Date(today);
