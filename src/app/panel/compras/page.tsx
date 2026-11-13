@@ -366,9 +366,9 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
       : null;
   const editPurchaseError = editId && !editPurchase ? "No se pudo cargar la compra seleccionada. Revisa que tenga una linea de compra y producto relacionado." : "";
   const error = itemsResult.error ?? suppliersResult.error ?? brandsResult.error ?? purchasesError ?? pendingRegularizationResult.error ?? pendingRegularizationPreviewResult.error;
-  const pendingRegularizationRows = (pendingRegularizationPreviewResult.data ?? []) as Array<{ debt_id: string; order_code: string; source_kind: string; item_name: string; quantity_base: number; base_unit: StockUnit; lot_id: string | null; lot_available_base: number | null; lot_purchased_at: string | null; lot_unit_cost_cop: number | null }>;
+  const pendingRegularizationRows = (pendingRegularizationPreviewResult.data ?? []) as Array<{ debt_id: string; order_code: string; source_id: string; source_kind: string; item_name: string; quantity_base: number; base_unit: StockUnit; lot_id: string | null; lot_available_base: number | null; lot_purchased_at: string | null; lot_unit_cost_cop: number | null }>;
   const pendingRegularizationDebts = Array.from(pendingRegularizationRows.reduce<Map<string, PendingRegularizationDebt>>((debts, source) => {
-    const debt = debts.get(source.debt_id) ?? { id: source.debt_id, orderCode: source.order_code, name: source.item_name, sourceKind: source.source_kind, quantity: Number(source.quantity_base), unit: source.base_unit, lots: [] } satisfies PendingRegularizationDebt;
+    const debt = debts.get(source.debt_id) ?? { id: source.debt_id, sourceId: source.source_id, orderCode: source.order_code, name: source.item_name, sourceKind: source.source_kind, quantity: Number(source.quantity_base), unit: source.base_unit, lots: [] } satisfies PendingRegularizationDebt;
     if (source.lot_id) debt.lots.push({ id: source.lot_id, available: Number(source.lot_available_base ?? 0), purchasedAt: source.lot_purchased_at, unitCost: Number(source.lot_unit_cost_cop ?? 0) });
     debts.set(source.debt_id, debt);
     return debts;

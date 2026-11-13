@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { regularizePendingInventoryDebtsFifo, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -8,14 +8,14 @@ import { formatStockQuantity, type StockUnit } from "@/lib/units";
 const initialState: FormActionState = { status: "idle", message: "" };
 
 type Lot = { id: string; available: number; purchasedAt: string | null; unitCost: number };
-export type PendingRegularizationDebt = { id: string; orderCode: string; name: string; sourceKind: string; quantity: number; unit: StockUnit; lots: Lot[] };
-type InventoryDebtGroup = { key: string; name: string; unit: StockUnit; quantity: number; debts: PendingRegularizationDebt[]; lots: Lot[] };
+export type PendingRegularizationDebt = { id: string; sourceId: string; orderCode: string; name: string; sourceKind: string; quantity: number; unit: StockUnit; lots: Lot[] };
+type InventoryDebtGroup = { key: string; sourceId: string; name: string; unit: StockUnit; quantity: number; debts: PendingRegularizationDebt[]; lots: Lot[] };
 type PlannedLot = Lot & { planned: number };
 
 function groupDebts(debts: PendingRegularizationDebt[]) {
   return Array.from(debts.reduce<Map<string, InventoryDebtGroup>>((groups, debt) => {
-    const key = `${debt.name}:${debt.unit}`;
-    const group = groups.get(key) ?? { key, name: debt.name, unit: debt.unit, quantity: 0, debts: [], lots: [] };
+    const key = `${debt.sourceId}:${debt.unit}`;
+    const group = groups.get(key) ?? { key, sourceId: debt.sourceId, name: debt.name, unit: debt.unit, quantity: 0, debts: [], lots: [] };
     group.quantity += debt.quantity;
     group.debts.push(debt);
     debt.lots.forEach((lot) => {
@@ -45,14 +45,29 @@ function lotDate(lot: Lot) {
 export function PendingInventoryRegularizationAction({ debts }: { debts: PendingRegularizationDebt[] }) {
   const [open, setOpen] = useState(false);
   const [allowShortage, setAllowShortage] = useState(false);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [state, formAction, isPending] = useActionState(regularizePendingInventoryDebtsFifo, initialState);
   const inventoryDebts = useMemo(() => debts.filter((debt) => debt.sourceKind === "inventory_item"), [debts]);
   const productionDebts = useMemo(() => debts.filter((debt) => debt.sourceKind !== "inventory_item"), [debts]);
   const inventoryGroups = useMemo(() => groupDebts(inventoryDebts), [inventoryDebts]);
   const productionGroups = useMemo(() => groupDebts(productionDebts), [productionDebts]);
   const plans = useMemo(() => inventoryGroups.map((group) => ({ group, ...fifoPlan(group) })), [inventoryGroups]);
-  const hasShortage = plans.some((plan) => plan.shortage > 0.000001);
-  const canSubmit = productionDebts.length === 0 && inventoryDebts.length > 0 && (!hasShortage || allowShortage);
+  const inventoryGroupKey = useMemo(() => inventoryGroups.map((group) => group.sourceId).join("|"), [inventoryGroups]);
+  useEffect(() => {
+    setSelectedSourceIds(new Set(inventoryGroupKey ? inventoryGroupKey.split("|") : []));
+    setAllowShortage(false);
+  }, [inventoryGroupKey]);
+  const selectedPlans = plans.filter((plan) => selectedSourceIds.has(plan.group.sourceId));
+  const hasShortage = selectedPlans.some((plan) => plan.shortage > 0.000001);
+  const canSubmit = selectedPlans.length > 0 && (!hasShortage || allowShortage);
+  const toggleSelection = (sourceId: string) => {
+    setSelectedSourceIds((current) => {
+      const next = new Set(current);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      return next;
+    });
+  };
 
   if (!debts.length && state.status !== "success") return null;
 
@@ -65,8 +80,9 @@ export function PendingInventoryRegularizationAction({ debts }: { debts: Pending
         <p className="pending-regularization-intro">Se asignarán consumos históricos contra existencias reales, respetando FIFO. No se crea una compra nueva ni se altera la cantidad consumida.</p>
         {plans.map(({ group, lots, shortage }) => <section className="pending-regularization-group" key={group.key}>
           <div className="pending-regularization-row">
-            <div><span className="pending-regularization-eyebrow">Consolidado</span><strong>{group.name}</strong><span>{`${group.debts.length} ${group.debts.length === 1 ? "consumo" : "consumos"} · ${formatStockQuantity(group.quantity, group.unit)}`}</span></div>
+            <label className="pending-regularization-selector"><input checked={selectedSourceIds.has(group.sourceId)} name="selected_source_ids" onChange={() => toggleSelection(group.sourceId)} type="checkbox" value={group.sourceId} /><span><span className="pending-regularization-eyebrow">Consolidado</span><strong>{group.name}</strong><span>{`${group.debts.length} ${group.debts.length === 1 ? "consumo" : "consumos"} · ${formatStockQuantity(group.quantity, group.unit)}`}</span></span></label>
             <div className="pending-regularization-fifo"><strong>{lots.length} {lots.length === 1 ? "lote" : "lotes"} disponible{lots.length === 1 ? "" : "s"}</strong><span>{shortage > 0.000001 ? `Se asignarán ${formatStockQuantity(group.quantity - shortage, group.unit)} por FIFO` : "Cobertura completa por FIFO"}</span></div>
+            <button className="secondary-button pending-regularization-item-action" disabled={isPending} name="regularize_source_id" type="submit" value={group.sourceId}>{shortage > 0.000001 ? "Regularizar disponible" : "Regularizar"}</button>
           </div>
           {shortage > 0.000001 ? <p className="pending-regularization-shortage">Se requieren {formatStockQuantity(group.quantity, group.unit)} de {group.name}, pero hay {formatStockQuantity(group.quantity - shortage, group.unit)} disponibles. Quedará una deuda de {formatStockQuantity(shortage, group.unit)}.</p> : null}
           <details className="pending-regularization-details"><summary>Ver desglose ({group.debts.length})</summary><div className="pending-regularization-breakdown">
@@ -78,7 +94,7 @@ export function PendingInventoryRegularizationAction({ debts }: { debts: Pending
         {hasShortage ? <label className="pending-regularization-confirm"><input checked={allowShortage} name="allow_shortage" onChange={(event) => setAllowShortage(event.target.checked)} type="checkbox" value="true" /> <span>Entiendo que los lotes disponibles se consumirán por FIFO y que los saldos sin cobertura continuarán pendientes de regularización.</span></label> : <input name="allow_shortage" type="hidden" value="false" />}
         {state.message ? <p className={state.status === "error" ? "alert" : "success-message"}>{state.message}</p> : null}
       </div>
-      <div className="modal-actions"><button className="secondary-button" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="positive-button" disabled={!canSubmit || isPending} type="submit">{isPending ? "Regularizando..." : hasShortage ? "Regularizar lo disponible" : "Regularizar por FIFO"}</button></div>
+      <div className="modal-actions pending-regularization-actions"><button className="secondary-button" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="positive-button" disabled={!canSubmit || isPending} type="submit">{isPending ? "Regularizando..." : hasShortage ? "Regularizar lo disponible" : "Regularizar seleccionados"}</button></div>
     </form></div> : null}
   </div>;
 }

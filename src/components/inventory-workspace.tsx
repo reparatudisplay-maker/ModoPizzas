@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Edit3, Eye, History, Settings, Trash2, X } from "lucide-react";
+import { Edit3, Eye, History, Search, Settings, Trash2, X } from "lucide-react";
 import { recordPhysicalInventoryCount, updatePhysicalInventoryCount, voidPhysicalInventoryCount, type PhysicalInventoryActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { type ProductionInventoryItem, type ProductionInventoryLot, productionItemStatus, productionLotStatus } from "@/lib/production-inventory";
@@ -17,6 +17,7 @@ type StockFilter = "all" | "available" | "out";
 type WeightDisplayUnit = "g" | "kg";
 type InventorySection = "purchases" | "preparations" | "adjustments";
 type CountSourceKind = "inventory_item" | "preparation";
+type RegularizedConsumptionPeriod = "today" | "yesterday" | "week" | "month" | "all";
 
 export type InventoryPurchaseLine = {
   id: string;
@@ -84,6 +85,7 @@ type InventoryWorkspaceProps = {
   items: InventoryListItem[];
   purchaseLines: InventoryPurchaseLine[];
   preparationItems: ProductionInventoryItem[];
+  regularizedConsumptionHistory: RegularizedConsumptionHistoryRow[];
 };
 
 export type InventoryCountHistoryRow = {
@@ -98,6 +100,19 @@ export type InventoryCountHistoryRow = {
   base_unit: StockUnit;
   adjustment_kind: "waste" | "adjustment_in";
   reason: string;
+  user_label: string;
+};
+
+export type RegularizedConsumptionHistoryRow = {
+  id: string;
+  created_at: string;
+  product_name: string;
+  order_code: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  lot_label: string;
+  cost_cop: number;
+  status: "Regularizado" | "Parcial";
   user_label: string;
 };
 
@@ -293,6 +308,28 @@ function dateTimeLabel(value?: string | null) {
   return new Intl.DateTimeFormat("es-CO", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
+function bogotaDateKey(value: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+}
+
+function addBogotaDays(value: Date, days: number) {
+  const [year, month, day] = bogotaDateKey(value).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days, 12));
+}
+
+function matchesRegularizedConsumptionPeriod(value: string, period: RegularizedConsumptionPeriod) {
+  if (period === "all") return true;
+  const now = new Date();
+  const today = bogotaDateKey(now);
+  const target = bogotaDateKey(new Date(value));
+  if (period === "today") return target === today;
+  if (period === "yesterday") return target === bogotaDateKey(addBogotaDays(now, -1));
+  if (period === "month") return target.slice(0, 7) === today.slice(0, 7);
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay() || 7;
+  const weekStart = bogotaDateKey(addBogotaDays(now, -(weekday - 1)));
+  return target >= weekStart && target <= today;
+}
+
 function stockStatus(quantity: number) {
   if (quantity <= 0) return { key: "out", label: "Agotado", className: "danger" };
   if (quantity <= 5) return { key: "low", label: "Bajo", className: "warning" };
@@ -409,12 +446,13 @@ function uniqueValues(rows: Array<{ brand_name: string | null; supplier_name: st
 
 const initialCountState: PhysicalInventoryActionState = { status: "idle", message: "" };
 
-export function InventoryWorkspace({ countHistory, items, purchaseLines, preparationItems }: InventoryWorkspaceProps) {
+export function InventoryWorkspace({ countHistory, items, purchaseLines, preparationItems, regularizedConsumptionHistory }: InventoryWorkspaceProps) {
   const router = useRouter();
   const [countState, countAction] = useActionState(recordPhysicalInventoryCount, initialCountState);
   const [editCountState, editCountAction] = useActionState(updatePhysicalInventoryCount, initialCountState);
   const [deleteCountState, deleteCountAction] = useActionState(voidPhysicalInventoryCount, initialCountState);
   const [section, setSection] = useState<InventorySection>("purchases");
+  const [adjustmentTab, setAdjustmentTab] = useState<"counts" | "regularized">("counts");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
@@ -1229,13 +1267,13 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
               </button>
             </div>
           </div>
+          <nav className="section-tabs inventory-adjustment-tabs" aria-label="Registros de ajustes de inventario">
+            <button className={`ghost-button ${adjustmentTab === "counts" ? "active-tab" : ""}`} onClick={() => setAdjustmentTab("counts")} type="button">Listado de Ajustes de Inventario</button>
+            <button className={`ghost-button ${adjustmentTab === "regularized" ? "active-tab" : ""}`} onClick={() => setAdjustmentTab("regularized")} type="button">Consumos Regularizados</button>
+          </nav>
           {countSuccessMessage ? <p className="form-status success">{countSuccessMessage}</p> : null}
           {deleteCountState.status === "error" ? <p className="form-status error">{deleteCountState.message}</p> : null}
-          <PhysicalInventoryCountHistory
-            deleteAction={deleteCountAction}
-            history={countHistory}
-            onEdit={openEditCountModal}
-          />
+          {adjustmentTab === "counts" ? <PhysicalInventoryCountHistory deleteAction={deleteCountAction} history={countHistory} onEdit={openEditCountModal} /> : <RegularizedConsumptionHistory history={regularizedConsumptionHistory} />}
         </section>
       )}
 
@@ -1347,6 +1385,41 @@ export function InventoryWorkspace({ countHistory, items, purchaseLines, prepara
         </div>
       ) : null}
     </>
+  );
+}
+
+function RegularizedConsumptionHistory({ history }: { history: RegularizedConsumptionHistoryRow[] }) {
+  const [query, setQuery] = useState("");
+  const [period, setPeriod] = useState<RegularizedConsumptionPeriod>("today");
+  const filteredHistory = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase("es-CO");
+    return history.filter((row) => {
+      if (!matchesRegularizedConsumptionPeriod(row.created_at, period)) return false;
+      if (!normalizedQuery) return true;
+      return [row.product_name, row.order_code, row.lot_label, row.user_label, row.status]
+        .some((value) => value.toLocaleLowerCase("es-CO").includes(normalizedQuery));
+    });
+  }, [history, period, query]);
+
+  return (
+    <section className="physical-count-history-panel">
+      <div className="section-title-row"><h2>Consumos Regularizados</h2></div>
+      <div className="table-filters regularized-consumption-filters">
+        <label className="search-field"><Search aria-hidden="true" size={16} /><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar producto, pedido o lote" value={query} /></label>
+        <select aria-label="Periodo de consumos regularizados" onChange={(event) => setPeriod(event.target.value as RegularizedConsumptionPeriod)} value={period}>
+          <option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="week">Semana</option><option value="month">Mes</option><option value="all">Todos</option>
+        </select>
+      </div>
+      <div className="data-table-wrap">
+        <table className="data-table compact-data-table physical-count-history-table">
+          <thead><tr><th>Fecha</th><th>Producto</th><th>Pedido</th><th>Lote FIFO</th><th>Asignado</th><th>Costo</th><th>Estado</th><th>Usuario</th></tr></thead>
+          <tbody>{filteredHistory.map((row) => <tr key={row.id}>
+            <td>{dateLabel(row.created_at)}</td><td><strong>{row.product_name}</strong></td><td>{row.order_code}</td><td>{row.lot_label}</td><td>{formatStockQuantity(row.quantity_base, row.base_unit)}</td><td>{formatCop(row.cost_cop)}</td><td><span className={`stock-pill ${row.status === "Regularizado" ? "ok" : "warning"}`}>{row.status}</span></td><td>{row.user_label}</td>
+          </tr>)}</tbody>
+        </table>
+        {filteredHistory.length === 0 ? <p className="muted">No hay consumos regularizados para estos filtros.</p> : null}
+      </div>
+    </section>
   );
 }
 

@@ -1,4 +1,4 @@
-import { InventoryWorkspace, type InventoryCountHistoryRow, type InventoryListItem, type InventoryLotMovement, type InventoryPurchaseLine } from "@/components/inventory-workspace";
+import { InventoryWorkspace, type InventoryCountHistoryRow, type InventoryListItem, type InventoryLotMovement, type InventoryPurchaseLine, type RegularizedConsumptionHistoryRow } from "@/components/inventory-workspace";
 import { PanelShell } from "@/components/panel-shell";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionLotOutboundInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
 import { requirePanelAccess } from "@/lib/panel-auth";
@@ -82,6 +82,28 @@ type StockReconciliationBaselineRow = {
   source_id: string;
   effective_at: string;
 };
+
+type RegularizationAllocationRow = {
+  id: string;
+  debt_id: string;
+  purchase_item_id: string;
+  quantity_base: number;
+  base_unit: StockUnit;
+  unit_cost_cop: number;
+  cost_cop: number;
+  created_at: string;
+};
+
+type RegularizationDebtHistoryRow = {
+  id: string;
+  order_id: string;
+  source_id: string;
+  status: "pending" | "regularized" | "voided";
+  regularized_at: string | null;
+  regularized_by: string | null;
+};
+
+type PosOrderCodeRow = { id: string; code: string };
 
 type PosProductionOutboundRow = {
   id: string;
@@ -255,7 +277,7 @@ export default async function InventoryPage() {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "inventario");
 
-  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult, reconciliationBaselinesResult] = await Promise.all([
+  const [purchaseLinesResult, purchaseAllocationsResult, posPurchaseAllocationsResult, physicalCountsResult, masterItemsResult, brandsResult, suppliersResult, categoriesResult, profilesResult, reconciliationBaselinesResult, regularizationAllocationsResult, regularizationDebtsResult, orderCodesResult] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("purchase_items")
@@ -297,7 +319,10 @@ export default async function InventoryPage() {
     supabase.from("suppliers").select("id, name").order("name"),
     supabase.from("product_categories").select("id, name").order("name"),
     supabase.from("profiles").select("id, full_name, email"),
-    supabase.from("inventory_stock_reconciliation_baselines").select("source_kind, source_id, effective_at")
+    supabase.from("inventory_stock_reconciliation_baselines").select("source_kind, source_id, effective_at"),
+    supabase.from("pos_inventory_regularization_allocations").select("id, debt_id, purchase_item_id, quantity_base, base_unit, unit_cost_cop, cost_cop, created_at").order("created_at", { ascending: false }),
+    supabase.from("pos_inventory_regularization_debts").select("id, order_id, source_id, status, regularized_at, regularized_by").neq("status", "voided"),
+    supabase.from("pos_orders").select("id, code")
   ]);
 
   const error =
@@ -310,7 +335,10 @@ export default async function InventoryPage() {
     suppliersResult.error ??
     categoriesResult.error ??
     profilesResult.error ??
-    reconciliationBaselinesResult.error;
+    reconciliationBaselinesResult.error ??
+    regularizationAllocationsResult.error ??
+    regularizationDebtsResult.error ??
+    orderCodesResult.error;
   const purchaseLines = (purchaseLinesResult.data ?? []) as unknown as PurchaseLineRow[];
   const purchaseAllocations = [
     ...((purchaseAllocationsResult.data ?? []) as unknown as PurchaseAllocationRow[]),
@@ -318,6 +346,9 @@ export default async function InventoryPage() {
   ];
   const physicalCounts = (physicalCountsResult.data ?? []) as unknown as PhysicalInventoryCountRow[];
   const reconciliationBaselines = (reconciliationBaselinesResult.data ?? []) as StockReconciliationBaselineRow[];
+  const regularizationAllocations = (regularizationAllocationsResult.data ?? []) as unknown as RegularizationAllocationRow[];
+  const regularizationDebts = (regularizationDebtsResult.data ?? []) as unknown as RegularizationDebtHistoryRow[];
+  const orderCodes = (orderCodesResult.data ?? []) as PosOrderCodeRow[];
   const masterItems = (masterItemsResult.data ?? []) as Array<{ id: string; name: string; image_url: string | null; item_kind: ItemKind | null }>;
   const brands = brandsResult.data ?? [];
   const suppliers = suppliersResult.data ?? [];
@@ -656,12 +687,33 @@ export default async function InventoryPage() {
     reason: count.reason,
     user_label: count.created_by ? profileById.get(count.created_by) ?? count.created_by.slice(0, 8).toUpperCase() : "Sistema"
   }));
+  const regularizationDebtById = new Map(regularizationDebts.map((debt) => [debt.id, debt]));
+  const orderCodeById = new Map(orderCodes.map((order) => [order.id, order.code]));
+  const itemNameById = new Map(purchaseLines.map((line) => [line.inventory_item_id, line.inventory_items?.name ?? "Producto no disponible"]));
+  const lotById = new Map(purchaseLines.map((line) => [line.id, line]));
+  const regularizedConsumptionHistory: RegularizedConsumptionHistoryRow[] = regularizationAllocations.flatMap((allocation) => {
+    const debt = regularizationDebtById.get(allocation.debt_id);
+    if (!debt) return [];
+    const lot = lotById.get(allocation.purchase_item_id);
+    return [{
+      id: allocation.id,
+      created_at: allocation.created_at,
+      product_name: itemNameById.get(debt.source_id) ?? "Producto no disponible",
+      order_code: orderCodeById.get(debt.order_id) ?? "Pedido no disponible",
+      quantity_base: Number(allocation.quantity_base ?? 0),
+      base_unit: allocation.base_unit,
+      lot_label: lot ? `${lotCode(lot.id)} · ${lot.purchases?.purchased_at ? new Date(lot.purchases.purchased_at).toLocaleDateString("es-CO") : "Sin fecha"}` : allocation.purchase_item_id.slice(0, 8).toUpperCase(),
+      cost_cop: Number(allocation.cost_cop ?? 0),
+      status: debt.status === "regularized" ? "Regularizado" : "Parcial",
+      user_label: debt.regularized_by ? profileById.get(debt.regularized_by) ?? debt.regularized_by.slice(0, 8).toUpperCase() : "Sistema"
+    }];
+  });
 
   return (
     <PanelShell active="inventario" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Inventario" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       {productionError ? <p className="alert">{productionError.message}</p> : null}
-      <InventoryWorkspace countHistory={countHistory} items={[...groupedItems.values()]} preparationItems={productionInventory.items} purchaseLines={lineItems} />
+      <InventoryWorkspace countHistory={countHistory} items={[...groupedItems.values()]} preparationItems={productionInventory.items} purchaseLines={lineItems} regularizedConsumptionHistory={regularizedConsumptionHistory} />
     </PanelShell>
   );
 }

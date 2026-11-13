@@ -86,8 +86,15 @@ export async function deletePosPackagingRule(_previousState: FormActionState, fo
 
 export async function regularizePendingInventoryDebtsFifo(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
-  const allowShortage = formData.get("allow_shortage") === "true";
-  const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts_fifo", {
+  const requestedSourceId = getString(formData, "regularize_source_id");
+  const selectedSourceIds = requestedSourceId
+    ? [requestedSourceId]
+    : Array.from(new Set(formData.getAll("selected_source_ids").map(String).filter(Boolean)));
+  if (selectedSourceIds.length === 0) return { status: "error", message: "Selecciona al menos un producto para regularizar." };
+
+  const allowShortage = requestedSourceId || formData.get("allow_shortage") === "true";
+  const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts_fifo_selected", {
+    p_source_ids: selectedSourceIds,
     p_allow_shortage: allowShortage,
     p_notes: "REGULARIZACION TECNICA FIFO DE FALTANTES POS. ASIGNACION A LOTES EXISTENTES SIN CREAR COMPRAS NUEVAS."
   });
