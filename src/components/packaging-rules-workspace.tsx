@@ -27,13 +27,11 @@ export function PackagingRulesWorkspace({ pizzaSizes, saleProducts, supplies, ru
   const targetKind = tab === "pizzas" ? "pizza_size" : "sale_product";
   const visibleRules = rules.filter((rule) => rule.target_kind === targetKind && (tab === "pizzas" || products.some((product) => product.id === rule.target_id)));
   const feedback = saveState.status !== "idle" ? saveState : deleteState;
+  const hasSavedChange = saveState.status === "success" || deleteState.status === "success";
 
   useEffect(() => {
-    if (saveState.status === "success" || deleteState.status === "success") {
-      setEditing(null);
-      router.refresh();
-    }
-  }, [deleteState.status, router, saveState.status]);
+    if (hasSavedChange) router.refresh();
+  }, [hasSavedChange, router]);
 
   return <section className="packaging-rules-workspace">
     <div className="packaging-workspace-heading">
@@ -46,7 +44,7 @@ export function PackagingRulesWorkspace({ pizzaSizes, saleProducts, supplies, ru
     <div className="table-wrap packaging-rules-table-wrap"><table className="packaging-rules-matrix"><thead><tr><th>Tamaño / Producto</th>{services.map((service) => { const Icon = service.icon; return <th key={service.id}><span><Icon size={14} />{service.label}</span></th>; })}</tr></thead><tbody>
       {targets.length ? targets.map((target) => <tr key={target.id}><th scope="row"><span className="packaging-target-icon">{tab === "pizzas" ? <Pizza size={15} /> : <Package size={15} />}</span><span><strong>{target.name}</strong>{target.presentation ? <small>{target.presentation}</small> : null}</span></th>{services.map((service) => {
         const cellRules = visibleRules.filter((rule) => rule.target_id === target.id && rule.service_kind === service.id);
-        const isEditing = editing?.targetId === target.id && editing.service === service.id;
+        const isEditing = !hasSavedChange && editing?.targetId === target.id && editing.service === service.id;
         return <td key={service.id}><div className="packaging-rule-cell">
           {cellRules.map((rule) => <div className="packaging-rule-chip" key={rule.id}><span><Package size={14} />{rule.packaging_name} <b>x{rule.quantity_base}</b></span><div className="packaging-rule-actions"><button aria-label={`Editar ${rule.packaging_name}`} className="icon-button" onClick={() => setEditing({ targetId: target.id, service: service.id, rule })} title="Editar empaque" type="button"><Pencil size={14} /></button><form action={deleteAction}><input name="rule_id" type="hidden" value={rule.id} /><button aria-label={`Quitar ${rule.packaging_name}`} className="icon-button" title="Quitar empaque" type="submit"><Trash2 size={14} /></button></form></div></div>)}
           {isEditing ? <form action={saveAction} className="packaging-rule-inline-form">{editing?.rule ? <input name="rule_id" type="hidden" value={editing.rule.id} /> : null}<input name="target_kind" type="hidden" value={targetKind} /><input name="target_id" type="hidden" value={target.id} /><input name="service_kind" type="hidden" value={service.id} /><select aria-label={`Empaque para ${target.name} ${service.label}`} defaultValue={editing?.rule?.packaging_inventory_item_id ?? ""} name="packaging_inventory_item_id" required><option disabled value="">Empaque</option>{supplies.map((supply) => <option key={supply.id} value={supply.id}>{supply.name}</option>)}</select><input aria-label="Cantidad" defaultValue={editing?.rule?.quantity_base ?? 1} inputMode="numeric" min="0.001" name="quantity_base" step="0.001" type="number" /><button className="positive-button" type="submit">Guardar</button><button aria-label="Cancelar" className="icon-button" onClick={() => setEditing(null)} type="button"><X size={14} /></button></form> : <button className="packaging-rule-add" onClick={() => setEditing({ targetId: target.id, service: service.id })} type="button"><PackagePlus size={14} /> Agregar</button>}

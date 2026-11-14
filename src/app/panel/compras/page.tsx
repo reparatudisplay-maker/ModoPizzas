@@ -240,6 +240,23 @@ function isDirectImageUrl(value: string) {
   return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:");
 }
 
+async function signedImageUrls(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  bucket: string,
+  paths: Array<string | null | undefined>
+) {
+  const urls = new Map<string, string | null>();
+  const uniquePaths = [...new Set(paths.filter((path): path is string => Boolean(path)))];
+  const privatePaths = uniquePaths.filter((path) => !isDirectImageUrl(path));
+
+  for (const path of uniquePaths.filter(isDirectImageUrl)) urls.set(path, path);
+  if (privatePaths.length === 0) return urls;
+
+  const { data } = await supabase.storage.from(bucket).createSignedUrls(privatePaths, 60 * 60);
+  data?.forEach((entry, index) => urls.set(privatePaths[index], entry.signedUrl ?? null));
+  return urls;
+}
+
 function masterKey(item: { name: string; item_kind?: string | null }) {
   return `${item.item_kind ?? ""}:${item.name.toUpperCase()}`;
 }
@@ -315,25 +332,10 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const directPurchases = directPurchasesResult.error ? [] : (directPurchasesResult.data ?? []) as unknown as DirectSalePurchase[];
   const masterItems = items.filter((item) => item.presentation_quantity === null);
   const masterByKey = new Map(masterItems.map((item) => [masterKey(item), item]));
-  const imagePaths = new Map<string, string | null>();
-  items.forEach((item) => imagePaths.set(item.id, item.image_url ?? null));
-  const signedImageEntries = await Promise.all(
-    [...imagePaths.entries()].map(async ([id, imageUrl]) => {
-      if (!imageUrl || isDirectImageUrl(imageUrl)) return [id, imageUrl] as const;
-      const { data } = await supabase.storage.from("product-images").createSignedUrl(imageUrl, 60 * 60);
-      return [id, data?.signedUrl ?? null] as const;
-    })
-  );
-  const imageSrcById = new Map(signedImageEntries);
-  const invoicePhotoUrlByPurchaseId = new Map(
-    await Promise.all(
-      purchases.map(async (purchase) => {
-        if (!purchase.invoice_photo_path) return [purchase.id, null] as const;
-        const { data } = await supabase.storage.from("purchase-invoices").createSignedUrl(purchase.invoice_photo_path, 60 * 60);
-        return [purchase.id, data?.signedUrl ?? null] as const;
-      })
-    )
-  );
+  const imageSrcByPath = await signedImageUrls(supabase, "product-images", items.map((item) => item.image_url));
+  const imageSrcById = new Map(items.map((item) => [item.id, imageSrcByPath.get(item.image_url ?? "") ?? null]));
+  const invoicePhotoSrcByPath = await signedImageUrls(supabase, "purchase-invoices", purchases.map((purchase) => purchase.invoice_photo_path));
+  const invoicePhotoUrlByPurchaseId = new Map(purchases.map((purchase) => [purchase.id, invoicePhotoSrcByPath.get(purchase.invoice_photo_path ?? "") ?? null]));
   const editPurchaseSource = purchases.find((purchase) => purchase.id === editId);
   const editPurchase: EditablePurchase | null =
     editPurchaseSource && editPurchaseSource.purchase_items.length

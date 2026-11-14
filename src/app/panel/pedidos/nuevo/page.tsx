@@ -39,7 +39,7 @@ type FlavorRow = {
   id: string;
   name: string;
   image_url: string | null;
-  pos_image_url?: string | null;
+  pos_image_url: string | null;
   allows_half_and_half: boolean;
   menu_category_id: string | null;
   menu_categories: { name: string } | null;
@@ -111,6 +111,7 @@ type PendingPaymentRow = {
   total_cop: number | string;
 };
 
+
 type PackagingRuleRow = {
   id: string;
   target_kind: "pizza_size" | "sale_product";
@@ -166,11 +167,21 @@ type ComboRow = {
   }>;
 };
 
-async function signedImage(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, path: string | null) {
-  if (!path) return null;
-  if (path.startsWith("http") || path.startsWith("/")) return path;
-  const { data } = await supabase.storage.from(productImageBucket).createSignedUrl(path, 60 * 60);
-  return data?.signedUrl ?? null;
+function isDirectImageUrl(path: string) {
+  return path.startsWith("http") || path.startsWith("/") || path.startsWith("data:");
+}
+
+async function signedImageUrls(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, paths: Array<string | null | undefined>) {
+  const urls = new Map<string, string | null>();
+  const uniquePaths = [...new Set(paths.filter((path): path is string => Boolean(path)))];
+  const privatePaths = uniquePaths.filter((path) => !isDirectImageUrl(path));
+
+  for (const path of uniquePaths.filter(isDirectImageUrl)) urls.set(path, path);
+  if (privatePaths.length === 0) return urls;
+
+  const { data } = await supabase.storage.from(productImageBucket).createSignedUrls(privatePaths, 60 * 60);
+  data?.forEach((entry, index) => urls.set(privatePaths[index], entry.signedUrl ?? null));
+  return urls;
 }
 
 function posPizzaFallbackImage(name: string) {
@@ -206,7 +217,6 @@ export default async function NuevoPedidoPage() {
     combosResult,
     baseOptionsResult,
     platformPaymentSettingsResult,
-    posImagesResult,
     orderTablesResult,
     pendingPaymentsResult,
     paidPaymentsResult,
@@ -214,7 +224,7 @@ export default async function NuevoPedidoPage() {
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
-      .select("id, name, image_url, allows_half_and_half, menu_category_id, menu_categories(name)")
+      .select("id, name, image_url, pos_image_url, allows_half_and_half, menu_category_id, menu_categories(name)")
       .eq("is_active", true)
       .order("sort_order"),
     supabase
@@ -246,7 +256,6 @@ export default async function NuevoPedidoPage() {
       .from("platform_payment_settings")
       .select("*")
       .order("platform"),
-    supabase.from("pizza_flavors").select("id, pos_image_url"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
     supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
     (() => {
@@ -270,20 +279,19 @@ export default async function NuevoPedidoPage() {
     baseOptionsResult.error ??
     platformPaymentSettingsResult.error;
 
-  const signedImageCache = new Map<string, Promise<string | null>>();
-  function signedCachedImage(path: string | null) {
-    if (!path) return Promise.resolve(null);
-    const cached = signedImageCache.get(path);
-    if (cached) return cached;
-    const promise = signedImage(supabase, path);
-    signedImageCache.set(path, promise);
-    return promise;
-  }
-
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
-  const posImageByFlavor = new Map(
-    posImagesResult.error ? [] : ((posImagesResult.data ?? []) as Array<{ id: string; pos_image_url: string | null }>).map((flavor) => [flavor.id, flavor.pos_image_url] as const)
+  const additionRows = (additionsResult.data ?? []) as unknown as AdditionRow[];
+  const saleProductRows = (saleProductsResult.data ?? []) as SaleProductRow[];
+  const comboRows = (combosResult.data ?? []) as unknown as ComboRow[];
+  const pizzaImagePathByFlavor = new Map(
+    flavorRows.map((flavor) => [flavor.id, flavor.pos_image_url ?? posPizzaFallbackImage(flavor.name) ?? flavor.image_url] as const)
   );
+  const imageSrcByPath = await signedImageUrls(supabase, [
+    ...pizzaImagePathByFlavor.values(),
+    ...additionRows.map((addition) => addition.inventory_items?.image_url ?? null),
+    ...saleProductRows.map((product) => product.image_url),
+    ...comboRows.map((combo) => combo.image_url)
+  ]);
   const ingredientsByFlavor = new Map<string, PosPizzaOption["characteristic_ingredients"]>();
   for (const ingredient of (flavorIngredientsResult.data ?? []) as unknown as FlavorIngredientRow[]) {
     const sourceId = ingredient.source_kind === "preparation" ? ingredient.source_preparation_id : ingredient.inventory_item_id;
@@ -307,7 +315,7 @@ export default async function NuevoPedidoPage() {
       flavor_name: flavor.name,
       category_id: flavor.menu_category_id ?? null,
       category_name: flavor.menu_categories?.name ?? null,
-      image_src: await signedImage(supabase, posImageByFlavor.get(flavor.id) ?? posPizzaFallbackImage(flavor.name) ?? flavor.image_url ?? null),
+      image_src: imageSrcByPath.get(pizzaImagePathByFlavor.get(flavor.id) ?? "") ?? null,
       allows_half_and_half: flavor.allows_half_and_half,
       characteristic_ingredients: ingredientsByFlavor.get(flavor.id) ?? [],
       min_price_cop: null,
@@ -354,13 +362,13 @@ export default async function NuevoPedidoPage() {
   const pizzas = [...flavorGroups.values()].sort((a, b) => a.flavor_name.localeCompare(b.flavor_name));
 
   const additions: PosAdditionOption[] = [];
-  for (const addition of (additionsResult.data ?? []) as unknown as AdditionRow[]) {
+  for (const addition of additionRows) {
     for (const size of addition.pizza_addition_sizes ?? []) {
       additions.push({
         id: addition.id,
         sku: addition.sku,
         name: addition.name,
-        image_src: await signedImage(supabase, addition.inventory_items?.image_url ?? null),
+        image_src: imageSrcByPath.get(addition.inventory_items?.image_url ?? "") ?? null,
         size_id: size.pizza_size_id,
         flavor_ids: (addition.pizza_addition_flavors ?? []).map((item) => item.flavor_id),
         category_ids: (addition.pizza_addition_categories ?? []).map((item) => item.menu_category_id),
@@ -370,14 +378,12 @@ export default async function NuevoPedidoPage() {
     }
   }
 
-  const saleProductRows = (saleProductsResult.data ?? []) as SaleProductRow[];
-  const saleProducts: PosSaleProductOption[] = await Promise.all(
-    saleProductRows.map(async (product) => {
+  const saleProducts: PosSaleProductOption[] = saleProductRows.map((product) => {
       return {
         id: product.id,
         sku: product.sku,
         name: product.name,
-        image_src: await signedCachedImage(product.image_url),
+        image_src: imageSrcByPath.get(product.image_url ?? "") ?? null,
         presentation:
           product.presentation_quantity && product.presentation_unit
             ? formatPresentationQuantity(Number(product.presentation_quantity), product.presentation_unit as StockUnit)
@@ -387,8 +393,7 @@ export default async function NuevoPedidoPage() {
         unit_cost_cop: product.unit_cost_cop === null ? null : Number(product.unit_cost_cop),
         unit: "unit"
       };
-    })
-  );
+    });
   const baseOptions: PosPizzaBaseOption[] = ((baseOptionsResult.data ?? []) as unknown as PizzaBaseOptionRow[]).map((option) => ({
     pizza_size_id: option.pizza_size_id,
     source_kind: option.source_kind,
@@ -447,7 +452,7 @@ export default async function NuevoPedidoPage() {
   }
   const productById = new Map(saleProducts.map((product) => [product.id, product]));
   const combos: PosComboOption[] = await Promise.all(
-    ((combosResult.data ?? []) as unknown as ComboRow[]).map(async (combo) => {
+    comboRows.map(async (combo) => {
       const variants = (combo.combo_variants ?? [])
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
         .map((variant) => ({
@@ -512,7 +517,7 @@ export default async function NuevoPedidoPage() {
         sku: combo.sku,
         name: combo.name,
         description: combo.description,
-        image_src: await signedCachedImage(combo.image_url),
+        image_src: imageSrcByPath.get(combo.image_url ?? "") ?? null,
         sale_price_cop: variants.length ? Math.min(...variants.map((variant) => variant.sale_price_cop)) : Number(combo.sale_price_cop ?? 0),
         normal_price_cop: normalPrice,
         variants
@@ -523,7 +528,7 @@ export default async function NuevoPedidoPage() {
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos={!posImagesResult.error} canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

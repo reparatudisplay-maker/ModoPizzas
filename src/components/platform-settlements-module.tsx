@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState, useSyncExternalStore } from "react";
 import { reconcilePlatformReceivableAction, registerPlatformSettlementAction, savePlatformPaymentSettings, type FormActionState } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 
@@ -21,15 +21,38 @@ type SettlementTab = "pending" | "register" | "didi-billing" | "reconciliation" 
 
 const idle: FormActionState = { status: "idle", message: "" };
 
+const storedPreferenceEvent = "modo-pizzas:stored-preference";
+
+function useStoredPreference<T extends string>(key: string, fallback: T, allowedValues: readonly T[]) {
+  return useSyncExternalStore(
+    (notify) => {
+      const onStorage = (event: StorageEvent) => {
+        if (event.key === key) notify();
+      };
+      window.addEventListener("storage", onStorage);
+      window.addEventListener(storedPreferenceEvent, notify);
+      return () => {
+        window.removeEventListener("storage", onStorage);
+        window.removeEventListener(storedPreferenceEvent, notify);
+      };
+    },
+    () => {
+      const value = window.localStorage.getItem(key);
+      return allowedValues.includes(value as T) ? value as T : fallback;
+    },
+    () => fallback
+  );
+}
+
+function saveStoredPreference(key: string, value: string) {
+  window.localStorage.setItem(key, value);
+  window.dispatchEvent(new Event(storedPreferenceEvent));
+}
+
 export function PlatformSettingsModule({ settings }: { settings: PlatformPaymentSetting[] }) {
-  const [activePlatform, setActivePlatform] = useState<"rappi" | "didi">("rappi");
-  useEffect(() => {
-    const stored = window.localStorage.getItem("modo-pizzas:platform-settings-tab");
-    if (stored === "rappi" || stored === "didi") setActivePlatform(stored);
-  }, []);
+  const activePlatform = useStoredPreference("modo-pizzas:platform-settings-tab", "rappi", ["rappi", "didi"] as const);
   const selectPlatform = (platform: "rappi" | "didi") => {
-    setActivePlatform(platform);
-    window.localStorage.setItem("modo-pizzas:platform-settings-tab", platform);
+    saveStoredPreference("modo-pizzas:platform-settings-tab", platform);
   };
   const setting = settings.find((item) => item.platform === activePlatform) ?? settings[0];
   if (!setting) return null;
@@ -44,24 +67,16 @@ export function PlatformSettingsModule({ settings }: { settings: PlatformPayment
 }
 
 export function PlatformSettlementsModule({ receivables, servicePayables }: { receivables: PlatformReceivableRow[]; servicePayables: PlatformServicePayableRow[] }) {
-  const [platform, setPlatform] = useState<"rappi" | "didi">("rappi");
-  const [activeTab, setActiveTab] = useState<SettlementTab>("pending");
+  const platform = useStoredPreference("modo-pizzas:settlements-platform", "rappi", ["rappi", "didi"] as const);
+  const activeTab = useStoredPreference("modo-pizzas:settlements-tab", "pending", ["pending", "register", "didi-billing", "reconciliation", "history"] as const);
   const [selected, setSelected] = useState<string[]>([]);
   const [overrides, setOverrides] = useState<Record<string, { gross: string; commission: string; net: string }>>({});
-  useEffect(() => {
-    const storedTab = window.localStorage.getItem("modo-pizzas:settlements-tab");
-    const storedPlatform = window.localStorage.getItem("modo-pizzas:settlements-platform");
-    if (storedTab === "pending" || storedTab === "register" || storedTab === "didi-billing" || storedTab === "reconciliation" || storedTab === "history") setActiveTab(storedTab);
-    if (storedPlatform === "rappi" || storedPlatform === "didi") setPlatform(storedPlatform);
-  }, []);
   const selectTab = (tab: SettlementTab) => {
-    setActiveTab(tab);
-    window.localStorage.setItem("modo-pizzas:settlements-tab", tab);
+    saveStoredPreference("modo-pizzas:settlements-tab", tab);
   };
   const selectPlatform = (nextPlatform: "rappi" | "didi") => {
-    setPlatform(nextPlatform);
     setSelected([]);
-    window.localStorage.setItem("modo-pizzas:settlements-platform", nextPlatform);
+    saveStoredPreference("modo-pizzas:settlements-platform", nextPlatform);
   };
   const available = receivables.filter((row) => row.platform === platform && row.status === "pending");
   const pendingByPlatform = {

@@ -771,6 +771,17 @@ function revalidateInventory() {
   revalidatePath("/panel/pedidos/nuevo");
 }
 
+function revalidateOrderMutation() {
+  revalidatePath("/panel/inventario");
+  revalidatePath("/panel/compras");
+  revalidatePath("/panel/produccion");
+  revalidatePath("/panel/pedidos");
+  revalidatePath("/panel/pedidos/nuevo");
+  revalidatePath("/panel/cocina");
+  revalidatePath("/panel/caja");
+  revalidatePath("/panel/reportes");
+}
+
 async function relationCount(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, table: string, column: string, value: string) {
   const { count, error } = await supabase.from(table).select("id", { count: "exact", head: true }).eq(column, value);
   if (error) throw new Error(error.message);
@@ -1961,7 +1972,7 @@ async function expandComboItemsForPos(
         });
         if (!allAllowHalf) throw new Error("Los sabores seleccionados no permiten mitad y mitad.");
       }
-      for (const choice of selected) {
+      const resolvedChoices = await Promise.all(selected.map(async (choice) => {
         const sourceGroup = allGroups.find(({ group: candidate }) => candidate.id === choice.group_id)?.group ?? group;
         const option = (sourceGroup.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
         if (!option) throw new Error(`Una opcion de ${group.name} ya no esta disponible.`);
@@ -1976,18 +1987,18 @@ async function expandComboItemsForPos(
           if (priceError) throw new Error(priceError.message);
           if (!price) throw new Error(`La pizza seleccionada en ${group.name} no tiene precio activo.`);
           const sourceVariant = allGroups.find(({ group: candidate }) => candidate.id === sourceGroup.id)?.candidate;
-          expectedChoices.push({ ...choice, variant_id: sourceVariant?.id ?? variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), pizza_slot_order: Number(sourceGroup.sort_order ?? 0), is_half: isHalfSelection, line_key: choice.line_key });
-        } else {
-          const { data: product, error: productError } = await supabase
-            .from("pos_sale_product_references")
-            .select("id, sale_price_cop, sale_is_enabled")
-            .eq("id", option.inventory_item_id)
-            .maybeSingle();
-          if (productError) throw new Error(productError.message);
-          if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
-          expectedChoices.push({ ...choice, variant_id: variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0), line_key: choice.line_key });
+          return { ...choice, variant_id: sourceVariant?.id ?? variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "pizza" as const, id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0), pizza_slot_order: Number(sourceGroup.sort_order ?? 0), is_half: isHalfSelection, line_key: choice.line_key };
         }
-      }
+        const { data: product, error: productError } = await supabase
+          .from("pos_sale_product_references")
+          .select("id, sale_price_cop, sale_is_enabled")
+          .eq("id", option.inventory_item_id)
+          .maybeSingle();
+        if (productError) throw new Error(productError.message);
+        if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
+        return { ...choice, variant_id: variant.id, applied_variant_id: variant.id, applied_variant_name: variant.name, kind: "sale_product" as const, id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0), line_key: choice.line_key };
+      }));
+      expectedChoices.push(...resolvedChoices);
     }
 
     const expectedComponents = collapseComboPizzaHalfChoices(expectedChoices);
@@ -2080,7 +2091,7 @@ async function expandComboItemsForPos(
       if (group.is_required && selected.length !== Number(group.quantity_to_choose ?? 1)) throw new Error(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
       if (selected.length > Number(group.quantity_to_choose ?? 1)) throw new Error(`Hay demasiadas opciones en ${group.name}.`);
 
-      for (const choice of selected) {
+      const resolvedChoices = await Promise.all(selected.map(async (choice) => {
         const option = (group.combo_group_options ?? []).find((candidate: { id: string; is_active: boolean }) => candidate.id === choice.option_id && candidate.is_active);
         if (!option) throw new Error(`Una opcion de ${group.name} ya no esta disponible.`);
         if (group.group_kind === "pizza") {
@@ -2093,31 +2104,34 @@ async function expandComboItemsForPos(
             .maybeSingle();
           if (priceError) throw new Error(priceError.message);
           if (!price) throw new Error(`La pizza seleccionada en ${group.name} no tiene precio activo.`);
-          normalPriceCop += Number(price.sale_price_cop ?? 0);
-          snapshotChoices.push({ ...choice, variant_id: variant.id, kind: "pizza", id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0) });
-          expandedForCombo.push({
-            line_key: `${item.line_key ?? crypto.randomUUID()}:${group.id}:${choice.option_id}`,
-            kind: "pizza",
-            id: price.id,
-            secondary_id: null,
-            quantity: 1,
-            unit_price_cop: 0,
-            notes: `COMBO ${combo.sku}`,
-            removed_components: [],
-            base_override: null,
-            additions: []
-          });
-        } else {
-          const { data: product, error: productError } = await supabase
-            .from("pos_sale_product_references")
-            .select("id, sale_price_cop, sale_is_enabled")
-            .eq("id", option.inventory_item_id)
-            .maybeSingle();
-          if (productError) throw new Error(productError.message);
-          if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
-          normalPriceCop += Number(product.sale_price_cop ?? 0);
-          snapshotChoices.push({ ...choice, variant_id: variant.id, kind: "sale_product", id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0) });
-          expandedForCombo.push({
+          return {
+            price: Number(price.sale_price_cop ?? 0),
+            snapshot: { ...choice, variant_id: variant.id, kind: "pizza" as const, id: price.id, unit_price_cop: Number(price.sale_price_cop ?? 0) },
+            item: {
+              line_key: `${item.line_key ?? crypto.randomUUID()}:${group.id}:${choice.option_id}`,
+              kind: "pizza",
+              id: price.id,
+              secondary_id: null,
+              quantity: 1,
+              unit_price_cop: 0,
+              notes: `COMBO ${combo.sku}`,
+              removed_components: [],
+              base_override: null,
+              additions: []
+            }
+          };
+        }
+        const { data: product, error: productError } = await supabase
+          .from("pos_sale_product_references")
+          .select("id, sale_price_cop, sale_is_enabled")
+          .eq("id", option.inventory_item_id)
+          .maybeSingle();
+        if (productError) throw new Error(productError.message);
+        if (!product?.sale_is_enabled || Number(product.sale_price_cop ?? 0) <= 0) throw new Error(`El producto seleccionado en ${group.name} no esta vendible.`);
+        return {
+          price: Number(product.sale_price_cop ?? 0),
+          snapshot: { ...choice, variant_id: variant.id, kind: "sale_product" as const, id: product.id, unit_price_cop: Number(product.sale_price_cop ?? 0) },
+          item: {
             line_key: `${item.line_key ?? crypto.randomUUID()}:${group.id}:${choice.option_id}`,
             kind: "sale_product",
             id: product.id,
@@ -2125,8 +2139,13 @@ async function expandComboItemsForPos(
             unit_price_cop: 0,
             notes: `COMBO ${combo.sku}`,
             additions: []
-          });
-        }
+          }
+        };
+      }));
+      for (const resolved of resolvedChoices) {
+        normalPriceCop += resolved.price;
+        snapshotChoices.push(resolved.snapshot);
+        expandedForCombo.push(resolved.item);
       }
     }
 
@@ -3375,6 +3394,7 @@ export async function voidPhysicalInventoryCount(
 }
 
 export async function createPosOrder(_previousState: PosOrderActionState, formData: FormData): Promise<PosOrderActionState> {
+  const performanceStartedAt = performance.now();
   const supabase = await createServerSupabaseClient();
   const kind = getString(formData, "kind");
   const paymentMethod = getString(formData, "payment_method");
@@ -3561,7 +3581,6 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   });
   const invalidDirectSale = directSalesPayload.find((item) => item.payload === null);
   if (invalidDirectSale) return { status: "error", message: `La venta libre tiene campos inválidos: ${invalidDirectSale.invalidFields.join(", ")}.` };
-
   const platformPaymentArgs = {
     p_kind: kind,
     p_customer_name: upperText(customerName),
@@ -3579,6 +3598,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     p_cash_change_cop: paymentMethod === "cash" ? cashChangeCop : null
   };
   const platformServiceArgs = { ...platformPaymentArgs, p_platform_service: platformService };
+  const validationCompletedAt = performance.now();
   let data: unknown;
   let error: { code?: string; message: string; details?: string | null } | null;
   if (packagingQuantities.length > 0) {
@@ -3646,6 +3666,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     return { status: "error", message: error.message };
   }
   const order = data as PosOrderActionState["order"];
+  const transactionCompletedAt = performance.now();
   let postCreateWarning: string | null = null;
   if (order?.id && tableId) {
     const { error: tableError } = await supabase.rpc("assign_pos_order_table", {
@@ -3680,11 +3701,19 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     if (snapshotError) return { status: "error", message: `Pedido creado, pero no se pudo guardar el resumen del combo: ${snapshotError.message}` };
   }
 
-  revalidateInventory();
-  if (operationalSaleAt) {
-    revalidatePath("/panel/pedidos");
-    revalidatePath("/panel/caja");
-    revalidatePath("/panel/reportes");
+  const postWriteCompletedAt = performance.now();
+  revalidateOrderMutation();
+  const revalidationCompletedAt = performance.now();
+  if (process.env.POS_ORDER_PERFORMANCE_LOGS === "true") {
+    // Optional operational telemetry: no order, customer, or inventory identifiers are logged.
+    console.info("[pos-order-performance]", JSON.stringify({
+      event: "confirmation",
+      validation_ms: Math.round(validationCompletedAt - performanceStartedAt),
+      atomic_write_ms: Math.round(transactionCompletedAt - validationCompletedAt),
+      post_write_ms: Math.round(postWriteCompletedAt - transactionCompletedAt),
+      revalidation_ms: Math.round(revalidationCompletedAt - postWriteCompletedAt),
+      total_ms: Math.round(revalidationCompletedAt - performanceStartedAt)
+    }));
   }
   return {
     status: "success",
@@ -3735,7 +3764,7 @@ export async function cancelPosOrder(_previousState: FormActionState, formData: 
   });
 
   if (error) return { status: "error", message: error.message };
-  revalidateInventory();
+  revalidateOrderMutation();
   return { status: "success", message: "Pedido cancelado correctamente." };
 }
 
