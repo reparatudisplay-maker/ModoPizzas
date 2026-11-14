@@ -1,4 +1,4 @@
-import { SalesProfitabilityDashboard, type ReportData } from "@/components/sales-profitability-dashboard";
+import { SalesProfitabilityDashboard, type ReportData, type WebAnalyticsReport } from "@/components/sales-profitability-dashboard";
 import { PanelShell } from "@/components/panel-shell";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -72,12 +72,15 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
   const { range, from, to } = rangeFromParams(params);
   const bucket = bucketFor(range, from, to);
   const previousFrom = new Date(from.getTime() - (to.getTime() - from.getTime()));
-  const [reportResult, comparisonResult] = await Promise.all([
+  const [reportResult, comparisonResult, webAnalyticsResult] = await Promise.all([
     supabase.rpc("get_sales_profitability_report", { p_from: from.toISOString(), p_to: to.toISOString(), p_bucket: bucket }),
-    params.compare === "1" ? supabase.rpc("get_sales_profitability_report", { p_from: previousFrom.toISOString(), p_to: from.toISOString(), p_bucket: bucket }) : Promise.resolve({ data: null, error: null })
+    params.compare === "1" ? supabase.rpc("get_sales_profitability_report", { p_from: previousFrom.toISOString(), p_to: from.toISOString(), p_bucket: bucket }) : Promise.resolve({ data: null, error: null }),
+    supabase.rpc("get_public_web_analytics_report", { p_from: from.toISOString(), p_to: to.toISOString() })
   ]);
   if (reportResult.error) throw new Error(reportResult.error.message);
   if (comparisonResult.error) throw new Error(comparisonResult.error.message);
+  const analyticsUnavailable = webAnalyticsResult.error && /get_public_web_analytics_report|schema cache|does not exist/i.test(webAnalyticsResult.error.message);
+  if (webAnalyticsResult.error && !analyticsUnavailable) throw new Error(webAnalyticsResult.error.message);
 
   return (
     <PanelShell active="reportes-ventas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Ventas y rentabilidad" userEmail={user.email ?? "usuario"}>
@@ -87,6 +90,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
         range={range}
         report={reportResult.data as ReportData}
         to={to.toISOString()}
+        webAnalytics={analyticsUnavailable ? null : webAnalyticsResult.data as WebAnalyticsReport | null}
       />
     </PanelShell>
   );

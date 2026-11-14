@@ -92,7 +92,7 @@ export async function regularizePendingInventoryDebtsFifo(_previousState: FormAc
     : Array.from(new Set(formData.getAll("selected_source_ids").map(String).filter(Boolean)));
   if (selectedSourceIds.length === 0) return { status: "error", message: "Selecciona al menos un producto para regularizar." };
 
-  const allowShortage = requestedSourceId || formData.get("allow_shortage") === "true";
+  const allowShortage = Boolean(requestedSourceId) || formData.get("allow_shortage") === "true";
   const { data, error } = await supabase.rpc("regularize_pending_pos_inventory_debts_fifo_selected", {
     p_source_ids: selectedSourceIds,
     p_allow_shortage: allowShortage,
@@ -3417,6 +3417,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const packagingAdjustmentsRaw = getString(formData, "packaging_adjustments");
   const pickupMode = getString(formData, "pickup_mode") || "pickup";
   const allowPendingStock = getString(formData, "allow_pending_stock") === "true";
+  const replacePendingOrderId = getOptionalString(formData, "replace_pending_order_id");
 
   if (!["local", "pickup", "delivery"].includes(kind)) return { status: "error", message: "Selecciona el tipo de pedido." };
   if (tableId && kind !== "local") return { status: "error", message: "La mesa solo aplica para consumo en local." };
@@ -3601,7 +3602,19 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const validationCompletedAt = performance.now();
   let data: unknown;
   let error: { code?: string; message: string; details?: string | null } | null;
-  if (packagingQuantities.length > 0) {
+  if (replacePendingOrderId) {
+    ({ data, error } = await supabase.rpc("replace_pending_pos_order_with_packaging", {
+      p_original_order_id: replacePendingOrderId,
+      ...platformServiceArgs,
+      p_items: directSaleItems.length > 0 ? operationalItems : rpcItems,
+      p_pickup_mode: pickupMode,
+      p_line_pricing: platformLinePricing,
+      p_direct_sales: directSalesPayload.flatMap((item) => item.payload ? [item.payload] : []),
+      p_allow_pending_stock: allowPendingStock,
+      p_packaging_quantities: packagingQuantities
+    }));
+    if (error?.code === "PGRST202") return { status: "error", message: "La edición de pedidos pendientes estará disponible cuando se aplique la actualización pendiente." };
+  } else if (packagingQuantities.length > 0) {
     ({ data, error } = await supabase.rpc("create_pos_order_with_packaging", {
       ...platformServiceArgs,
       p_items: directSaleItems.length > 0 ? operationalItems : rpcItems,
@@ -3675,7 +3688,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
     });
     if (tableError) postCreateWarning = `El pedido fue confirmado, pero no se pudo asignar la mesa: ${tableError.message}`;
   }
-  if (order?.id && operationalSaleAt) {
+  if (order?.id && operationalSaleAt && !replacePendingOrderId) {
     const { error: operationalDateError } = await supabase.rpc("update_pos_order_operational_date", {
       p_order_id: order.id,
       p_ordered_at: operationalSaleAt
@@ -3717,7 +3730,7 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   }
   return {
     status: "success",
-    message: postCreateWarning ?? "Pedido confirmado correctamente.",
+    message: postCreateWarning ?? (replacePendingOrderId ? "Pedido pendiente actualizado correctamente." : "Pedido confirmado correctamente."),
     order
   };
 }

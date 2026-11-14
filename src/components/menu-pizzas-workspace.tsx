@@ -445,7 +445,12 @@ export function MenuPizzasWorkspace({
         </section>
       ) : section === "gramajes" ? (
         <section className="form-panel">
-          <PizzaSizeComponentQuantitiesWorkspace baseSources={baseSources} componentQuantities={componentQuantities} sizes={sizes} sources={baseSourceOptions} />
+          <PizzaSizeComponentQuantitiesWorkspace
+            baseSources={baseSources}
+            componentQuantities={componentQuantities}
+            sizes={sizes.filter((size) => size.is_active)}
+            sources={baseSourceOptions}
+          />
         </section>
       ) : (
       <section className="form-panel">

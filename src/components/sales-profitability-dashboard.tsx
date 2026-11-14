@@ -1,15 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, ChevronRight, CircleDollarSign, Package, Pizza, ReceiptText, TrendingDown, TrendingUp, Users, X } from "lucide-react";
+import { BarChart3, ChevronRight, CircleDollarSign, MonitorSmartphone, Package, Pizza, ReceiptText, TrendingDown, TrendingUp, Users, X } from "lucide-react";
 import { formatCop } from "@/lib/format";
 
 type Summary = { gross_sales_cop: number; discounts_cop: number; sales_cop: number; cost_cop: number; gross_profit_cop: number; expenses_cop: number; operating_result_cop: number; gross_margin_pct: number | null; operating_margin_pct: number | null; orders: number; average_ticket_cop: number; cancelled_orders: number; cancelled_amount_cop: number };
 type MetricRow = { name: string; units: number; sales_cop: number; cost_cop: number; profit_cop: number; margin_pct: number | null };
 type ReportRow = { label?: string; sales_cop?: number; cost_cop?: number; gross_profit_cop?: number; orders?: number; hour?: number; profit_cop?: number; category?: string; amount_cop?: number; count?: number; kind?: string; ticket_cop?: number; method?: string };
 export type ReportData = { summary: Summary; series: ReportRow[]; pizzas: MetricRow[]; products: MetricRow[]; additions: MetricRow[]; expenses: ReportRow[]; types: ReportRow[]; payments: ReportRow[]; users: Array<{ name: string; orders: number; sales_cop: number; cost_cop: number; profit_cop: number; ticket_cop: number }>; hours: ReportRow[]; cancellations: Array<{ code: string; amount_cop: number; reason: string | null; cancelled_at: string; user: string }> };
+export type WebAnalyticsReport = { summary?: { visits?: number; interactions?: number; product_consults?: number; commercial_clicks?: number }; timeline?: Array<{ label?: string; visits?: number; interactions?: number }>; products?: Array<{ name?: string; kind?: string; count?: number }>; ctas?: Array<{ name?: string; count?: number }>; browsers?: Array<{ name?: string; count?: number }>; devices?: Array<{ name?: string; count?: number }>; operating_systems?: Array<{ name?: string; count?: number }>; locations?: Array<{ city?: string; country?: string; count?: number }> };
 
-const tabs = ["Resumen", "Pizzas", "Productos", "Gastos", "Horarios", "Usuarios"] as const;
+const tabs = ["Resumen", "Pizzas", "Productos", "Gastos", "Horarios", "Usuarios", "Analítica web"] as const;
 type Tab = (typeof tabs)[number];
 
 function pct(value: number | null | undefined) { return value === null || value === undefined ? "—" : `${value.toLocaleString("es-CO", { maximumFractionDigits: 1 })}%`; }
@@ -18,7 +19,7 @@ function kindLabel(kind?: string) { return kind === "local" ? "Consumo local" : 
 function paymentLabel(method?: string) { return ({ cash: "Efectivo", transfer: "Transferencia", mixed: "Mixto", pending: "Pendiente" } as Record<string, string>)[method ?? ""] ?? method ?? "—"; }
 function localDateInput(value: string) { return new Date(value).toISOString().slice(0, 16); }
 
-export function SalesProfitabilityDashboard({ report, comparison, range, from, to }: { report: ReportData; comparison: ReportData | null; range: string; from: string; to: string }) {
+export function SalesProfitabilityDashboard({ report, comparison, range, from, to, webAnalytics }: { report: ReportData; comparison: ReportData | null; range: string; from: string; to: string; webAnalytics: WebAnalyticsReport | null }) {
   const [tab, setTab] = useState<Tab>("Resumen");
   const [metric, setMetric] = useState<"sales_cop" | "gross_profit_cop" | "orders">("sales_cop");
   const [detail, setDetail] = useState<MetricRow | null>(null);
@@ -74,9 +75,42 @@ export function SalesProfitabilityDashboard({ report, comparison, range, from, t
     {tab === "Gastos" ? <section className="report-grid"><section className="report-card"><h2>Gastos por categoría</h2><Breakdown rows={report.expenses} label={(row) => row.category ?? "Sin categoría"} /></section><section className="report-card"><h2>Resultado del período</h2><div className="report-statement"><span>Ventas brutas<strong>{formatCop(summary.gross_sales_cop ?? summary.sales_cop)}</strong></span><span>Descuentos<strong>-{formatCop(summary.discounts_cop ?? 0)}</strong></span><span>Ventas netas<strong>{formatCop(summary.sales_cop)}</strong></span><span>Costo de ventas<strong>-{formatCop(summary.cost_cop)}</strong></span><span>Utilidad bruta<strong>{formatCop(summary.gross_profit_cop)}</strong></span><span>Gastos<strong>-{formatCop(summary.expenses_cop)}</strong></span><span className="result">Resultado operativo<strong>{formatCop(summary.operating_result_cop)}</strong></span></div></section></section> : null}
     {tab === "Horarios" ? <section className="report-card"><h2>Ventas por hora</h2><div className="hour-grid">{Array.from({ length: 24 }, (_, hour) => { const row = report.hours.find((item) => item.hour === hour); return <div className={row?.sales_cop ? "active" : ""} key={hour}><small>{hour}:00</small><strong>{row?.sales_cop ? formatCop(row.sales_cop) : "—"}</strong><span>{number(row?.orders)} pedidos</span></div>; })}</div></section> : null}
     {tab === "Usuarios" ? <><Ranking title="Usuarios / cajeros" rows={report.users.map((user) => ({ ...user, margin_pct: user.sales_cop ? user.profit_cop * 100 / user.sales_cop : null, units: user.orders }))} onDetail={setDetail} icon={Users} /><section className="report-card"><h2>Cancelaciones</h2>{report.cancellations.length ? <div className="report-list">{report.cancellations.map((row) => <span key={row.code}><strong>{row.code}</strong><em>{row.user}</em><small>{row.reason ?? "Sin motivo"}</small><b>{formatCop(row.amount_cop)}</b></span>)}</div> : <Empty text="No hubo pedidos cancelados." />}</section></> : null}
+    {tab === "Analítica web" ? <WebAnalytics analytics={webAnalytics} /> : null}
     {detail ? <MetricDetailModal row={detail} onClose={() => setDetail(null)} /> : null}
   </section>;
 }
+
+function WebAnalytics({ analytics }: { analytics: WebAnalyticsReport | null }) {
+  const summary = analytics?.summary ?? {};
+  const timeline = analytics?.timeline ?? [];
+  const count = (row: { visits?: number; interactions?: number }) => Number(row.visits ?? 0) + Number(row.interactions ?? 0);
+  const max = Math.max(1, ...timeline.map(count));
+  return <section className="web-analytics-dashboard">
+    <section className="report-card web-analytics-intro"><div><h2><MonitorSmartphone size={20} />Analítica web</h2><p>Actividad agregada de la web pública para el período seleccionado.</p></div><small>No se calculan visitantes únicos ni se almacenan identificadores personales.</small></section>
+    <div className="report-kpis">
+      <Kpi label="Visitas de página" value={number(summary.visits)} />
+      <Kpi label="Interacciones" value={number(summary.interactions)} />
+      <Kpi label="Productos consultados" value={number(summary.product_consults)} />
+      <Kpi label="Clics comerciales" value={number(summary.commercial_clicks)} />
+    </div>
+    <section className="report-card report-chart"><div className="report-card-title"><div><h2>Actividad por hora</h2><p>Visitas e interacciones agrupadas por hora de Colombia.</p></div></div><div className="report-bars web-analytics-bars">{timeline.length ? timeline.map((row, index) => <div className="report-bar" key={`${row.label}-${index}`}><span title={`${number(count(row))} eventos`} style={{ height: `${Math.max(4, count(row) * 100 / max)}%` }} /><small>{row.label}</small></div>) : <Empty />}</div></section>
+    <div className="report-grid web-analytics-grid">
+      <AnalyticsList title="Más consultados" rows={analytics?.products ?? []} label={(row) => row.name ?? "Sin referencia"} />
+      <AnalyticsList title="Acciones comerciales" rows={analytics?.ctas ?? []} label={(row) => ctaLabel(row.name)} />
+      <AnalyticsList title="Navegadores" rows={analytics?.browsers ?? []} label={(row) => row.name ?? "Otro"} />
+      <AnalyticsList title="Dispositivos" rows={analytics?.devices ?? []} label={(row) => deviceLabel(row.name)} />
+      <AnalyticsList title="Sistemas operativos" rows={analytics?.operating_systems ?? []} label={(row) => row.name ?? "Otro"} />
+      <AnalyticsList title="Ubicación agregada" rows={analytics?.locations ?? []} label={(row) => [row.city, row.country].filter(Boolean).join(", ") || "Sin ubicación"} />
+    </div>
+  </section>;
+}
+
+function AnalyticsList<T extends { count?: number },>({ title, rows, label }: { title: string; rows: T[]; label: (row: T) => string }) {
+  return <section className="report-card web-analytics-list"><div className="report-card-title"><h2>{title}</h2><span>{number(rows.reduce((sum, row) => sum + Number(row.count ?? 0), 0))}</span></div>{rows.length ? <div className="report-list">{rows.map((row, index) => <span key={`${label(row)}-${index}`}><strong>{label(row)}</strong><b>{number(row.count)}</b></span>)}</div> : <Empty />}</section>;
+}
+
+function ctaLabel(action?: string) { return ({ order_now: "Pedir ahora", menu: "Ver menú", whatsapp: "WhatsApp", checkout_whatsapp: "Enviar por WhatsApp", checkout_direct: "Enviar pedido directo" } as Record<string, string>)[action ?? ""] ?? action ?? "Otra acción"; }
+function deviceLabel(name?: string) { return ({ desktop: "PC", mobile: "Móvil", tablet: "Tableta", other: "Otro" } as Record<string, string>)[name ?? ""] ?? name ?? "Otro"; }
 
 function Kpi({ label, value, icon: Icon, positive, priority, change }: { label: string; value: string; icon?: typeof TrendingUp; positive?: boolean; priority?: boolean; change?: number | null }) { return <article className={["report-kpi", positive ? "positive" : "", priority ? "priority" : ""].join(" ")}>{Icon ? <Icon size={20} /> : null}<span>{label}</span><strong>{value}</strong>{change !== null && change !== undefined ? <small className={change >= 0 ? "up" : "down"}>{change >= 0 ? "+" : ""}{pct(change)} vs. anterior</small> : null}</article>; }
 function Empty({ text = "Sin datos para este período." }: { text?: string }) { return <p className="report-empty">{text}</p>; }

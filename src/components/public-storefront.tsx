@@ -8,6 +8,7 @@ import { formatCop } from "@/lib/format";
 import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 import type { PosComboOption } from "@/components/pos-order-workspace";
 import { PublicAuthModal } from "@/components/public-auth-modal";
+import { usePublicWebAnalytics, type PublicAnalyticsEvent } from "@/components/public-web-analytics";
 import { createClient } from "@/lib/supabase-browser";
 
 type Ingredient = { source_kind: "inventory_item" | "preparation"; source_id: string; name: string };
@@ -43,6 +44,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
   const [heroIndex, setHeroIndex] = useState(0);
   const [selectedCombo, setSelectedCombo] = useState<PosComboOption | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const trackAnalytics = usePublicWebAnalytics();
   const pizzaGroups = useMemo(() => groupPizzas(catalog.pizzas), [catalog.pizzas]);
   const heroGroups = useMemo(() => pizzaGroups.filter((group) => group.price.image_url).slice(0, 6), [pizzaGroups]);
   useEffect(() => { if (heroGroups.length < 2) return; const timer = window.setInterval(() => setHeroIndex((current) => (current + 1) % heroGroups.length), 5000); return () => window.clearInterval(timer); }, [heroGroups.length]);
@@ -139,7 +141,7 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
         <span className="public-eyebrow"><Sparkles size={14}/> PROMOCIÓN ESPECIAL DE DICIEMBRE</span>
         <h1><span>Navidad llegó a</span><em>Modo Pizzas</em></h1>
         <p>Comparte el sabor que une esta temporada: pizzas recién horneadas, promociones únicas y combos para disfrutar en familia.</p>
-        <div className="public-hero-actions"><a className="public-primary" href="#menu">Pedir ahora <ChevronRight size={18}/></a><a className="public-secondary" href="#menu" onClick={() => setCategory("PIZZAS")}>Ver menú</a></div>
+        <div className="public-hero-actions"><a className="public-primary" href="#menu" onClick={() => trackAnalytics({ type: "cta_click", action: "order_now" })}>Pedir ahora <ChevronRight size={18}/></a><a className="public-secondary" href="#menu" onClick={() => { setCategory("PIZZAS"); trackAnalytics({ type: "cta_click", action: "menu" }); }}>Ver menú</a></div>
         <div className="public-hero-benefits"><span><Flame size={23}/><b>HORNEADA<br/>AL MOMENTO</b></span><span><Leaf size={23}/><b>INGREDIENTES<br/>DE CALIDAD</b></span><span><Star size={23}/><b>SABORES QUE<br/>TE CONQUISTAN</b></span></div>
       </div>
       <div className="public-hero-photo" aria-live="polite">
@@ -159,14 +161,14 @@ export function PublicStorefront({ catalog, catalogUnavailable = false, customer
       </div>
       <a className="public-holiday-cta" href="#combos">Descubre los combos <ChevronRight size={17}/></a>
     </section>
-    <section className="public-menu" id="menu"><div className="public-section-heading"><span>NUESTRO MENÚ</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menú" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => setSelectedPizza(group.prices[0])}/>)}</div> : null}{visibleCombos.length && category === "PIZZAS" ? <section className="public-holiday-combos" id="combos"><div className="public-holiday-combos-heading"><div><span>PARA COMPARTIR</span><h2>Combos navideños</h2></div><a href="#menu">Ver todo el menú <ChevronRight size={16}/></a></div><div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => setSelectedCombo(combo)}/>)}</div></section> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => addProduct(product)}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PIZZAS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
+    <section className="public-menu" id="menu"><div className="public-section-heading"><span>NUESTRO MENÚ</span><h2>ELIGE TU FAVORITA</h2></div>{catalogUnavailable ? <p className="public-catalog-notice">Estamos preparando el menu en linea. Vuelve en unos minutos.</p> : <><div className="public-menu-tools"><div className="public-category-strip">{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)} type="button">{item}</button>)}</div><label className="public-search"><Search size={18}/><input onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en el menú" value={query}/></label></div>{visiblePizzas.length ? <div className="public-card-grid">{visiblePizzas.map((group) => <PizzaCard group={group} key={group.id} onOrder={() => { trackAnalytics({ type: "product_view", action: "view", entityKind: "pizza_price", entityId: group.prices[0].id }); setSelectedPizza(group.prices[0]); }}/>)}</div> : null}{visibleCombos.length && category === "PIZZAS" ? <section className="public-holiday-combos" id="combos"><div className="public-holiday-combos-heading"><div><span>PARA COMPARTIR</span><h2>Combos navideños</h2></div><a href="#menu">Ver todo el menú <ChevronRight size={16}/></a></div><div className="public-combo-grid">{visibleCombos.map((combo) => <PublicPromotionalComboCard combo={combo} key={combo.id} onChoose={() => { trackAnalytics({ type: "combo_select", action: "select", entityKind: "combo", entityId: combo.id }); setSelectedCombo(combo); }}/>)}</div></section> : null}{visibleProducts.length ? <><div className="public-subheading"><span/><h3>Bebidas y productos</h3><span/></div><div className="public-product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={() => { trackAnalytics({ type: "product_view", action: "view", entityKind: "sale_product", entityId: product.id }); addProduct(product); }}/>)}</div></> : null}{!visiblePizzas.length && !(visibleCombos.length && category === "PIZZAS") && !visibleProducts.length ? <p className="public-empty">No encontramos opciones con esa busqueda.</p> : null}</>}</section>
     <BusinessSection business={catalog.business} />
     <PublicFooter business={catalog.business} />
-    {whatsapp ? <a aria-label="Escribir por WhatsApp" className="public-whatsapp-float" href={`https://wa.me/${whatsapp}`} rel="noreferrer" target="_blank"><MessageCircle size={24}/><span>WhatsApp</span></a> : null}
+    {whatsapp ? <a aria-label="Escribir por WhatsApp" className="public-whatsapp-float" href={`https://wa.me/${whatsapp}`} onClick={() => trackAnalytics({ type: "cta_click", action: "whatsapp" })} rel="noreferrer" target="_blank"><MessageCircle size={24}/><span>WhatsApp</span></a> : null}
     {cart.length ? <button className="public-mobile-cart" onClick={() => setCartOpen(true)} type="button"><span>{itemCount} {itemCount === 1 ? "producto" : "productos"} · {formatCop(total)}</span><strong>Ver pedido</strong></button> : null}
     {selectedPizza ? <PizzaConfigurator catalog={catalog} existing={editing?.line ?? null} initial={selectedPizza} onAdd={addLine} onClose={() => { setSelectedPizza(null); setEditing(null); }} /> : null}
     {selectedCombo ? <PublicFlavorComboWizard catalog={catalog} combo={selectedCombo} onAdd={addCombo} onClose={() => setSelectedCombo(null)} /> : null}
-    {cartOpen ? <CartDrawer business={catalog.business} cart={cart} customer={customer ?? null} directOrderingEnabled={directOrderingEnabled} onAddProduct={addProduct} onClose={() => setCartOpen(false)} onEditPizza={editPizza} onQuantity={setLineQuantity} onSubmitted={() => { setCart([]); setCartOpen(false); }} products={catalog.products.filter((product) => product.available)} total={total} /> : null}
+    {cartOpen ? <CartDrawer business={catalog.business} cart={cart} customer={customer ?? null} directOrderingEnabled={directOrderingEnabled} onAddProduct={addProduct} onAnalytics={trackAnalytics} onClose={() => setCartOpen(false)} onEditPizza={editPizza} onQuantity={setLineQuantity} onSubmitted={() => { setCart([]); setCartOpen(false); }} products={catalog.products.filter((product) => product.available)} total={total} /> : null}
     {authOpen ? <PublicAuthModal onClose={() => setAuthOpen(false)} /> : null}
   </main>;
 }
@@ -384,7 +386,7 @@ function PizzaConfigurator({ catalog, existing, initial, onAdd, onClose }: { cat
   return <div className="public-overlay"><section aria-label="Configura tu pizza" aria-modal="true" className="public-configurator" role="dialog"><header><div><span>Paso {step} de {totalSteps}</span><h2>{title}</h2></div><button aria-label="Cerrar" onClick={onClose} type="button"><X/></button></header><div className="public-step-progress">{Array.from({ length: totalSteps }, (_, index) => <i className={index < step ? "active" : ""} key={index}/>)}</div>{summary}<div className="public-config-body">{renderStep()}</div><footer>{step > 1 ? <button className="public-secondary public-back" onClick={previousStep} type="button">Atras</button> : <span/>}{isReview ? <button className="public-primary" onClick={finishPizza} type="button">Agregar al carrito · {formatCop(totalToCart)}</button> : <button className="public-primary" disabled={mode === "half" && step === 3 && !second} onClick={nextStep} type="button">Continuar <ChevronRight size={18}/></button>}</footer></section></div>;
 }
 
-function CartDrawer({ business, cart, customer, directOrderingEnabled, products, total, onClose, onQuantity, onAddProduct, onEditPizza, onSubmitted }: { business: PublicBusinessInfo; cart: CartLine[]; customer: PublicCustomer | null; directOrderingEnabled: boolean; products: PublicProduct[]; total: number; onClose: () => void; onQuantity: (key: string, quantity: number) => void; onAddProduct: (product: PublicProduct) => void; onEditPizza: (line: CartLine) => void; onSubmitted: () => void }) {
+function CartDrawer({ business, cart, customer, directOrderingEnabled, products, total, onClose, onQuantity, onAddProduct, onEditPizza, onSubmitted, onAnalytics }: { business: PublicBusinessInfo; cart: CartLine[]; customer: PublicCustomer | null; directOrderingEnabled: boolean; products: PublicProduct[]; total: number; onClose: () => void; onQuantity: (key: string, quantity: number) => void; onAddProduct: (product: PublicProduct) => void; onEditPizza: (line: CartLine) => void; onSubmitted: () => void; onAnalytics: (event: PublicAnalyticsEvent) => void }) {
   const [kind, setKind] = useState<"pickup" | "delivery">("pickup");
   const [customerName, setCustomerName] = useState(customer?.full_name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
@@ -444,11 +446,13 @@ function CartDrawer({ business, cart, customer, directOrderingEnabled, products,
     if (!validateCheckout()) return;
     if (customer && !(await saveRequest("whatsapp"))) return;
     if (!whatsapp) { setSubmissionError("WhatsApp no está configurado todavía."); return; }
+    onAnalytics({ type: "cta_click", action: "checkout_whatsapp" });
     window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   }
 
   async function sendDirect() {
     if (!(await saveRequest("direct"))) return;
+    onAnalytics({ type: "cta_click", action: "checkout_direct" });
     onSubmitted();
   }
 

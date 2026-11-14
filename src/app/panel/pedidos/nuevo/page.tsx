@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type PosAdditionOption, type PosComboOption, type PosOrderTableOption, type PosPackagingRule, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type CartLine, type PosAdditionOption, type PosComboOption, type PosEditablePendingOrder, type PosOrderTableOption, type PosPackagingRule, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -111,6 +111,49 @@ type PendingPaymentRow = {
   total_cop: number | string;
 };
 
+type EditablePendingOrderRow = {
+  id: string;
+  code: string;
+  kind: "local" | "pickup" | "delivery";
+  customer_name: string | null;
+  customer_phone: string | null;
+  notes: string | null;
+  discount_cop: number | string;
+  ordered_at: string;
+  table_id: string | null;
+  source_channel: string;
+  collection_party: string;
+  pos_order_items: Array<{
+    id: string;
+    item_kind: "pizza" | "sale_product" | "free_sale";
+    pizza_price_config_id: string | null;
+    inventory_item_id: string | null;
+    cart_line_key: string | null;
+    quantity: number | string;
+    product_name_snapshot: string;
+    sku_snapshot: string | null;
+    unit_price_cop: number | string;
+    notes: string | null;
+    pos_order_item_additions: Array<{
+      addition_id: string;
+      name_snapshot: string;
+      sku_snapshot: string | null;
+      quantity: number | string;
+      unit_price_cop: number | string;
+    }>;
+  }>;
+  pos_order_combo_snapshots: Array<{ id: string }>;
+  direct_sale_purchases: Array<{
+    id: string;
+    order_item_id: string;
+    inventory_item_id: string | null;
+    acquisition_unit_cost_cop: number | string;
+    funds_origin: "cash_session" | "external";
+    observation: string | null;
+    cash_movement_id: string | null;
+  }>;
+  kitchen_order_items: Array<{ status: string }>;
+};
 
 type PackagingRuleRow = {
   id: string;
@@ -203,9 +246,10 @@ function relationName(relation: { name: string } | { name: string }[] | null) {
   return relation?.name ?? null;
 }
 
-export default async function NuevoPedidoPage() {
+export default async function NuevoPedidoPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const supabase = await createServerSupabaseClient();
   const { user, roleNames, moduleKeys } = await requirePanelAccess(supabase, "pedidos");
+  const { edit: editOrderId } = await searchParams;
 
   const [
     flavorsResult,
@@ -525,10 +569,136 @@ export default async function NuevoPedidoPage() {
     })
   );
 
+  let editingOrder: PosEditablePendingOrder | null = null;
+  let editError = "";
+  if (editOrderId) {
+    const { data, error: pendingOrderError } = await supabase
+      .from("pos_orders")
+      .select("id, code, kind, customer_name, customer_phone, notes, discount_cop, ordered_at, table_id, source_channel, collection_party, pos_order_items(id, item_kind, pizza_price_config_id, inventory_item_id, cart_line_key, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, notes, pos_order_item_additions(addition_id, name_snapshot, sku_snapshot, quantity, unit_price_cop)), pos_order_combo_snapshots(id), direct_sale_purchases(id, order_item_id, inventory_item_id, acquisition_unit_cost_cop, funds_origin, observation, cash_movement_id), kitchen_order_items(status)")
+      .eq("id", editOrderId)
+      .eq("payment_method", "pending")
+      .neq("status", "cancelled")
+      .maybeSingle();
+    const pendingOrder = data as unknown as EditablePendingOrderRow | null;
+    if (pendingOrderError || !pendingOrder) {
+      editError = pendingOrderError?.message ?? "El pedido pendiente ya no está disponible para edición.";
+    } else if (pendingOrder.source_channel !== "direct" || pendingOrder.collection_party !== "business") {
+      editError = "Solo se pueden editar pedidos pendientes de cobro directo.";
+    } else if (pendingOrder.pos_order_combo_snapshots.length > 0) {
+      editError = "Los combos pendientes todavía no se pueden editar de forma segura desde cobros pendientes.";
+    } else if (pendingOrder.direct_sale_purchases.some((purchase) => purchase.cash_movement_id)) {
+      editError = "Este pedido incluye una venta libre pagada desde caja y no se puede reemplazar sin alterar su movimiento de caja.";
+    } else if (pendingOrder.kitchen_order_items.some((item) => item.status !== "pending")) {
+      editError = "No se puede editar un pedido cuya preparación ya fue iniciada.";
+    } else {
+      const directPurchasesByOrderItemId = new Map(pendingOrder.direct_sale_purchases.map((purchase) => [purchase.order_item_id, purchase]));
+      const cart = pendingOrder.pos_order_items.map((item, index): CartLine | null => {
+        if (item.item_kind === "pizza") {
+          const pizzaWithPrice = pizzas
+            .flatMap((pizza) => pizza.prices.map((price) => ({ pizza, price })))
+            .find((entry) => entry.price.id === item.pizza_price_config_id);
+          if (!pizzaWithPrice || !pizzaWithPrice.price.id) return null;
+          const snapshotWithoutSize = item.product_name_snapshot.endsWith(` ${pizzaWithPrice.price.size_name}`)
+            ? item.product_name_snapshot.slice(0, -(` ${pizzaWithPrice.price.size_name}`).length)
+            : item.product_name_snapshot;
+          const pizzaFlavors = snapshotWithoutSize.split(" / ");
+          const secondaryFlavorName = pizzaFlavors.length === 2 ? pizzaFlavors[1] : null;
+          const secondaryPrice = secondaryFlavorName
+            ? pizzas.find((pizza) => pizza.flavor_name === secondaryFlavorName)?.prices.find((price) => price.size_id === pizzaWithPrice.price.size_id && price.id)
+            : null;
+          if (secondaryFlavorName && !secondaryPrice?.id) return null;
+          return {
+            key: item.cart_line_key ?? `edit-${item.id}`,
+            signature: `edit-${item.id}-${index}`,
+            kind: "pizza",
+            id: pizzaWithPrice.price.id,
+            secondary_id: secondaryPrice?.id ?? null,
+            name: item.product_name_snapshot,
+            sku: pizzaWithPrice.price.sku,
+            image_src: pizzaWithPrice.pizza.image_src,
+            quantity: Number(item.quantity),
+            unit_price_cop: Number(item.unit_price_cop),
+            notes: item.notes ?? undefined,
+            additions: item.pos_order_item_additions.map((addition, additionIndex) => {
+              const configured = additions.find((candidate) => candidate.id === addition.addition_id && candidate.size_id === pizzaWithPrice.price.size_id)
+                ?? additions.find((candidate) => candidate.id === addition.addition_id);
+              return {
+                key: `edit-${item.id}-addition-${additionIndex}`,
+                id: addition.addition_id,
+                name: configured?.name ?? addition.name_snapshot,
+                sku: configured?.sku ?? addition.sku_snapshot ?? "",
+                quantity: Number(addition.quantity),
+                unit_price_cop: Number(addition.unit_price_cop),
+                scope: "whole"
+              };
+            })
+          };
+        }
+        if (item.item_kind === "free_sale") {
+          const purchase = directPurchasesByOrderItemId.get(item.id);
+          if (!purchase || !item.cart_line_key) return null;
+          return {
+            key: item.cart_line_key,
+            signature: `edit-${item.id}-${index}`,
+            kind: "direct_sale",
+            id: `direct-${item.id}`,
+            name: item.product_name_snapshot,
+            sku: item.sku_snapshot,
+            image_src: null,
+            quantity: Number(item.quantity),
+            unit_price_cop: Number(item.unit_price_cop),
+            notes: item.notes ?? undefined,
+            additions: [],
+            direct_sale: {
+              inventory_item_id: purchase.inventory_item_id,
+              acquisition_unit_cost_cop: Number(purchase.acquisition_unit_cost_cop),
+              funds_origin: purchase.funds_origin,
+              observation: purchase.observation ?? ""
+            }
+          };
+        }
+        const product = item.inventory_item_id ? productById.get(item.inventory_item_id) : null;
+        if (!product) return null;
+        return {
+          key: item.cart_line_key ?? `edit-${item.id}`,
+          signature: `edit-${item.id}-${index}`,
+          kind: "sale_product",
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          image_src: product.image_src,
+          quantity: Number(item.quantity),
+          unit_price_cop: Number(item.unit_price_cop),
+          notes: item.notes ?? undefined,
+          additions: []
+        };
+      });
+      if (cart.some((item) => item === null)) {
+        editError = "Este pedido contiene un producto que ya no está disponible para edición.";
+      } else {
+        const saleDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(pendingOrder.ordered_at));
+        editingOrder = {
+          id: pendingOrder.id,
+          code: pendingOrder.code,
+          cart: cart as CartLine[],
+          kind: pendingOrder.kind,
+          pickupMode: "pickup",
+          tableId: pendingOrder.table_id ?? "",
+          customerName: pendingOrder.customer_name ?? "",
+          customerPhone: pendingOrder.customer_phone ?? "",
+          notes: pendingOrder.notes ?? "",
+          discountCop: Number(pendingOrder.discount_cop ?? 0),
+          saleDate
+        };
+      }
+    }
+  }
+
   return (
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
-      <PosOrderWorkspace additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      {editError ? <p className="alert">{editError}</p> : null}
+      <PosOrderWorkspace key={editingOrder?.id ?? "new-order"} additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} editingOrder={editingOrder} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

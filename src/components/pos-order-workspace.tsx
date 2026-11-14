@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
@@ -194,7 +195,7 @@ type ComboComponentDraft = {
   secondary: ComboChoice | null;
 };
 
-type CartAddition = {
+export type CartAddition = {
   key: string;
   id: string;
   name: string;
@@ -205,7 +206,7 @@ type CartAddition = {
   scope_label?: string;
 };
 
-type CartLine = {
+export type CartLine = {
   key: string;
   signature: string;
   kind: "pizza" | "sale_product" | "combo" | "direct_sale";
@@ -241,6 +242,20 @@ type CartLine = {
     funds_origin: DirectFundsOrigin;
     observation: string;
   };
+};
+
+export type PosEditablePendingOrder = {
+  id: string;
+  code: string;
+  cart: CartLine[];
+  kind: OrderKind;
+  pickupMode: PickupMode;
+  tableId: string;
+  customerName: string;
+  customerPhone: string;
+  notes: string;
+  discountCop: number;
+  saleDate: string;
 };
 
 type DirectSaleDraft = {
@@ -567,13 +582,16 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
             <div className="pos-payment-order-section-title"><strong id="pending-payments-title">Pendientes</strong><span>{pendingPayments.length}</span></div>
             {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
               <div className="pos-pending-payments-list">
-                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span /></div>
+                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span>Acciones</span></div>
                 {pendingPayments.map((order) => (
                   <article key={order.id}>
                     <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
                     <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
                     <b>{formatCop(order.total_cop)}</b>
-                    <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
+                    <span className="pos-pending-payment-actions">
+                      <Link aria-label={`Editar ${order.code}`} className="icon-button" href={`/panel/pedidos/nuevo?edit=${encodeURIComponent(order.id)}`} title="Editar pedido pendiente"><Pencil size={15} /></Link>
+                      <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
+                    </span>
                   </article>
                 ))}
               </div>
@@ -652,7 +670,8 @@ export function PosOrderWorkspace({
   paidTodayPayments,
   pendingPayments,
   isSystemAdmin,
-  userId
+  userId,
+  editingOrder
 }: {
   pizzas: PosPizzaOption[];
   additions: PosAdditionOption[];
@@ -669,6 +688,7 @@ export function PosOrderWorkspace({
   pendingPayments: PosPendingPayment[];
   isSystemAdmin: boolean;
   userId: string;
+  editingOrder?: PosEditablePendingOrder | null;
 }) {
   const [state, action] = useActionState(createPosOrder, initialState);
   const [tab, setTab] = useState<CatalogTab>("pizzas");
@@ -681,22 +701,22 @@ export function PosOrderWorkspace({
   const [directSaleDraft, setDirectSaleDraft] = useState<DirectSaleDraft>(emptyDirectSaleDraft);
   const [directSaleError, setDirectSaleError] = useState("");
   const [directSaleQuickActions, setDirectSaleQuickActions] = useState<DirectSaleDraft[]>([]);
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [orderKind, setOrderKind] = useState<OrderKind>("local");
-  const [pickupMode, setPickupMode] = useState<PickupMode>("pickup");
-  const [tableId, setTableId] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [cart, setCart] = useState<CartLine[]>(editingOrder?.cart ?? []);
+  const [orderKind, setOrderKind] = useState<OrderKind>(editingOrder?.kind ?? "local");
+  const [pickupMode, setPickupMode] = useState<PickupMode>(editingOrder?.pickupMode ?? "pickup");
+  const [tableId, setTableId] = useState(editingOrder?.tableId ?? "");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editingOrder ? "pending" : "cash");
   const [orderChannel, setOrderChannel] = useState<OrderChannel>("direct");
   const [didiService, setDidiService] = useState<DidiService>("didi_standard");
   const [didiCollectionParty, setDidiCollectionParty] = useState<CollectionParty>("platform");
   const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | DidiService, Record<string, number>>>({ rappi: {}, didi_standard: {}, didi_tu_negocio: {} });
-  const [saleDate, setSaleDate] = useState(todayBogota);
+  const [saleDate, setSaleDate] = useState(editingOrder?.saleDate ?? todayBogota);
   const [saleDateReady, setSaleDateReady] = useState(!canEditSaleDate);
   const [allowPendingStock, setAllowPendingStock] = useState(false);
   const [delivery, setDelivery] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [notes, setNotes] = useState("");
+  const [customerName, setCustomerName] = useState(editingOrder?.customerName ?? "");
+  const [customerPhone, setCustomerPhone] = useState(editingOrder?.customerPhone ?? "");
+  const [notes, setNotes] = useState(editingOrder?.notes ?? "");
   const [packagingQuantities, setPackagingQuantities] = useState<Record<string, number>>({});
   const [wizard, setWizard] = useState<PizzaWizard | null>(null);
   const [comboWizard, setComboWizard] = useState<PosComboOption | null>(null);
@@ -709,7 +729,7 @@ export function PosOrderWorkspace({
   const [discountModalOpen, setDiscountModalOpen] = useState(false);
   const [discountType, setDiscountType] = useState<DiscountType>("percentage");
   const [discountInput, setDiscountInput] = useState("");
-  const [discount, setDiscount] = useState<AppliedDiscount | null>(null);
+  const [discount, setDiscount] = useState<AppliedDiscount | null>(editingOrder?.discountCop ? { type: "amount", value: editingOrder.discountCop, amount_cop: editingOrder.discountCop } : null);
   const [cashModalOpen, setCashModalOpen] = useState(false);
   const [cashReceived, setCashReceived] = useState("");
   const [cashConfirmed, setCashConfirmed] = useState(false);
@@ -873,10 +893,11 @@ export function PosOrderWorkspace({
       setPaymentSubmitting(false);
       setStockNotice("");
       cashSubmitLockRef.current = false;
-      router.refresh();
+      if (editingOrder) router.replace("/panel/pedidos/nuevo");
+      else router.refresh();
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [printSelection, router, state]);
+  }, [editingOrder, printSelection, router, state]);
 
   useEffect(() => {
     if (state.status !== "error") return;
@@ -1850,6 +1871,8 @@ export function PosOrderWorkspace({
   return (
     <>
       <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
+        {editingOrder ? <input name="replace_pending_order_id" type="hidden" value={editingOrder.id} /> : null}
+        {editingOrder ? <p className="pos-editing-order-notice">Editando {editingOrder.code}. Al guardar, se reemplazará el pedido pendiente y se recalculará su consumo de inventario.</p> : null}
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
         <input name="packaging_adjustments" type="hidden" value={JSON.stringify(packagingEntries.map((entry) => ({ inventory_item_id: entry.inventory_item_id, quantity_base: entry.quantity_base })))} />
         <input name="kind" type="hidden" value={orderKind} />

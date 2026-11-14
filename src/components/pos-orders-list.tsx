@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Ban, CalendarClock, CheckSquare, Eye, Search, Settings, Trash2, WalletCards, X } from "lucide-react";
+import { BadgeCheck, Banknote, Ban, CalendarClock, CheckCircle2, CheckSquare, ChefHat, CircleDollarSign, ClipboardList, CreditCard, Eye, MapPinned, Pizza, ReceiptText, Search, Settings, ShoppingBag, Store, Trash2, UserRound, UserRoundCog, WalletCards, X } from "lucide-react";
 import {
   cancelPosOrder,
   deletePosOrderForTesting,
@@ -841,48 +841,58 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
   const normalizedComboPriceAdjustmentCop = Number.isFinite(comboPriceAdjustmentCop) ? comboPriceAdjustmentCop : 0;
   const hasPriceBreakdown = normalizedComboPriceAdjustmentCop !== 0 || order.discount_cop > 0 || order.delivery_cop > 0;
   const paymentStatus = paymentStatusLabel(order.payment_method);
+  const kitchenStatus = kitchenItems.some((item) => item.status === "pending")
+    ? "pending"
+    : kitchenItems.some((item) => item.status === "in_preparation")
+      ? "in_preparation"
+      : "prepared";
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section aria-label={`Detalle del pedido ${order.code}`} aria-modal="true" className="modal-panel order-detail-modal" role="dialog">
-        <header className="modal-header">
-          <div>
-            <strong>Pedido {order.code}</strong>
-            <span>Venta: {formatDateTime(order.ordered_at)}</span>
+        <header className="modal-header order-detail-header">
+          <div className="order-detail-header-main">
+            <div className="order-detail-header-copy">
+              <span className="order-detail-header-icon"><ShoppingBag size={18} /></span>
+              <div>
+                <h2>Pedido <b>{order.code}</b></h2>
+                <span>Venta: {formatDateTime(order.ordered_at)}</span>
+                <small>Detalle completo del pedido en Modo Pizzas.</small>
+              </div>
+            </div>
+            <div className="order-detail-header-actions">
+              <KitchenTicketPrintButton orderCode={order.code} orderId={order.id} />
+              <CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} />
+              {canEditOperationalDate ? <button className="ghost-button kitchen-ticket-trigger" onClick={onEditDate} type="button"><CalendarClock size={13} /> Editar fecha</button> : null}
+            </div>
           </div>
-          <div className="order-detail-header-actions">
-            <KitchenTicketPrintButton orderCode={order.code} orderId={order.id} />
-            <CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} />
-            {canEditOperationalDate ? <button className="ghost-button kitchen-ticket-trigger" onClick={onEditDate} type="button"><CalendarClock size={15} /> Editar fecha</button> : null}
-            <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
-          </div>
+          <button className="icon-button order-detail-close-button" onClick={onClose} title="Cerrar" type="button"><X size={16} /></button>
+          <section className="order-detail-overview" aria-label="Resumen operativo">
+            <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{order.status === "cancelled" ? <Ban size={14} /> : <CheckCircle2 size={14} />}{statusLabel(order.status)}</span>
+            <span className="order-detail-badge"><Store size={14} />{kindLabel(order.kind)}</span>
+            <span className="order-detail-badge"><Banknote size={14} />{paymentLabel(order.payment_method)}</span>
+            <span className={`order-detail-badge ${order.payment_method === "pending" ? "pending" : ""}`}><BadgeCheck size={14} />{paymentStatus}</span>
+          </section>
         </header>
         <div className="order-detail-content">
-          <section className="order-detail-overview" aria-label="Resumen operativo">
-            <span className="order-detail-code">{order.code}</span>
-            <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span>
-            <span className="order-detail-badge">{kindLabel(order.kind)}</span>
-            <span className="order-detail-badge">{paymentLabel(order.payment_method)}</span>
-            <span className={`order-detail-badge ${order.payment_method === "pending" ? "pending" : ""}`}>{paymentStatus}</span>
-          </section>
 
-          <section className="order-detail-section" aria-label="Información general">
-            <h3>Información general</h3>
+          <section className="order-detail-section order-detail-section-general" aria-label="Información general">
+            <h3><ClipboardList size={19} /> Información general</h3>
             <div className="order-detail-general">
-              <div><span>Cliente</span><strong>{order.customer_name ?? "Sin cliente"}</strong></div>
-              {order.customer_phone ? <div><span>Teléfono</span><strong>{order.customer_phone}</strong></div> : null}
-              <div><span>Registrado por</span><strong>{order.created_by_name}</strong></div>
-              <div><span>Canal</span><strong>{kindLabel(order.kind)}</strong></div>
-              {order.table_name ? <div><span>Mesa</span><strong>{order.table_name}</strong></div> : null}
-              <div><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
-              <div><span>Estado de cobro</span><strong>{paymentStatus}</strong></div>
-              <div><span>Fecha de venta</span><strong>{formatDateTime(order.ordered_at)}</strong></div>
-              <div><span>Registro original</span><strong>{formatDateTime(order.created_at)}</strong></div>
+              <div><UserRound size={16} /><span>Cliente</span><strong>{order.customer_name ?? "Sin cliente"}</strong></div>
+              {order.customer_phone ? <div><UserRound size={16} /><span>Teléfono</span><strong>{order.customer_phone}</strong></div> : null}
+              <div><UserRoundCog size={16} /><span>Registrado por</span><strong>{order.created_by_name}</strong></div>
+              <div><Store size={16} /><span>Canal</span><strong>{kindLabel(order.kind)}</strong></div>
+              <div><MapPinned size={16} /><span>Mesa</span><strong>{order.table_name ?? "Sin mesa"}</strong></div>
+              <div><CreditCard size={16} /><span>Método de pago</span><strong>{paymentLabel(order.payment_method)}</strong></div>
+              <div><BadgeCheck size={16} /><span>Estado de cobro</span><strong>{paymentStatus}</strong></div>
+              <div><CalendarClock size={16} /><span>Fecha de venta</span><strong>{formatDateTime(order.ordered_at)}</strong></div>
+              <div><ReceiptText size={16} /><span>Registro original</span><strong>{formatDateTime(order.created_at)}</strong></div>
             </div>
           </section>
 
-          <section className="order-detail-section" aria-label="Items del pedido">
-            <h3>Items</h3>
+          <section className="order-detail-section order-detail-section-items" aria-label="Items del pedido">
+            <h3><Pizza size={19} /> Items</h3>
             <div className="order-detail-items">
               {order.items.map((item) => {
                 const presentation = item.item_kind === "sale_product" && item.presentation_quantity !== null && item.presentation_unit
@@ -909,29 +919,33 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
             </div>
           </section>
 
-          <section className="order-detail-section" aria-label="Resumen económico">
-            <h3>Resumen económico</h3>
-            <div className="order-detail-summary">
-            <div><span>{hasPriceBreakdown ? "Subtotal normal" : "Subtotal"}</span><strong>{formatCop(order.subtotal_cop)}</strong></div>
-            {normalizedComboPriceAdjustmentCop !== 0 ? <div><span>Ajuste precio combo</span><strong>{formatSignedCop(normalizedComboPriceAdjustmentCop)}</strong></div> : null}
-            {order.discount_cop > 0 ? <div><span>{order.discount_type === "percentage" ? `Descuento (${order.discount_value}%)` : "Descuento"}</span><strong>-{formatCop(order.discount_cop)}</strong></div> : null}
-            {order.delivery_cop > 0 ? <div><span>Domicilio</span><strong>+{formatCop(order.delivery_cop)}</strong></div> : null}
-            <div className="order-detail-total"><span>Total final</span><strong>{formatCop(order.total_cop)}</strong></div>
-            <div><span>Pago</span><strong>{paymentLabel(order.payment_method)} · {paymentStatus}</strong></div>
-            {cashPayment ? <div><span>Efectivo recibido</span><strong>{cashPayment.cash_received_cop === null ? "—" : formatCop(cashPayment.cash_received_cop)}</strong></div> : null}
-            {cashPayment ? <div><span>Cambio</span><strong>{cashPayment.cash_change_cop === null ? "—" : formatCop(cashPayment.cash_change_cop)}</strong></div> : null}
+          <section className="order-detail-section order-detail-section-financial" aria-label="Resumen económico">
+            <h3><CircleDollarSign size={19} /> Resumen económico</h3>
+            <div className="order-detail-financials">
+              <div className="order-detail-summary">
+                <div><span>{hasPriceBreakdown ? "Subtotal normal" : "Subtotal"}</span><strong>{formatCop(order.subtotal_cop)}</strong></div>
+                {normalizedComboPriceAdjustmentCop !== 0 ? <div><span>Ajuste precio combo</span><strong>{formatSignedCop(normalizedComboPriceAdjustmentCop)}</strong></div> : null}
+                {order.discount_cop > 0 ? <div><span>{order.discount_type === "percentage" ? `Descuento (${order.discount_value}%)` : "Descuento"}</span><strong>-{formatCop(order.discount_cop)}</strong></div> : null}
+                {order.delivery_cop > 0 ? <div><span>Domicilio</span><strong>+{formatCop(order.delivery_cop)}</strong></div> : null}
+                <div><span>Pago</span><strong>{paymentLabel(order.payment_method)} · {paymentStatus}</strong></div>
+                {cashPayment ? <div><span>Efectivo recibido</span><strong>{cashPayment.cash_received_cop === null ? "—" : formatCop(cashPayment.cash_received_cop)}</strong></div> : null}
+                {cashPayment ? <div><span>Cambio</span><strong>{cashPayment.cash_change_cop === null ? "—" : formatCop(cashPayment.cash_change_cop)}</strong></div> : null}
+              </div>
+              <div className="order-detail-total-card"><span>Total final</span><strong>{formatCop(order.total_cop)}</strong></div>
             </div>
           </section>
 
           {order.notes?.trim() ? <section className="order-detail-section" aria-label="Observaciones"><h3>Observaciones</h3><p className="order-detail-observations">{order.notes}</p></section> : null}
 
           {kitchenItems.length > 0 ? (
-            <section className="order-detail-section" aria-label="Estado de cocina">
-              <h3>Cocina</h3>
+            <section className="order-detail-section order-detail-section-kitchen" aria-label="Estado de cocina">
+              <div className="order-detail-section-heading">
+                <h3><ChefHat size={19} /> Cocina</h3>
+                <span className={`stock-pill ${kitchenStatus === "prepared" ? "ok" : kitchenStatus === "pending" ? "warning" : ""}`}>{kitchenLabel(kitchenStatus)}</span>
+              </div>
               <div className="order-detail-kitchen-grid">
                 {kitchenItems.map((item, index) => (
                   <div className="order-detail-kitchen" key={`${item.received_at}-${index}`}>
-                    <span className="stock-pill ok">{kitchenLabel(item.status)}</span>
                     <div className="order-detail-kitchen-timeline">
                       <span><b>Recibido</b>{formatDateTime(item.received_at)}</span>
                       <span className={item.started_at ? "complete" : ""}><b>Iniciado</b>{formatDateTime(item.started_at)}</span>
