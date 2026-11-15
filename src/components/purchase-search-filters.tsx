@@ -158,7 +158,7 @@ export function PurchaseSearchFilters({
           </option>
         ))}
       </select>
-      <select defaultValue={currentPeriod} name="periodo" onChange={(event) => updateParams({ periodo: event.target.value === "todos" ? "" : event.target.value })}>
+      <select defaultValue={currentPeriod} name="periodo" onChange={(event) => updateParams({ periodo: event.target.value === "15" ? "" : event.target.value })}>
         <option value="hoy">Hoy</option>
         <option value="semana">Semana</option>
         <option value="15">Ultimos 15 dias</option>

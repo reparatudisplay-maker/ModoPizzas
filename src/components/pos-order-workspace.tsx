@@ -982,6 +982,12 @@ export function PosOrderWorkspace({
     [pizzas]
   );
   const packagingServiceKind = orderKind === "delivery" ? "delivery" : orderKind === "local" ? "local" : pickupMode === "takeaway" ? "takeaway" : "pickup";
+  const canManageCustomer = !(orderKind === "pickup" && pickupMode === "takeaway");
+  useEffect(() => {
+    // A manual packaging exception belongs to its current service. Reset it when
+    // the service changes so the corresponding automatic rule can apply again.
+    setPackagingQuantities({});
+  }, [packagingServiceKind]);
   const automaticPackaging = useMemo(() => {
     const quantities = new Map<string, { name: string; quantity: number }>();
     for (const line of cart) {
@@ -2005,7 +2011,7 @@ export function PosOrderWorkspace({
               {orderKind === "local" ? <label aria-label="Mesa" className="pos-table-selector"><select aria-label="Mesa" onChange={(event) => setTableId(event.target.value)} value={tableId}><option value="">S/M</option>{orderTables.map((table, index) => <option key={table.id} value={table.id}>{`M${index + 1}`}</option>)}</select></label> : null}
             </div>
             <button className={orderKind === "pickup" && pickupMode === "pickup" ? "active" : ""} onClick={() => { setOrderKind("pickup"); setPickupMode("pickup"); setTableId(""); }} type="button"><ShoppingBag size={15} />Recoger</button>
-            <button className={orderKind === "pickup" && pickupMode === "takeaway" ? "active" : ""} onClick={() => { setOrderKind("pickup"); setPickupMode("takeaway"); setTableId(""); }} type="button"><PackagePlus size={15} />Llevar</button>
+            <button className={orderKind === "pickup" && pickupMode === "takeaway" ? "active" : ""} onClick={() => { setOrderKind("pickup"); setPickupMode("takeaway"); setTableId(""); setCustomerName(""); setCustomerPhone(""); setDelivery(""); setCustomerModalOpen(false); }} type="button"><PackagePlus size={15} />Llevar</button>
             <button className={orderKind === "delivery" ? "active" : ""} onClick={() => { setOrderKind("delivery"); setTableId(""); }} type="button"><Truck size={15} />Domicilio</button>
           </div>
 
@@ -2141,7 +2147,7 @@ export function PosOrderWorkspace({
                 </button>
               </div>
             </div>
-          ) : orderKind !== "local" ? (
+          ) : orderKind !== "local" && canManageCustomer ? (
             <div className="pos-client-grid">
               <input onChange={(event) => setCustomerName(uppercaseMasterName(event.target.value))} placeholder="Cliente opcional" value={customerName} />
               <input inputMode="tel" onChange={(event) => setCustomerPhone(event.target.value)} placeholder="Telefono" value={customerPhone} />
@@ -2278,9 +2284,9 @@ export function PosOrderWorkspace({
           {directSalesOnPlatform ? <p className="form-status error">La venta libre se confirma por caja, transferencia o pendiente; no se puede liquidar como Rappi o DiDi.</p> : null}
           {hasInvalidPlatformPricing ? <p className="form-status error">Corrige los precios unitarios de plataforma antes de registrar el pedido.</p> : null}
           <div className="pos-final-actions">
-            <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
+            {canManageCustomer ? <button className="ghost-button pos-client-action-button" onClick={() => setCustomerModalOpen(true)} type="button">
               {customerName || customerPhone ? "Editar cliente" : "+ Agregar cliente"}
-            </button>
+            </button> : null}
             <SubmitOrderButton disabled={cart.length === 0 || hasInvalidSaleProductPrice || hasInvalidDirectSale || hasInvalidPlatformPricing || directSalesOnPlatform} />
           </div>
           <button className="ghost-button pos-inventory-preview-action" disabled={cart.length === 0} onClick={() => void openInventoryPreview()} type="button">

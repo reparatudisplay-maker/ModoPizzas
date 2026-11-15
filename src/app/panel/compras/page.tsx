@@ -265,7 +265,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const params = await searchParams;
   const supplierFilter = params.proveedor ?? "";
   const brandFilter = params.marca ?? "";
-  const periodFilter = params.periodo ?? "todos";
+  const periodFilter = params.periodo ?? "15";
   const kindFilter = params.tipo ?? "";
   const editId = params.edit ?? "";
   const periodStart = getPeriodStart(periodFilter);
@@ -273,14 +273,19 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   const supabase = await createServerSupabaseClient();
   const { roleNames, moduleKeys } = await requirePanelAccess(supabase, "compras");
 
-  const historyLimit = query || brandFilter ? 1000 : 60;
+  // The default period keeps the module fast. An explicit "Todos" (or a
+  // targeted search/filter) must inspect the complete matching history.
+  const loadCompleteHistory = periodFilter === "todos" || Boolean(query || supplierFilter || brandFilter);
   const purchaseSelect = "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, invoice_photo_path, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))";
   const purchaseSelectWithoutInvoicePhoto = "id, supplier_id, brand_id, transport_cost_cop, merchandise_subtotal_cop, total_cop, notes, purchased_at, suppliers(name), brands(name), purchase_items(id, inventory_item_id, brand_id, purchased_quantity, quantity, unit, line_total_cop, merchandise_total_cop, presentation_quantity, presentation_unit, expiration_date, inventory_items(id, name, sku, unit, item_kind, purchase_mode, image_url, brand_id, presentation_quantity, presentation_unit))";
   let purchasesQuery = supabase
     .from("purchases")
     .select(purchaseSelect)
-    .order("purchased_at", { ascending: false })
-    .limit(historyLimit);
+    .order("purchased_at", { ascending: false });
+
+  if (!loadCompleteHistory) {
+    purchasesQuery = purchasesQuery.limit(60);
+  }
 
   if (supplierFilter) {
     purchasesQuery = purchasesQuery.eq("supplier_id", supplierFilter);
@@ -299,11 +304,15 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     supabase.from("suppliers").select("id, name, is_active").eq("is_active", true).order("name"),
     supabase.from("brands").select("id, name, is_active").eq("is_active", true).order("name"),
     purchasesQuery,
-    supabase
+    (() => {
+      let directPurchasesQuery = supabase
       .from("direct_sale_purchases")
       .select("id, product_name_snapshot, quantity, acquisition_unit_cost_cop, acquisition_total_cop, funds_origin, observation, created_at, pos_orders(code)")
-      .order("created_at", { ascending: false })
-      .limit(60),
+      .order("created_at", { ascending: false });
+      if (periodStart) directPurchasesQuery = directPurchasesQuery.gte("created_at", periodStart);
+      if (!loadCompleteHistory) directPurchasesQuery = directPurchasesQuery.limit(60);
+      return directPurchasesQuery;
+    })(),
     supabase
       .from("pos_inventory_regularization_debts")
       .select("id", { count: "exact", head: true })
@@ -316,8 +325,8 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
     let fallbackPurchasesQuery = supabase
       .from("purchases")
       .select(purchaseSelectWithoutInvoicePhoto)
-      .order("purchased_at", { ascending: false })
-      .limit(historyLimit);
+      .order("purchased_at", { ascending: false });
+    if (!loadCompleteHistory) fallbackPurchasesQuery = fallbackPurchasesQuery.limit(60);
     if (supplierFilter) fallbackPurchasesQuery = fallbackPurchasesQuery.eq("supplier_id", supplierFilter);
     if (periodStart) fallbackPurchasesQuery = fallbackPurchasesQuery.gte("purchased_at", periodStart);
     const fallbackResult = await fallbackPurchasesQuery;
@@ -453,7 +462,7 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
   if (query) tabBaseParams.set("q", query);
   if (supplierFilter) tabBaseParams.set("proveedor", supplierFilter);
   if (brandFilter) tabBaseParams.set("marca", brandFilter);
-  if (periodFilter !== "todos") tabBaseParams.set("periodo", periodFilter);
+  if (periodFilter !== "15") tabBaseParams.set("periodo", periodFilter);
   const tabHref = (kind: string) => {
     const nextParams = new URLSearchParams(tabBaseParams);
     if (kind) nextParams.set("tipo", kind);
