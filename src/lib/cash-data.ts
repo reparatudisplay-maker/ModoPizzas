@@ -1,4 +1,4 @@
-import { type CashCountRow, type CashMovementRow, type CashSessionRow, type FundBalanceRow } from "@/components/cash-module";
+import { type CashCountRow, type CashMovementRow, type CashSessionRow, type FundBalanceRow, type PlatformShiftReceivableRow, type ShiftSaleRow } from "@/components/cash-module";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -78,4 +78,35 @@ export async function loadFundBalances(supabase: SupabaseServerClient, funds: Ar
       return { id: fund.id, name: fund.name, balance_cop: Number(data ?? 0) };
     })
   );
+}
+
+export async function loadShiftSales(supabase: SupabaseServerClient, openedAt: string): Promise<ShiftSaleRow[]> {
+  const { data, error } = await supabase
+    .from("pos_orders")
+    .select("id, code, kind, payment_method, total_cop, created_at")
+    .gte("created_at", openedAt)
+    .neq("status", "cancelled")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ShiftSaleRow[]).map((sale) => ({
+    ...sale,
+    total_cop: Number(sale.total_cop ?? 0)
+  }));
+}
+
+export async function loadShiftPlatformReceivables(supabase: SupabaseServerClient, openedAt: string): Promise<PlatformShiftReceivableRow[]> {
+  const { data, error } = await supabase
+    .from("platform_receivables")
+    .select("id, platform, gross_cop, estimated_commission_cop, net_expected_cop, status, pos_orders!inner(created_at), platform_settlement_allocations(net_cop)")
+    .gte("pos_orders.created_at", openedAt);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    platform: row.platform as "rappi" | "didi",
+    gross_cop: Number(row.gross_cop),
+    estimated_commission_cop: Number(row.estimated_commission_cop),
+    net_expected_cop: Number(row.net_expected_cop),
+    settled_net_cop: ((row.platform_settlement_allocations as { net_cop: number | string }[] | null) ?? []).reduce((sum, allocation) => sum + Number(allocation.net_cop), 0),
+    status: row.status
+  }));
 }

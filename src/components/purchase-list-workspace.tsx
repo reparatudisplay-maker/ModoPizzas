@@ -2,9 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ChevronDown, Eye, Pencil, Settings, X } from "lucide-react";
+import { CalendarDays, ChevronRight, Eye, FileText, Pencil, Settings, X } from "lucide-react";
 import { PurchaseDeleteButton } from "@/components/purchase-delete-button";
 import { formatCop } from "@/lib/format";
 
@@ -122,7 +122,6 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
     });
   }
 
-  const visibleColumnCount = allColumns.filter(showColumn).length;
   const openInvoicePhoto = purchases.find((purchase) => purchase.id === openInvoicePhotoId) ?? null;
 
   return (
@@ -133,97 +132,89 @@ export function PurchaseListWorkspace({ purchases }: { purchases: PurchaseListRo
           <Settings size={18} /> Configuracion
         </button>
       </div>
-      <div className="data-table-wrap">
-        <table className="data-table purchase-table rich-inventory-table">
-          <thead>
-            <tr>
-              {showColumn("photo") ? <th>Foto</th> : null}
-              {showColumn("actions") ? <th>Acciones</th> : null}
-              {showColumn("sku") ? <th>SKU</th> : null}
-              {showColumn("product") ? <th>Producto</th> : null}
-              {showColumn("presentation") ? <th>Presentacion</th> : null}
-              {showColumn("quantity") ? <th>Cantidad</th> : null}
-              {showColumn("supplier") ? <th>Proveedor</th> : null}
-              {showColumn("brand") ? <th>Marca</th> : null}
-              {showColumn("total") ? <th>Total pagado</th> : null}
-              {showColumn("unitCost") ? <th>Costo unitario</th> : null}
-              {showColumn("date") ? <th>Fecha</th> : null}
-              {showColumn("notes") ? <th>Notas</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {purchases.map((purchase) => {
-              const isMultiproduct = purchase.product_lines.length > 1;
-              const isExpanded = expandedPurchaseIds.has(purchase.id);
-              return (
-                <Fragment key={purchase.id}>
-              <tr>
-                {showColumn("photo") ? <td>{productImage(purchase.image_src, purchase.product)}</td> : null}
-                {showColumn("actions") ? (
-                  <td>
-                    <span className="row-actions">
-                      <Link className="icon-button" href={editHref(purchase.id)} title="Editar compra">
-                        <Pencil size={16} />
-                      </Link>
-                      {purchase.invoice_photo_url ? (
-                        <button className="icon-button" onClick={() => setOpenInvoicePhotoId(purchase.id)} title="Ver foto de factura" type="button">
-                          <Eye size={16} />
-                        </button>
-                      ) : null}
-                      {isMultiproduct ? (
-                        <button
-                          aria-expanded={isExpanded}
-                          className={`icon-button ${isExpanded ? "active-icon-button" : ""}`}
-                          onClick={() => togglePurchase(purchase.id)}
-                          title={isExpanded ? "Contraer líneas" : "Ver líneas de la factura"}
-                          type="button"
-                        >
-                          <ChevronDown size={16} style={{ transform: isExpanded ? "rotate(180deg)" : undefined }} />
-                        </button>
-                      ) : null}
-                      <PurchaseDeleteButton id={purchase.id} />
-                    </span>
-                  </td>
-                ) : null}
-                {showColumn("sku") ? <td>{purchase.sku}</td> : null}
-                {showColumn("product") ? (
-                  <td>
+      <div className="purchase-list" aria-label="Compras registradas">
+        {purchases.map((purchase) => {
+          const isMultiproduct = purchase.product_lines.length > 1;
+          const isExpanded = expandedPurchaseIds.has(purchase.id);
+          const date = new Date(purchase.purchased_at).toLocaleDateString("es-CO");
+          return (
+            <article className={`purchase-list-row${isExpanded ? " is-expanded" : ""}`} key={purchase.id}>
+              <div className="purchase-list-row-summary">
+                <button
+                  aria-controls={`purchase-lines-${purchase.id}`}
+                  aria-expanded={isExpanded}
+                  className="purchase-expand-button"
+                  onClick={() => togglePurchase(purchase.id)}
+                  title={isExpanded ? "Ocultar detalle de compra" : "Ver detalle de compra"}
+                  type="button"
+                >
+                  <ChevronRight size={19} />
+                </button>
+                <div className="purchase-row-identity">
+                  {showColumn("photo") && purchase.image_src && !isMultiproduct ? (
+                    productImage(purchase.image_src, purchase.product)
+                  ) : (
+                    <span className="purchase-row-document-icon"><FileText size={20} /></span>
+                  )}
+                  <div>
                     <strong>{purchase.product}</strong>
-                    {isMultiproduct ? <small>{purchase.product_lines.length} líneas registradas</small> : null}
-                  </td>
-                ) : null}
-                {showColumn("presentation") ? <td>{purchase.presentation}</td> : null}
-                {showColumn("quantity") ? <td>{purchase.quantity}</td> : null}
-                {showColumn("supplier") ? <td>{purchase.supplier}</td> : null}
-                {showColumn("brand") ? <td>{purchase.brand}</td> : null}
-                {showColumn("total") ? <td>{formatCop(Number(purchase.total_cop))}</td> : null}
-                {showColumn("unitCost") ? <td>{purchase.unit_cost}</td> : null}
-                {showColumn("date") ? <td>{new Date(purchase.purchased_at).toLocaleDateString("es-CO")}</td> : null}
-                {showColumn("notes") ? <td>{purchase.notes}</td> : null}
-              </tr>
-              {isMultiproduct && isExpanded ? (
-                <tr className="purchase-expanded-row" key={`${purchase.id}-lines`}>
-                  <td colSpan={visibleColumnCount}>
-                    <div className="purchase-expanded-lines" aria-label={`Líneas de la factura ${purchase.id}`}>
-                      {purchase.product_lines.map((line) => (
-                        <div className="purchase-expanded-line" key={line.id}>
-                          <strong>{line.product}</strong>
-                          <span>{line.quantity}</span>
-                          <span>{line.presentation}</span>
-                          <span>{line.unit_cost}</span>
-                          <strong>{formatCop(line.total_cop)}</strong>
-                        </div>
-                      ))}
+                    <span>{isMultiproduct ? `Factura multiproducto · ${purchase.product_lines.length} productos` : "Compra individual"}</span>
+                    <div className="purchase-row-meta">
+                      {showColumn("sku") && !isMultiproduct && purchase.sku !== "-" ? <small>{purchase.sku}</small> : null}
+                      {showColumn("supplier") && purchase.supplier !== "Sin proveedor" ? <small>{purchase.supplier}</small> : null}
+                      {showColumn("brand") && purchase.brand !== "Sin marca" ? <small>{purchase.brand}</small> : null}
                     </div>
-                  </td>
-                </tr>
+                  </div>
+                </div>
+                <div className="purchase-row-date">
+                  <CalendarDays size={17} />
+                  <span>{date}</span>
+                </div>
+                <div className="purchase-row-total">
+                  <small>Total pagado</small>
+                  <strong>{formatCop(Number(purchase.total_cop))}</strong>
+                </div>
+                <div className="purchase-row-actions" aria-label={`Acciones para ${purchase.product}`}>
+                  {purchase.invoice_photo_url ? (
+                    <button className="icon-button" onClick={() => setOpenInvoicePhotoId(purchase.id)} title="Ver foto de factura" type="button">
+                      <Eye size={16} />
+                    </button>
+                  ) : null}
+                  <Link className="icon-button" href={editHref(purchase.id)} title="Editar compra">
+                    <Pencil size={16} />
+                  </Link>
+                  <PurchaseDeleteButton id={purchase.id} />
+                </div>
+              </div>
+              {isExpanded ? (
+                <div className="purchase-list-row-details" id={`purchase-lines-${purchase.id}`}>
+                  <div className="purchase-line-grid purchase-line-grid-header" aria-hidden="true">
+                    <span>Producto</span>
+                    <span>Presentacion</span>
+                    <span>Cantidad</span>
+                    <span>Costo unitario</span>
+                    <span>Subtotal</span>
+                  </div>
+                  <div className="purchase-line-list" aria-label={`Detalle de ${purchase.product}`}>
+                    {purchase.product_lines.map((line, index) => (
+                      <div className="purchase-line-grid" key={line.id}>
+                        <div className="purchase-line-product"><small>{index + 1}</small><strong>{line.product}</strong></div>
+                        <div><small>Presentacion</small><span>{line.presentation}</span></div>
+                        <div><small>Cantidad</small><span>{line.quantity}</span></div>
+                        <div><small>Costo unitario</small><span>{line.unit_cost}</span></div>
+                        <div className="purchase-line-subtotal"><small>Subtotal</small><strong>{formatCop(line.total_cop)}</strong></div>
+                      </div>
+                    ))}
+                  </div>
+                  {showColumn("notes") ? (
+                    <div className="purchase-list-notes"><strong>Notas:</strong><span>{purchase.notes}</span></div>
+                  ) : null}
+                </div>
               ) : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-        {purchases.length === 0 ? <p className="muted">No hay compras con esos filtros.</p> : null}
+            </article>
+          );
+        })}
+        {purchases.length === 0 ? <p className="muted compact-empty-state">No hay compras con esos filtros.</p> : null}
       </div>
 
       {openInvoicePhoto?.invoice_photo_url ? (

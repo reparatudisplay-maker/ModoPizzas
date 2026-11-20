@@ -1,4 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
+import { PizzaPriceTabs } from "@/components/menu-pizza-tabs";
 import { ComboPricesWorkspace, type ComboPizzaFlavorOption, type ComboPriceRecord, type ComboSaleProductOption, type ComboSizeOption, type ComboVariantDraft } from "@/components/combo-prices-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
@@ -107,7 +108,6 @@ export default async function MenuPreciosCombosPage() {
     supabase
       .from("combo_configs")
       .select("id, sku, name, description, image_url, sale_price_cop, is_active, sort_order, combo_variants(id, name, sale_price_cop, sort_order, is_active), combo_groups(id, variant_id, name, group_kind, quantity_to_choose, is_required, pizza_size_id, allow_all_flavors, sort_order, combo_group_options(id, pizza_flavor_id, inventory_item_id, is_active, sort_order))")
-      .eq("is_active", true)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
     supabase
@@ -336,8 +336,9 @@ export default async function MenuPreciosCombosPage() {
   );
 
   return (
-    <PanelShell active="menu-precios-combos" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Precios de combos" userEmail={user.email ?? "usuario"}>
+    <PanelShell active="menu-precios-pizzas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Precios de combos" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
+      <PizzaPriceTabs active="combos" />
       <ComboPricesWorkspace combos={combos} pizzaFlavors={pizzaFlavors} saleProducts={saleProducts} sizes={sizes} />
     </PanelShell>
   );

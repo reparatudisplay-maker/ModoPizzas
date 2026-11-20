@@ -47,7 +47,14 @@ const thermalDocumentStyles = `
   .kitchen-ticket-quantity-list li > span, .kitchen-ticket-group p > span, .kitchen-ticket-summary p > span, .customer-receipt-items li > div > strong { min-width: 0; overflow-wrap: anywhere; }
   .kitchen-ticket-quantity-list li > strong, .kitchen-ticket-group p > strong, .kitchen-ticket-summary p > strong { flex: 0 0 auto; white-space: nowrap; text-align: right; }
   .kitchen-ticket-additions, .kitchen-ticket-order-notes { display: grid; gap: 2px; padding: 4px; background: transparent; }
+  .kitchen-ticket-order-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 0; padding: 4px 0; background: #f1f1f1; }
+  .kitchen-ticket-order-meta .print-template-part { border: 0; font-size: .68rem; padding: 0; white-space: nowrap; }
+  .kitchen-ticket-group > b, .kitchen-ticket-delivery > b { display: block; padding: 2px 4px; color: #fff; background: #111; }
+  .kitchen-ticket-base > b { padding: 0; color: #111; background: transparent; }
+  .kitchen-ticket-base p { font-size: .82rem; }
+  .kitchen-ticket-delivery li { font-size: .92rem; font-weight: 800; overflow-wrap: anywhere; }
   .kitchen-ticket-notes { display: block; padding: 4px; background: transparent; overflow-wrap: anywhere; }
+  .kitchen-ticket-notes { border-left: 2px solid #111; font-size: .84rem; font-weight: 700; }
   .kitchen-ticket-notes .print-template-part[data-print-part="title"] { margin-right: .28em; }
   .kitchen-ticket-additions { border-left: 2px solid #111; }
   .kitchen-ticket-summary { border-bottom: 0; }

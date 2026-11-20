@@ -527,36 +527,33 @@ export default async function PurchasesPage({ searchParams }: PurchasePageProps)
             <div className="section-title-row purchase-list-settings-row">
               <span className="muted">{directPurchases.length} compras directas visibles</span>
             </div>
-            <div className="data-table-wrap">
-              <table className="data-table purchase-direct-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Pedido</th>
-                    <th>Artículo</th>
-                    <th>Cantidad</th>
-                    <th>Costo</th>
-                    <th>Origen</th>
-                    <th>Observación</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {directPurchases.map((purchase) => (
-                    <tr key={purchase.id}>
-                      <td>{new Date(purchase.created_at).toLocaleDateString("es-CO")}</td>
-                      <td><strong>{purchase.pos_orders?.code ?? "-"}</strong></td>
-                      <td><strong>{purchase.product_name_snapshot}</strong></td>
-                      <td>{formatQuantity(Number(purchase.quantity), "unit")}</td>
-                      <td>
-                        <strong>{formatCop(Number(purchase.acquisition_total_cop))}</strong>
-                        <small>{formatCop(Number(purchase.acquisition_unit_cost_cop))} / UND</small>
-                      </td>
-                      <td>{purchase.funds_origin === "cash_session" ? "Caja" : "Externo"}</td>
-                      <td>{purchase.observation || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="purchase-list purchase-direct-list">
+              {directPurchases.map((purchase) => (
+                <details className="purchase-list-row" key={purchase.id}>
+                  <summary className="purchase-list-row-summary">
+                    <span className="purchase-expand-button" aria-hidden="true" />
+                    <div className="purchase-row-identity">
+                      <span className="purchase-row-document-icon">Compra</span>
+                      <div>
+                        <strong>{purchase.product_name_snapshot}</strong>
+                        <span>Compra directa · Pedido {purchase.pos_orders?.code ?? "sin pedido"}</span>
+                      </div>
+                    </div>
+                    <div className="purchase-row-date">{new Date(purchase.created_at).toLocaleDateString("es-CO")}</div>
+                    <div className="purchase-row-total">
+                      <small>Total pagado</small>
+                      <strong>{formatCop(Number(purchase.acquisition_total_cop))}</strong>
+                    </div>
+                    <span className="purchase-direct-summary-label">Ver detalle</span>
+                  </summary>
+                  <div className="purchase-list-row-details purchase-direct-details">
+                    <div><small>Cantidad</small><strong>{formatQuantity(Number(purchase.quantity), "unit")}</strong></div>
+                    <div><small>Costo unitario</small><strong>{formatCop(Number(purchase.acquisition_unit_cost_cop))} / UND</strong></div>
+                    <div><small>Origen</small><strong>{purchase.funds_origin === "cash_session" ? "Caja" : "Externo"}</strong></div>
+                    <div><small>Observación</small><span>{purchase.observation || "Sin observación"}</span></div>
+                  </div>
+                </details>
+              ))}
               {directPurchases.length === 0 ? <p className="muted compact-empty-state">No hay compras directas registradas.</p> : null}
             </div>
           </>

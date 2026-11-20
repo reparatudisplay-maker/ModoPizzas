@@ -6,11 +6,12 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, Bike, CarFront, CheckCircle2, ChevronLeft, Clock, Edit3, HandCoins, Landmark, Minus, PackagePlus, PackageSearch, Pencil, Plus, ReceiptText, Repeat2, RotateCcw, Search, Settings, ShoppingBag, ShoppingCart, Star, Store, Truck, WalletCards, X, Zap } from "lucide-react";
-import { createPosOrder, getPosInventoryConsumptionPreview, savePosPizzaImage, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
+import { BadgePercent, Banknote, Bike, CarFront, CheckCircle2, ChevronLeft, ChevronRight, Clock, CupSoda, Drumstick, Edit3, HandCoins, Landmark, MapPinned, Minus, PackagePlus, PackageSearch, Pencil, Pizza, Plus, ReceiptText, Repeat2, RotateCcw, Sandwich, Search, Settings, ShoppingBag, ShoppingCart, Star, Store, Truck, WalletCards, X, Zap } from "lucide-react";
+import { createPosOrder, getPosInventoryConsumptionPreview, openCashSessionAction, savePosPizzaImage, savePosProductViewSettings, updatePendingPosOrderTable, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 import { formatStockQuantity, type StockUnit } from "@/lib/units";
+import { temporaryItemsForFamily, type TemporaryMenuItem } from "@/lib/temporary-menu-catalog";
 import { CustomerReceiptPrintButton, PostPaymentPrintJob, type PaymentPrintJob, type PaymentPrintSelection } from "@/components/pos-order-payment-print";
 
 type OrderKind = "local" | "pickup" | "delivery";
@@ -18,6 +19,7 @@ type PaymentMethod = "cash" | "card" | "transfer" | "mixed" | "pending" | "rappi
 type OrderChannel = "direct" | "rappi" | "didi";
 type DidiService = "didi_standard" | "didi_tu_negocio";
 type CollectionParty = "business" | "platform";
+type PlatformPriceOverrideKey = "rappi" | DidiService | "didi_messenger";
 type DiscountType = "percentage" | "amount";
 
 type AppliedDiscount = {
@@ -25,7 +27,7 @@ type AppliedDiscount = {
   value: number;
   amount_cop: number;
 };
-type CatalogTab = "pizzas" | "products" | "combos";
+type CatalogTab = "pizzas" | "products" | "combos" | "wings" | "lasagnas";
 type DirectFundsOrigin = "cash_session" | "external";
 type PizzaStep = "size" | "type" | "half" | "summary";
 type PizzaMode = "whole" | "half";
@@ -132,10 +134,16 @@ export type PosOrderTableOption = {
 export type PosPendingPayment = {
   id: string;
   code: string;
+  kind: OrderKind;
   ordered_at: string;
   customer_name: string | null;
+  table_id: string | null;
   table_name: string | null;
   total_cop: number;
+  items: Array<{
+    name: string;
+    quantity: number;
+  }>;
 };
 
 type PizzaBaseOverride = Pick<PosPizzaBaseOption, "source_kind" | "source_id">;
@@ -195,6 +203,22 @@ type ComboComponentDraft = {
   secondary: ComboChoice | null;
 };
 
+const comboPizzaSlotSeparator = "::pizza-slot::";
+
+function comboPizzaSelectionKey(groupId: string, slotOrder: number) {
+  return `${groupId}${comboPizzaSlotSeparator}${slotOrder}`;
+}
+
+function comboSelectionGroupId(selectionKey: string) {
+  return selectionKey.split(comboPizzaSlotSeparator)[0];
+}
+
+function comboSelectionSlotOrder(selectionKey: string, fallback: number) {
+  const encoded = selectionKey.split(comboPizzaSlotSeparator)[1];
+  const parsed = encoded === undefined ? fallback : Number(encoded);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export type CartAddition = {
   key: string;
   id: string;
@@ -209,7 +233,7 @@ export type CartAddition = {
 export type CartLine = {
   key: string;
   signature: string;
-  kind: "pizza" | "sale_product" | "combo" | "direct_sale";
+  kind: "pizza" | "sale_product" | "combo" | "direct_sale" | "temporary_menu";
   id: string;
   secondary_id?: string | null;
   name: string;
@@ -241,6 +265,13 @@ export type CartLine = {
     acquisition_unit_cost_cop: number;
     funds_origin: DirectFundsOrigin;
     observation: string;
+  };
+  temporary_menu?: {
+    family: "wings" | "lasagnas";
+    selection_mode: "drink" | "fries" | "none";
+    beverage_inventory_item_id?: string | null;
+    beverage_name?: string | null;
+    components: Array<{ name: string; quantity: string }>;
   };
 };
 
@@ -292,17 +323,20 @@ const minCardScale = 0;
 const maxCardScale = 2;
 const pizzaCardScaleKey = "modo-pos-pizza-card-scale";
 const productCardScaleKey = "modo-pos-product-card-scale";
-const productViewSettingsKey = "modo-pos-product-view-settings";
 const printSelectionKey = "modo-pos-payment-print-selection";
 const cashDenominations = [2000, 5000, 10000, 20000, 50000, 100000];
 
-type ProductViewSettings = {
+export type ProductViewSettings = {
   showCost: boolean;
   showStock: boolean;
   showSoldOut: boolean;
+  showSearch: boolean;
+  showPizzaPhoto: boolean;
+  showPizzaFlavor: boolean;
+  showPizzaCategory: boolean;
+  showPizzaPrice: boolean;
 };
 
-const defaultProductViewSettings: ProductViewSettings = { showCost: true, showStock: true, showSoldOut: true };
 const defaultPrintSelection: PaymentPrintSelection = { kitchen: false, receipt: false };
 
 function emptyDirectSaleDraft(): DirectSaleDraft {
@@ -319,20 +353,6 @@ function readPrintSelection(): PaymentPrintSelection {
     };
   } catch {
     return defaultPrintSelection;
-  }
-}
-
-function readProductViewSettings(): ProductViewSettings {
-  const fallback = defaultProductViewSettings;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(productViewSettingsKey) ?? "");
-    return {
-      showCost: typeof parsed?.showCost === "boolean" ? parsed.showCost : fallback.showCost,
-      showStock: typeof parsed?.showStock === "boolean" ? parsed.showStock : fallback.showStock,
-      showSoldOut: typeof parsed?.showSoldOut === "boolean" ? parsed.showSoldOut : fallback.showSoldOut
-    };
-  } catch {
-    return fallback;
   }
 }
 
@@ -403,6 +423,10 @@ function productKey(line: Omit<CartLine, "key" | "quantity" | "signature">) {
     return `combo-component:${line.combo_instance_id}:${line.kind}:${line.id}:${line.secondary_id ?? "whole"}:${line.combo_component_label ?? ""}`;
   }
   if (line.kind === "sale_product") return `product:${line.id}:${line.unit_price_cop}`;
+  if (line.kind === "temporary_menu") {
+    const selection = line.temporary_menu;
+    return `temporary:${line.id}:${selection?.selection_mode ?? "none"}:${selection?.beverage_inventory_item_id ?? ""}`;
+  }
   if (line.kind === "combo") {
     const choicesKey = (line.combo_choices ?? []).map((choice) => `${choice.variant_id ?? ""}:${choice.group_id}:${choice.option_id}`).sort().join("|");
     return `combo:${line.id}:${line.unit_price_cop}:${choicesKey}`;
@@ -509,17 +533,24 @@ function additionLabel(addition: CartAddition) {
   return addition.scope_label ? `+ ${addition.name} x${addition.quantity} (${addition.scope_label})` : `+ ${addition.name} x${addition.quantity}`;
 }
 
-function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTodayPayments: PosPendingPayment[]; pendingPayments: PosPendingPayment[] }) {
+function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments }: { orderTables: PosOrderTableOption[]; paidTodayPayments: PosPendingPayment[]; pendingPayments: PosPendingPayment[] }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(() => new Set());
+  const [isPendingSectionOpen, setIsPendingSectionOpen] = useState(true);
+  const [isPaidSectionOpen, setIsPaidSectionOpen] = useState(true);
   const [selected, setSelected] = useState<PosPendingPayment | null>(null);
+  const [tableOrder, setTableOrder] = useState<PosPendingPayment | null>(null);
+  const [tableId, setTableId] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer" | "mixed">("cash");
   const [state, setState] = useState<FormActionState>(initialState);
+  const [tableState, setTableState] = useState<FormActionState>(initialState);
   const [cashReceived, setCashReceived] = useState("");
   const [cashSelectedOption, setCashSelectedOption] = useState<string | null>(null);
   const [mixedCash, setMixedCash] = useState("");
   const [mixedTransfer, setMixedTransfer] = useState("");
   const [mixedCashReceived, setMixedCashReceived] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [isTablePending, startTableTransition] = useTransition();
   const router = useRouter();
   const selectedTotal = selected?.total_cop ?? 0;
   const cashReceivedValue = Number(cashReceived || 0);
@@ -542,6 +573,15 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
     return () => window.clearTimeout(timeout);
   }, [router, state.status]);
 
+  useEffect(() => {
+    if (tableState.status !== "success") return;
+    const timeout = window.setTimeout(() => {
+      setTableOrder(null);
+      router.refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [router, tableState.status]);
+
   function selectPayment(order: PosPendingPayment) {
     setSelected(order);
     setMethod("cash");
@@ -551,6 +591,39 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
     setMixedTransfer("");
     setMixedCashReceived("");
     setState(initialState);
+  }
+
+  function selectTable(order: PosPendingPayment) {
+    setTableOrder(order);
+    setTableId(order.table_id ?? "");
+    setTableState(initialState);
+  }
+
+  function submitTable() {
+    if (!tableOrder) return;
+    const formData = new FormData();
+    formData.set("order_id", tableOrder.id);
+    formData.set("table_id", tableId);
+    startTableTransition(async () => setTableState(await updatePendingPosOrderTable(initialState, formData)));
+  }
+
+  function toggleOrderItems(orderId: string) {
+    setExpandedOrderIds((current) => {
+      const next = new Set(current);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  }
+
+  function orderItemsToggle(order: PosPendingPayment) {
+    const isExpanded = expandedOrderIds.has(order.id);
+    return <button aria-expanded={isExpanded} aria-label={`${isExpanded ? "Ocultar" : "Ver"} ítems de ${order.code}`} className={["icon-button", "pos-payment-order-expand", isExpanded ? "expanded" : ""].filter(Boolean).join(" ")} onClick={() => toggleOrderItems(order.id)} title={isExpanded ? "Ocultar ítems" : "Ver ítems"} type="button"><ChevronRight size={15} /></button>;
+  }
+
+  function orderItemsDetail(order: PosPendingPayment) {
+    if (!expandedOrderIds.has(order.id)) return null;
+    return <div className="pos-payment-order-detail">{order.items.length === 0 ? <span>Sin detalle disponible</span> : order.items.map((item, index) => <span key={`${order.id}-${index}`}><b>{item.quantity}×</b><span>{item.name}</span></span>)}</div>;
   }
 
   function submitPayment() {
@@ -579,39 +652,42 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
         <section className="pos-pending-payments-panel" aria-label="Cobros del día">
           <header><strong>Cobros del día</strong><button aria-label="Cerrar cobros del día" className="icon-button" onClick={() => setIsOpen(false)} type="button"><X size={15} /></button></header>
           <section className="pos-payment-order-section" aria-labelledby="pending-payments-title">
-            <div className="pos-payment-order-section-title"><strong id="pending-payments-title">Pendientes</strong><span>{pendingPayments.length}</span></div>
-            {pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
+            <button aria-expanded={isPendingSectionOpen} className="pos-payment-order-section-title" onClick={() => setIsPendingSectionOpen((open) => !open)} type="button"><ChevronRight size={15} /><strong id="pending-payments-title">Pendientes</strong><span>{pendingPayments.length} {pendingPayments.length === 1 ? "pedido" : "pedidos"}</span></button>
+            {isPendingSectionOpen && (pendingPayments.length === 0 ? <p className="empty-state">No hay cobros pendientes.</p> : (
               <div className="pos-pending-payments-list">
-                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span>Acciones</span></div>
                 {pendingPayments.map((order) => (
-                  <article key={order.id}>
-                    <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
+                  <article className={expandedOrderIds.has(order.id) ? "expanded" : ""} key={order.id}>
+                    {orderItemsToggle(order)}
+                    <div className="pos-payment-order-code"><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
                     <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
                     <b>{formatCop(order.total_cop)}</b>
                     <span className="pos-pending-payment-actions">
+                      {order.kind === "local" ? <button aria-label={`Actualizar mesa de ${order.code}`} className="icon-button" onClick={() => selectTable(order)} title="Actualizar mesa" type="button"><MapPinned size={15} /></button> : null}
                       <Link aria-label={`Editar ${order.code}`} className="icon-button" href={`/panel/pedidos/nuevo?edit=${encodeURIComponent(order.id)}`} title="Editar pedido pendiente"><Pencil size={15} /></Link>
                       <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
                     </span>
+                    {orderItemsDetail(order)}
                   </article>
                 ))}
               </div>
-            )}
+            ))}
           </section>
           <section className="pos-payment-order-section" aria-labelledby="paid-payments-title">
-            <div className="pos-payment-order-section-title paid"><strong id="paid-payments-title">Cobrados hoy</strong><span>{paidTodayPayments.length}</span></div>
-            {paidTodayPayments.length === 0 ? <p className="empty-state">No hay cobros registrados hoy.</p> : (
+            <button aria-expanded={isPaidSectionOpen} className="pos-payment-order-section-title paid" onClick={() => setIsPaidSectionOpen((open) => !open)} type="button"><ChevronRight size={15} /><strong id="paid-payments-title">Cobrados hoy</strong><span>{paidTodayPayments.length} {paidTodayPayments.length === 1 ? "pedido" : "pedidos"}</span></button>
+            {isPaidSectionOpen && (paidTodayPayments.length === 0 ? <p className="empty-state">No hay cobros registrados hoy.</p> : (
               <div className="pos-pending-payments-list paid">
-                <div className="pos-pending-payments-table-head" aria-hidden="true"><span>Pedido</span><span>Mesa / cliente</span><span>Total</span><span /></div>
                 {paidTodayPayments.map((order) => (
-                  <article key={order.id}>
-                    <div><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
+                  <article className={expandedOrderIds.has(order.id) ? "expanded" : ""} key={order.id}>
+                    {orderItemsToggle(order)}
+                    <div className="pos-payment-order-code"><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
                     <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
                     <b>{formatCop(order.total_cop)}</b>
                     <span className="pos-payment-order-actions"><CustomerReceiptPrintButton label="" orderCode={order.code} orderId={order.id} /></span>
+                    {orderItemsDetail(order)}
                   </article>
                 ))}
               </div>
-            )}
+            ))}
           </section>
         </section>
       ) : null}
@@ -651,6 +727,21 @@ function PendingPaymentsButton({ paidTodayPayments, pendingPayments }: { paidTod
           </section>
         </div>
       ) : null}
+      {tableOrder ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label={`Actualizar mesa de ${tableOrder.code}`} aria-modal="true" className="modal-panel pending-order-table-modal" role="dialog">
+            <header className="modal-header">
+              <div><strong>Actualizar mesa</strong><span>{tableOrder.code} · solo cambia la ubicación del pedido.</span></div>
+              <button className="icon-button" onClick={() => setTableOrder(null)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="pending-order-table-body">
+              <label className="field"><span>Mesa</span><select onChange={(event) => setTableId(event.target.value)} value={tableId}><option value="">Sin mesa</option>{orderTables.map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}</select></label>
+              {tableState.status !== "idle" ? <p className={`form-status ${tableState.status}`}>{tableState.message}</p> : null}
+            </div>
+            <footer className="modal-footer"><button className="ghost-button" onClick={() => setTableOrder(null)} type="button">Cancelar</button><button className="primary-button" disabled={isTablePending} onClick={submitTable} type="button">{isTablePending ? "Actualizando..." : "Guardar mesa"}</button></footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -670,6 +761,7 @@ export function PosOrderWorkspace({
   paidTodayPayments,
   pendingPayments,
   isSystemAdmin,
+  initialProductViewSettings,
   userId,
   editingOrder
 }: {
@@ -687,6 +779,7 @@ export function PosOrderWorkspace({
   paidTodayPayments: PosPendingPayment[];
   pendingPayments: PosPendingPayment[];
   isSystemAdmin: boolean;
+  initialProductViewSettings: ProductViewSettings;
   userId: string;
   editingOrder?: PosEditablePendingOrder | null;
 }) {
@@ -695,12 +788,16 @@ export function PosOrderWorkspace({
   const [query, setQuery] = useState("");
   const [pizzaCardScale, setPizzaCardScale] = useState(1);
   const [productCardScale, setProductCardScale] = useState(1);
-  const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(defaultProductViewSettings);
+  const [productViewSettings, setProductViewSettings] = useState<ProductViewSettings>(initialProductViewSettings);
+  const [productViewSettingsNotice, setProductViewSettingsNotice] = useState("");
   const [productSettingsOpen, setProductSettingsOpen] = useState(false);
   const [directSaleOpen, setDirectSaleOpen] = useState(false);
   const [directSaleDraft, setDirectSaleDraft] = useState<DirectSaleDraft>(emptyDirectSaleDraft);
   const [directSaleError, setDirectSaleError] = useState("");
   const [directSaleQuickActions, setDirectSaleQuickActions] = useState<DirectSaleDraft[]>([]);
+  const [temporaryItem, setTemporaryItem] = useState<TemporaryMenuItem | null>(null);
+  const [temporarySelectionMode, setTemporarySelectionMode] = useState<"drink" | "fries">("drink");
+  const [temporaryBeverageId, setTemporaryBeverageId] = useState("");
   const [cart, setCart] = useState<CartLine[]>(editingOrder?.cart ?? []);
   const [orderKind, setOrderKind] = useState<OrderKind>(editingOrder?.kind ?? "local");
   const [pickupMode, setPickupMode] = useState<PickupMode>(editingOrder?.pickupMode ?? "pickup");
@@ -709,7 +806,7 @@ export function PosOrderWorkspace({
   const [orderChannel, setOrderChannel] = useState<OrderChannel>("direct");
   const [didiService, setDidiService] = useState<DidiService>("didi_standard");
   const [didiCollectionParty, setDidiCollectionParty] = useState<CollectionParty>("platform");
-  const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<"rappi" | DidiService, Record<string, number>>>({ rappi: {}, didi_standard: {}, didi_tu_negocio: {} });
+  const [platformLineUnitPriceOverrides, setPlatformLineUnitPriceOverrides] = useState<Record<PlatformPriceOverrideKey, Record<string, number>>>({ rappi: {}, didi_standard: {}, didi_tu_negocio: {}, didi_messenger: {} });
   const [saleDate, setSaleDate] = useState(editingOrder?.saleDate ?? todayBogota);
   const [saleDateReady, setSaleDateReady] = useState(!canEditSaleDate);
   const [allowPendingStock, setAllowPendingStock] = useState(false);
@@ -731,6 +828,9 @@ export function PosOrderWorkspace({
   const [discountInput, setDiscountInput] = useState("");
   const [discount, setDiscount] = useState<AppliedDiscount | null>(editingOrder?.discountCop ? { type: "amount", value: editingOrder.discountCop, amount_cop: editingOrder.discountCop } : null);
   const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [cashSessionDecisionOpen, setCashSessionDecisionOpen] = useState(false);
+  const [openCashSessionModalOpen, setOpenCashSessionModalOpen] = useState(false);
+  const [openCashSessionState, openCashSession] = useActionState(openCashSessionAction, { status: "idle", message: "" } as FormActionState);
   const [cashReceived, setCashReceived] = useState("");
   const [cashConfirmed, setCashConfirmed] = useState(false);
   const [cashSubmitting, setCashSubmitting] = useState(false);
@@ -751,11 +851,50 @@ export function PosOrderWorkspace({
   const [inventoryPreview, setInventoryPreview] = useState<PosInventoryConsumptionPreview | null>(null);
   const [baseLineKey, setBaseLineKey] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const cartPanelRef = useRef<HTMLElement>(null);
   const cashSubmitLockRef = useRef(false);
+  const productViewSettingsSaveTimerRef = useRef<number | null>(null);
+  const productViewSettingsSaveVersionRef = useRef(0);
   const handledSuccessOrderIdRef = useRef<string | null>(null);
   const submittedPaymentMethodRef = useRef<PaymentMethod | null>(null);
   const router = useRouter();
   const normalizedQuery = normalizeMasterText(query);
+
+  function preserveCartPanelScroll(update: () => void) {
+    const panel = cartPanelRef.current;
+    const panelScrollTop = panel?.scrollTop ?? 0;
+    const panelScrollLeft = panel?.scrollLeft ?? 0;
+    const pageScrollTop = window.scrollY;
+    const pageScrollLeft = window.scrollX;
+
+    update();
+    window.requestAnimationFrame(() => {
+      if (panel) {
+        panel.scrollTop = panelScrollTop;
+        panel.scrollLeft = panelScrollLeft;
+      }
+      window.scrollTo(pageScrollLeft, pageScrollTop);
+    });
+  }
+
+  function selectPlatformDelivery(channel: "rappi" | "didi", service: DidiService = didiService, collectionParty: CollectionParty = "platform") {
+    preserveCartPanelScroll(() => {
+      setOrderKind("delivery");
+      setTableId("");
+      setOrderChannel(channel);
+      setCustomerName(channel === "rappi" ? "RAPPI" : service === "didi_tu_negocio" ? "DIDI TU NEGOCIO" : "DIDI FOOD");
+      if (channel === "rappi") {
+        setPaymentMethod("rappi");
+      } else {
+        setDidiService(service);
+        setDidiCollectionParty(collectionParty);
+        setPaymentMethod(collectionParty === "platform" ? "didi" : paymentMethod === "didi" ? "cash" : paymentMethod);
+      }
+      setDiscount(null);
+      setDiscountInput("");
+      setDiscountModalOpen(false);
+    });
+  }
   const activeCardScale = tab === "pizzas" ? pizzaCardScale : productCardScale;
   const saleDateStorageKey = `modo-pos-sale-date:${userId}`;
   const directSaleQuickActionsKey = `modo-pos-direct-sale-actions:${userId}`;
@@ -764,7 +903,6 @@ export function PosOrderWorkspace({
     const timeout = window.setTimeout(() => {
       setPizzaCardScale(initialCardScale(pizzaCardScaleKey));
       setProductCardScale(initialCardScale(productCardScaleKey));
-      setProductViewSettings(readProductViewSettings());
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
@@ -803,9 +941,30 @@ export function PosOrderWorkspace({
     window.localStorage.setItem(productCardScaleKey, String(productCardScale));
   }, [productCardScale]);
 
-  useEffect(() => {
-    window.localStorage.setItem(productViewSettingsKey, JSON.stringify(productViewSettings));
-  }, [productViewSettings]);
+  useEffect(() => () => {
+    if (productViewSettingsSaveTimerRef.current !== null) window.clearTimeout(productViewSettingsSaveTimerRef.current);
+  }, []);
+
+  function updateProductViewSettings(next: ProductViewSettings) {
+    const saveVersion = ++productViewSettingsSaveVersionRef.current;
+    if (!next.showSearch) setQuery("");
+    setProductViewSettings(next);
+    setProductViewSettingsNotice("Guardando en tu cuenta...");
+    if (productViewSettingsSaveTimerRef.current !== null) window.clearTimeout(productViewSettingsSaveTimerRef.current);
+    productViewSettingsSaveTimerRef.current = window.setTimeout(async () => {
+      productViewSettingsSaveTimerRef.current = null;
+      try {
+        const result = await savePosProductViewSettings(next);
+        if (saveVersion === productViewSettingsSaveVersionRef.current) {
+          setProductViewSettingsNotice(result.status === "success" ? "Guardado para tu cuenta." : result.message);
+        }
+      } catch {
+        if (saveVersion === productViewSettingsSaveVersionRef.current) {
+          setProductViewSettingsNotice("No fue posible guardar la configuración. Inténtalo de nuevo.");
+        }
+      }
+    }, 350);
+  }
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -879,11 +1038,13 @@ export function PosOrderWorkspace({
       setDidiService("didi_standard");
       setDidiCollectionParty("platform");
       setAllowPendingStock(false);
-      setPlatformLineUnitPriceOverrides({ rappi: {}, didi_standard: {}, didi_tu_negocio: {} });
+      setPlatformLineUnitPriceOverrides({ rappi: {}, didi_standard: {}, didi_tu_negocio: {}, didi_messenger: {} });
       setDiscount(null);
       setDiscountInput("");
       setDiscountModalOpen(false);
       setCashModalOpen(false);
+      setCashSessionDecisionOpen(false);
+      setOpenCashSessionModalOpen(false);
       setCashReceived("");
       setCashConfirmed(false);
       setCashSubmitting(false);
@@ -900,10 +1061,30 @@ export function PosOrderWorkspace({
   }, [editingOrder, printSelection, router, state]);
 
   useEffect(() => {
+    if (openCashSessionState.status !== "success") return;
+    const timeout = window.setTimeout(() => {
+      setOpenCashSessionModalOpen(false);
+      setCashSessionDecisionOpen(false);
+      setCashModalOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [openCashSessionState.status]);
+
+  useEffect(() => {
     if (state.status !== "error") return;
 
     const submittedPaymentMethod = submittedPaymentMethodRef.current;
     submittedPaymentMethodRef.current = null;
+    if (state.requiresCashSession || /abre (caja|o selecciona una caja vigente)/i.test(state.message)) {
+      const timeout = window.setTimeout(() => {
+        setCashConfirmed(false);
+        setCashSubmitting(false);
+        setCashModalOpen(false);
+        setCashSessionDecisionOpen(true);
+        cashSubmitLockRef.current = false;
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
     if (state.stockShortages?.length) {
       const timeout = window.setTimeout(() => {
         setCashConfirmed(false);
@@ -946,6 +1127,8 @@ export function PosOrderWorkspace({
   const pizzaSuggestions = useMemo(() => pizzas.map((pizza) => pizza.flavor_name), [pizzas]);
   const productSuggestions = useMemo(() => saleProducts.map((product) => `${product.name} ${product.presentation ?? ""}`.trim()), [saleProducts]);
   const comboSuggestions = useMemo(() => combos.map((combo) => combo.name), [combos]);
+  const wingSuggestions = useMemo(() => temporaryItemsForFamily("wings").map((item) => item.name), []);
+  const lasagnaSuggestions = useMemo(() => temporaryItemsForFamily("lasagnas").map((item) => item.name), []);
 
   const filteredPizzas = useMemo(
     () =>
@@ -975,6 +1158,14 @@ export function PosOrderWorkspace({
       }),
     [combos, normalizedQuery]
   );
+  const filteredWings = useMemo(
+    () => temporaryItemsForFamily("wings").filter((item) => !normalizedQuery || normalizeMasterText(`${item.name} ${item.description}`).includes(normalizedQuery)),
+    [normalizedQuery]
+  );
+  const filteredLasagnas = useMemo(
+    () => temporaryItemsForFamily("lasagnas").filter((item) => !normalizedQuery || normalizeMasterText(`${item.name} ${item.description}`).includes(normalizedQuery)),
+    [normalizedQuery]
+  );
 
   const saleProductById = useMemo(() => new Map(saleProducts.map((product) => [product.id, product])), [saleProducts]);
   const pizzaPriceById = useMemo(
@@ -986,7 +1177,8 @@ export function PosOrderWorkspace({
   useEffect(() => {
     // A manual packaging exception belongs to its current service. Reset it when
     // the service changes so the corresponding automatic rule can apply again.
-    setPackagingQuantities({});
+    const timeout = window.setTimeout(() => setPackagingQuantities({}), 0);
+    return () => window.clearTimeout(timeout);
   }, [packagingServiceKind]);
   const automaticPackaging = useMemo(() => {
     const quantities = new Map<string, { name: string; quantity: number }>();
@@ -1086,16 +1278,14 @@ export function PosOrderWorkspace({
   const discountCop = discount ? Math.min(rawDiscountCop, Math.max(0, subtotal - 1)) : 0;
   const total = Math.max(0, subtotal - discountCop + deliveryValue);
   const platformPayment = orderChannel === "rappi" || (orderChannel === "didi" && didiCollectionParty === "platform") ? orderChannel : null;
+  const didiMessengerCollection = orderChannel === "didi" && didiCollectionParty === "business";
+  const usesQuotedPricing = Boolean(platformPayment) || didiMessengerCollection;
   const isPendingPayment = paymentMethod === "pending";
   const didiSetting = platformPaymentSettings.find((setting) => setting.platform === "didi") ?? null;
   const didiTuNegocioChargeSetting = orderChannel === "didi" && didiService === "didi_tu_negocio" ? didiSetting : null;
   const platformPaymentSetting = platformPayment === "didi" && didiService === "didi_tu_negocio" && didiSetting
     ? { ...didiSetting, commission_percent: didiSetting.didi_tu_negocio_commission_percent, fixed_fee_cop: didiSetting.didi_tu_negocio_fixed_fee_cop, commission_tax_percent: didiSetting.didi_tu_negocio_commission_tax_percent }
     : platformPayment ? platformPaymentSettings.find((setting) => setting.platform === platformPayment) ?? null : null;
-  const didiTuNegocioBillingChargeCop = didiTuNegocioChargeSetting && didiCollectionParty === "business"
-    ? Math.max(0, Math.round((total * didiTuNegocioChargeSetting.didi_tu_negocio_commission_percent / 100 + didiTuNegocioChargeSetting.didi_tu_negocio_fixed_fee_cop) * (1 + didiTuNegocioChargeSetting.didi_tu_negocio_commission_tax_percent / 100)))
-    : 0;
-  const didiTuNegocioNetAfterBillingCop = Math.max(0, total - didiTuNegocioBillingChargeCop);
   const platformLineBases = cart.map((line) => {
     const additionsCop = line.additions.reduce((sum, addition) => sum + addition.quantity * addition.unit_price_cop, 0);
     const componentPriceCop = line.combo_instance_id ? line.combo_component_normal_price_cop ?? line.unit_price_cop : line.unit_price_cop;
@@ -1112,8 +1302,8 @@ export function PosOrderWorkspace({
     platformPaymentSetting?.fixed_fee_cop ?? 0,
     platformLineBases.map((line) => line.original_cop)
   );
-  const platformOverrideKey: "rappi" | DidiService = platformPayment === "didi" ? didiService : "rappi";
-  const platformLineOverrides = platformPayment ? platformLineUnitPriceOverrides[platformOverrideKey] : {};
+  const platformOverrideKey: PlatformPriceOverrideKey = platformPayment === "didi" ? didiService : didiMessengerCollection ? "didi_messenger" : "rappi";
+  const platformLineOverrides = usesQuotedPricing ? platformLineUnitPriceOverrides[platformOverrideKey] : {};
   const platformLineDrafts = platformLineBases.map((line, index) => {
     const original_unit_cop = line.quantity > 0 ? Math.round(line.original_cop / line.quantity) : 0;
     const commissionBaseCop = Math.round(
@@ -1148,8 +1338,15 @@ export function PosOrderWorkspace({
   const platformSubtotalCop = platformSettlementEntries.reduce((sum, line) => sum + line.original_cop, 0);
   const platformCommissionCop = platformSettlementEntries.reduce((sum, line) => sum + line.commission_cop, 0);
   const platformNetExpectedCop = platformSettlementEntries.reduce((sum, line) => sum + line.net_expected_cop, 0);
-  const registrationTotalCop = platformPayment ? platformNetExpectedCop : total;
-  const hasInvalidPlatformPricing = Boolean(platformPayment && platformLineDrafts.some((line) => !Number.isFinite(line.final_unit_cop) || line.final_unit_cop < 0 || line.final_cop > line.original_cop));
+  const didiMessengerDiscountCop = didiMessengerCollection ? Math.max(0, total - platformNetExpectedCop) : 0;
+  const didiMessengerCollectedCop = didiMessengerCollection ? platformNetExpectedCop : total;
+  const didiTuNegocioBillingChargeCop = didiTuNegocioChargeSetting && didiCollectionParty === "business"
+    ? Math.max(0, Math.round((didiMessengerCollectedCop * didiTuNegocioChargeSetting.didi_tu_negocio_commission_percent / 100 + didiTuNegocioChargeSetting.didi_tu_negocio_fixed_fee_cop) * (1 + didiTuNegocioChargeSetting.didi_tu_negocio_commission_tax_percent / 100)))
+    : 0;
+  const didiTuNegocioNetAfterBillingCop = Math.max(0, didiMessengerCollectedCop - didiTuNegocioBillingChargeCop);
+  const registrationTotalCop = usesQuotedPricing ? platformNetExpectedCop : total;
+  const cashPaymentTotal = didiMessengerCollection ? didiMessengerCollectedCop : total;
+  const hasInvalidPlatformPricing = Boolean(usesQuotedPricing && platformLineDrafts.some((line) => !Number.isFinite(line.final_unit_cop) || line.final_unit_cop < 0 || line.final_cop > line.original_cop));
   const platformLinePricingPayload = platformLineDrafts.map((line) => ({
     cart_line_key: line.cart_line_key,
     name: line.name,
@@ -1172,9 +1369,9 @@ export function PosOrderWorkspace({
         : "";
   const discountLabel = discount?.type === "percentage" ? `Descuento (${discount.value}%)` : "Descuento";
   const cashReceivedValue = Number(cashReceived || 0);
-  const cashChange = Math.max(0, cashReceivedValue - total);
-  const cashSuggestions = useMemo(() => cashQuickSuggestions(total), [total]);
-  const validCashDenominations = useMemo(() => cashDenominations.filter((amount) => amount >= total), [total]);
+  const cashChange = Math.max(0, cashReceivedValue - cashPaymentTotal);
+  const cashSuggestions = cashQuickSuggestions(cashPaymentTotal);
+  const validCashDenominations = cashDenominations.filter((amount) => amount >= cashPaymentTotal);
 
   const selectedPizzaPrice = wizard?.selectedSize ?? null;
   const halfAvailable = Boolean(wizard && selectedPizzaPrice && wizard.flavor.allows_half_and_half);
@@ -1217,6 +1414,53 @@ export function PosOrderWorkspace({
       unit_price_cop: product.sale_price_cop,
       additions: []
     });
+  }
+
+  function openTemporaryItem(item: TemporaryMenuItem) {
+    if (!item.beverage_choice_required && !item.allows_fries_substitution) {
+      addTemporaryItem(item, "none");
+      return;
+    }
+    const compatibleBeverage = saleProducts.find((product) => product.presentation === item.beverage_presentation);
+    setTemporaryItem(item);
+    setTemporarySelectionMode("drink");
+    setTemporaryBeverageId(compatibleBeverage?.id ?? "");
+  }
+
+  function addTemporaryItem(item: TemporaryMenuItem, selectionMode: "drink" | "fries" | "none", beverageId = "") {
+    const beverage = selectionMode === "drink" ? saleProductById.get(beverageId) ?? null : null;
+    if (item.beverage_choice_required && selectionMode === "drink" && !beverage) {
+      setStockNotice(`Selecciona una gaseosa disponible de ${item.beverage_presentation}.`);
+      return;
+    }
+    const components = item.components.flatMap((component) => {
+      if (component.name !== "GASEOSA") return [component];
+      if (selectionMode === "fries") {
+        const fries = item.components.find((candidate) => candidate.name === "PAPAS");
+        return [{ name: "PAPAS ADICIONALES", quantity: fries?.quantity ?? component.quantity }];
+      }
+      return [{ name: beverage?.name ?? component.name, quantity: component.quantity }];
+    });
+    addLine({
+      kind: "temporary_menu",
+      id: item.code,
+      name: item.name,
+      sku: item.sku,
+      image_src: item.image_src,
+      unit_price_cop: item.price_cop,
+      additions: [],
+      notes: `Pendiente de integrar costos y consumos · ${components.map((component) => `${component.quantity} ${component.name}`).join(" · ")}`,
+      temporary_menu: {
+        family: item.family,
+        selection_mode: selectionMode,
+        beverage_inventory_item_id: beverage?.id ?? null,
+        beverage_name: beverage?.name ?? null,
+        components
+      }
+    });
+    setTemporaryItem(null);
+    setTemporaryBeverageId("");
+    setStockNotice("");
   }
 
   function openPizzaWizard(flavor: PosPizzaOption) {
@@ -1415,23 +1659,30 @@ export function PosOrderWorkspace({
     setComboWizard(combo);
   }
 
-  function selectComboPizza(slotOrder: number, variantId: string, groupId: string, optionId: string, appendHalf = false) {
+  function selectComboPizza(slotOrder: number, baseSortOrder: number, variantId: string, groupId: string, optionId: string, appendHalf = false) {
     if (!comboWizard) return;
     setComboSelections((current) => {
       const next = { ...current };
       const slotGroups = comboWizard.variants.flatMap((candidate) => candidate.groups)
-        .filter((group) => group.group_kind === "pizza" && group.sort_order === slotOrder);
-      const selectedSlotOptionIds = slotGroups.flatMap((group) => next[group.id] ?? []);
+        .filter((group) => group.group_kind === "pizza" && group.sort_order === baseSortOrder);
+      const slotGroupIds = new Set(slotGroups.map((group) => group.id));
+      const selectedSlotOptionIds = Object.entries(next)
+        .filter(([selectionKey]) => slotGroupIds.has(comboSelectionGroupId(selectionKey)) && comboSelectionSlotOrder(selectionKey, baseSortOrder) === slotOrder)
+        .flatMap(([, optionIds]) => optionIds);
       if (!appendHalf) {
-        for (const group of slotGroups) delete next[group.id];
+        for (const selectionKey of Object.keys(next)) {
+          if (slotGroupIds.has(comboSelectionGroupId(selectionKey)) && comboSelectionSlotOrder(selectionKey, baseSortOrder) === slotOrder) delete next[selectionKey];
+        }
       } else if (selectedSlotOptionIds.includes(optionId) || selectedSlotOptionIds.length >= 2) {
         return current;
       }
-      next[groupId] = appendHalf ? [...(next[groupId] ?? []), optionId] : [optionId];
+      const selectionKey = comboPizzaSelectionKey(groupId, slotOrder);
+      next[selectionKey] = appendHalf ? [...(next[selectionKey] ?? []), optionId] : [optionId];
 
       const selectedVariantIds = Object.entries(next).flatMap(([selectedGroupId, optionIds]) => {
         if (optionIds.length === 0) return [];
-        const selectedVariant = comboWizard.variants.find((candidate) => candidate.groups.some((group) => group.id === selectedGroupId && group.group_kind === "pizza"));
+        const groupId = comboSelectionGroupId(selectedGroupId);
+        const selectedVariant = comboWizard.variants.find((candidate) => candidate.groups.some((group) => group.id === groupId && group.group_kind === "pizza"));
         return selectedVariant ? [selectedVariant.id] : [];
       });
       const appliedVariant = comboWizard.variants
@@ -1453,16 +1704,20 @@ export function PosOrderWorkspace({
     });
   }
 
-  function clearComboPizza(slotOrder: number) {
+  function clearComboPizza(slotOrder: number, baseSortOrder: number) {
     if (!comboWizard) return;
     setComboSelections((current) => {
       const next = { ...current };
-      for (const group of comboWizard.variants.flatMap((candidate) => candidate.groups)) {
-        if (group.group_kind === "pizza" && group.sort_order === slotOrder) delete next[group.id];
+      const slotGroupIds = new Set(comboWizard.variants.flatMap((candidate) => candidate.groups)
+        .filter((group) => group.group_kind === "pizza" && group.sort_order === baseSortOrder)
+        .map((group) => group.id));
+      for (const selectionKey of Object.keys(next)) {
+        if (slotGroupIds.has(comboSelectionGroupId(selectionKey)) && comboSelectionSlotOrder(selectionKey, baseSortOrder) === slotOrder) delete next[selectionKey];
       }
       const remainingVariantIds = Object.entries(next).flatMap(([groupId, optionIds]) => {
         if (optionIds.length === 0) return [];
-        const candidate = comboWizard.variants.find((variant) => variant.groups.some((group) => group.id === groupId && group.group_kind === "pizza"));
+        const rawGroupId = comboSelectionGroupId(groupId);
+        const candidate = comboWizard.variants.find((variant) => variant.groups.some((group) => group.id === rawGroupId && group.group_kind === "pizza"));
         return candidate ? [candidate.id] : [];
       });
       const appliedVariant = comboWizard.variants
@@ -1487,15 +1742,17 @@ export function PosOrderWorkspace({
     if (!variant) return;
     const groupsById = new Map(comboWizard.variants.flatMap((candidate) => candidate.groups).map((group) => [group.id, group]));
     const choiceDrafts: ComboChoice[] = [];
-    for (const [groupId, selected] of Object.entries(comboSelections)) {
+    for (const [selectionKey, selected] of Object.entries(comboSelections)) {
+      const groupId = comboSelectionGroupId(selectionKey);
       const group = groupsById.get(groupId);
       if (!group) continue;
+      const pizzaSlotOrder = group.group_kind === "pizza" ? comboSelectionSlotOrder(selectionKey, group.sort_order) : undefined;
       const slotSelections = group.group_kind === "pizza"
         ? [...groupsById.values()]
             .filter((candidate) => candidate.group_kind === "pizza" && candidate.sort_order === group.sort_order)
-            .flatMap((candidate) => comboSelections[candidate.id] ?? [])
+            .flatMap((candidate) => comboSelections[comboPizzaSelectionKey(candidate.id, pizzaSlotOrder!)] ?? (pizzaSlotOrder === candidate.sort_order ? comboSelections[candidate.id] ?? [] : []))
         : [];
-      const isHalfSelection = group.group_kind === "pizza" && group.quantity_to_choose === 1 && slotSelections.length === 2;
+      const isHalfSelection = group.group_kind === "pizza" && slotSelections.length === 2;
       for (const optionId of selected) {
         const option = group.options.find((item) => item.id === optionId);
         if (!option) continue;
@@ -1510,20 +1767,22 @@ export function PosOrderWorkspace({
           name: option.name,
           presentation: option.presentation,
           unit_price_cop: option.unit_price_cop,
-          pizza_slot_order: group.group_kind === "pizza" ? group.sort_order : undefined,
+          pizza_slot_order: pizzaSlotOrder,
           is_half: isHalfSelection
         });
       }
     }
     for (const group of variant.groups) {
-      const selectedForGroup = group.group_kind === "pizza"
-        ? choiceDrafts.filter((choice) => choice.kind === "pizza" && groupsById.get(choice.group_id)?.sort_order === group.sort_order).length
-        : choiceDrafts.filter((choice) => choice.group_id === group.id).length;
-      const selectedCount = group.group_kind === "pizza" && group.quantity_to_choose === 1 && selectedForGroup === 2 && choiceDrafts
-        .filter((choice) => choice.kind === "pizza" && groupsById.get(choice.group_id)?.sort_order === group.sort_order)
-        .every((choice) => choice.is_half)
-        ? 1
-        : selectedForGroup;
+      const groupChoices = group.group_kind === "pizza"
+        ? choiceDrafts.filter((choice) => choice.kind === "pizza" && groupsById.get(choice.group_id)?.sort_order === group.sort_order)
+        : choiceDrafts.filter((choice) => choice.group_id === group.id);
+      const selectedCount = group.group_kind === "pizza"
+        ? [...groupChoices.reduce((slots, choice) => {
+            const slot = choice.pizza_slot_order ?? group.sort_order;
+            slots.set(slot, [...(slots.get(slot) ?? []), choice]);
+            return slots;
+          }, new Map<number, ComboChoice[]>()).values()].reduce((count, choices) => count + (choices.every((choice) => choice.is_half) ? 1 : choices.length), 0)
+        : groupChoices.length;
       if (group.is_required && selectedCount !== group.quantity_to_choose) {
         setStockNotice(`Selecciona ${group.quantity_to_choose} opcion(es) en ${group.name}.`);
         return;
@@ -1744,6 +2003,7 @@ export function PosOrderWorkspace({
     combo_component_label: line.combo_component_label ?? null,
     combo_is_primary: Boolean(line.combo_is_primary),
     direct_sale: line.direct_sale ?? null,
+    temporary_menu: line.temporary_menu ?? null,
     additions: line.additions.map((addition) => ({
       id: addition.id,
       quantity: addition.quantity,
@@ -1753,11 +2013,11 @@ export function PosOrderWorkspace({
   }));
 
   async function openInventoryPreview() {
-    const inventoryPayload = payload.filter((line) => line.kind !== "direct_sale");
+    const inventoryPayload = payload.filter((line) => line.kind !== "direct_sale" && line.kind !== "temporary_menu");
     if (inventoryPayload.length === 0) {
       setInventoryPreviewOpen(true);
       setInventoryPreviewLoading(false);
-      setInventoryPreviewError("La venta libre no genera consumo de inventario.");
+      setInventoryPreviewError("Estos productos no generan consumo de inventario mientras su integración está pendiente.");
       setInventoryPreview(null);
       return;
     }
@@ -1830,7 +2090,7 @@ export function PosOrderWorkspace({
     window.setTimeout(() => formRef.current?.requestSubmit(), 0);
   }
   function confirmCashPayment(received: number) {
-    if (received < total) return;
+    if (received < cashPaymentTotal) return;
     if (cashSubmitLockRef.current) return;
     cashSubmitLockRef.current = true;
     submittedPaymentMethodRef.current = "cash";
@@ -1852,6 +2112,27 @@ export function PosOrderWorkspace({
     setCashSelectedOption(null);
     submittedPaymentMethodRef.current = null;
     cashSubmitLockRef.current = false;
+  }
+
+  function deferCashCollection() {
+    if (cart.some((line) => line.kind === "direct_sale" && line.direct_sale?.funds_origin === "cash_session")) {
+      setStockNotice("La venta libre usa dinero de caja. Cambia su origen a dinero externo o abre caja antes de continuar.");
+      return;
+    }
+    if (cashSubmitLockRef.current) return;
+    cashSubmitLockRef.current = true;
+    submittedPaymentMethodRef.current = null;
+    flushSync(() => {
+      setPaymentMethod("pending");
+      setCashReceived("");
+      setCashConfirmed(false);
+      setCashSubmitting(false);
+      setCashSelectedOption(null);
+      setCashSessionDecisionOpen(false);
+      setPaymentConfirmed(true);
+      setPaymentSubmitting(true);
+    });
+    formRef.current?.requestSubmit();
   }
 
   function closePaymentConfirmModal() {
@@ -1876,7 +2157,7 @@ export function PosOrderWorkspace({
 
   return (
     <>
-      <form action={action} className="pos-layout" onSubmit={handleOrderSubmit} ref={formRef}>
+      <form action={action} className="pos-layout pos-create-order-layout" onSubmit={handleOrderSubmit} ref={formRef}>
         {editingOrder ? <input name="replace_pending_order_id" type="hidden" value={editingOrder.id} /> : null}
         {editingOrder ? <p className="pos-editing-order-notice">Editando {editingOrder.code}. Al guardar, se reemplazará el pedido pendiente y se recalculará su consumo de inventario.</p> : null}
         <input name="items" type="hidden" value={JSON.stringify(payload)} />
@@ -1891,9 +2172,9 @@ export function PosOrderWorkspace({
         <input name="sale_date" type="hidden" value={canEditSaleDate ? saleDate : ""} />
         <input name="customer_name" type="hidden" value={customerName} />
         <input name="customer_phone" type="hidden" value={customerPhone} />
-        <input name="discount_type" type="hidden" value={platformPayment ? "none" : discount?.type ?? "none"} />
-        <input name="discount_value" type="hidden" value={platformPayment ? 0 : discount?.value ?? 0} />
-        <input name="discount_cop" type="hidden" value={platformPayment ? 0 : discountCop} />
+        <input name="discount_type" type="hidden" value={platformPayment ? "none" : didiMessengerDiscountCop > 0 ? "amount" : discount?.type ?? "none"} />
+        <input name="discount_value" type="hidden" value={platformPayment ? 0 : didiMessengerDiscountCop > 0 ? didiMessengerDiscountCop : discount?.value ?? 0} />
+        <input name="discount_cop" type="hidden" value={platformPayment ? 0 : didiMessengerDiscountCop > 0 ? didiMessengerDiscountCop : discountCop} />
         <input name="delivery_cop" type="hidden" value={deliveryValue} />
         <input name="cash_received_cop" type="hidden" value={paymentMethod === "cash" ? cashReceivedValue : 0} />
         <input name="cash_change_cop" type="hidden" value={paymentMethod === "cash" ? cashChange : 0} />
@@ -1901,13 +2182,15 @@ export function PosOrderWorkspace({
         <input name="notes" type="hidden" value={notes} />
 
         <section className="pos-catalog-panel">
-          <div className="pos-catalog-toolbar">
+          <div className={`pos-catalog-toolbar${productViewSettings.showSearch ? "" : " pos-catalog-toolbar-search-hidden"}`}>
             <div className="pos-tabs">
-              <button className={tab === "pizzas" ? "active" : ""} onClick={() => setTab("pizzas")} type="button">Pizzas</button>
-              <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")} type="button">Productos</button>
-              <button className={tab === "combos" ? "active" : ""} onClick={() => setTab("combos")} type="button">Combos</button>
-              <button className="pos-direct-sale-button" onClick={() => setDirectSaleOpen(true)} type="button"><PackagePlus size={16} /> Venta libre</button>
-              <PendingPaymentsButton paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} />
+              <button aria-label="Pizzas" className={`pos-icon-tab${tab === "pizzas" ? " active" : ""}`} onClick={() => setTab("pizzas")} title="Pizzas" type="button"><Pizza size={18} /></button>
+              <button aria-label="Bebidas y productos" className={`pos-icon-tab${tab === "products" ? " active" : ""}`} onClick={() => setTab("products")} title="Bebidas y productos"><CupSoda size={18} /></button>
+              <button aria-label="Combos" className={`pos-icon-tab pos-combo-icon-tab${tab === "combos" ? " active" : ""}`} onClick={() => setTab("combos")} title="Combos"><span aria-hidden="true" className="pos-combo-tab-icons"><Pizza size={15} /><CupSoda size={15} /></span></button>
+              <button aria-label="Alitas" className={`pos-icon-tab${tab === "wings" ? " active" : ""}`} onClick={() => setTab("wings")} title="Alitas" type="button"><Drumstick size={18} /></button>
+              <button aria-label="Lasañas" className={`pos-icon-tab${tab === "lasagnas" ? " active" : ""}`} onClick={() => setTab("lasagnas")} title="Lasañas" type="button"><Sandwich size={18} /></button>
+              <button className="pos-direct-sale-button" onClick={() => setDirectSaleOpen(true)} type="button"><PackagePlus size={16} /> Libre</button>
+              <PendingPaymentsButton orderTables={orderTables} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} />
               <button
                 aria-label="Configurar vista de productos"
                 className="pos-products-settings-button"
@@ -1918,15 +2201,15 @@ export function PosOrderWorkspace({
                 <Settings size={17} />
               </button>
             </div>
-            <label className="pos-search">
+            {productViewSettings.showSearch ? <label className="pos-search">
               <Search size={18} />
               <input
-                list={tab === "pizzas" ? "pos-pizza-suggestions" : tab === "products" ? "pos-product-suggestions" : "pos-combo-suggestions"}
+                list={tab === "pizzas" ? "pos-pizza-suggestions" : tab === "products" ? "pos-product-suggestions" : tab === "combos" ? "pos-combo-suggestions" : tab === "wings" ? "pos-wing-suggestions" : "pos-lasagna-suggestions"}
                 onChange={(event) => setQuery(uppercaseMasterName(event.target.value))}
                 placeholder="Buscar rapido"
                 value={query}
               />
-            </label>
+            </label> : null}
             <datalist id="pos-pizza-suggestions">
               {pizzaSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
             </datalist>
@@ -1935,6 +2218,12 @@ export function PosOrderWorkspace({
             </datalist>
             <datalist id="pos-combo-suggestions">
               {comboSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+            </datalist>
+            <datalist id="pos-wing-suggestions">
+              {wingSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+            </datalist>
+            <datalist id="pos-lasagna-suggestions">
+              {lasagnaSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
             </datalist>
           </div>
 
@@ -1948,10 +2237,10 @@ export function PosOrderWorkspace({
                     onClick={() => openPizzaWizard(pizza)}
                     type="button"
                   >
-                    <ProductImage alt={pizza.flavor_name} src={pizza.image_src} />
-                    <span className="pos-product-title">{pizza.flavor_name}</span>
-                    <span className="pos-product-meta">{pizza.category_name ?? "Sin categoria"}</span>
-                    <strong>{pizza.min_price_cop === null ? "Sin precio configurado" : `Desde ${formatCop(pizza.min_price_cop)}`}</strong>
+                    {productViewSettings.showPizzaPhoto ? <ProductImage alt={pizza.flavor_name} src={pizza.image_src} /> : null}
+                    {productViewSettings.showPizzaFlavor ? <span className="pos-product-title">{pizza.flavor_name}</span> : null}
+                    {productViewSettings.showPizzaCategory ? <span className="pos-product-meta">{pizza.category_name ?? "Sin categoria"}</span> : null}
+                    {productViewSettings.showPizzaPrice ? <strong>{pizza.min_price_cop === null ? "Sin precio configurado" : `Desde ${formatCop(pizza.min_price_cop)}`}</strong> : null}
                   </button>
                 ))
               : tab === "products" ? filteredProducts.map((product) => (
@@ -1972,7 +2261,7 @@ export function PosOrderWorkspace({
                     {productViewSettings.showStock ? <small className="pos-product-stock">Stock: {formatStockQuantity(product.stock_base, product.unit)}</small> : null}
                   </button>
                 ))
-              : filteredCombos.map((combo) => (
+              : tab === "combos" ? filteredCombos.map((combo) => (
                   <button
                     className="pos-product-card pos-combo-card"
                     disabled={combo.variants.length === 0}
@@ -1985,12 +2274,20 @@ export function PosOrderWorkspace({
                     <span className="pos-product-meta">{combo.description ?? "Elige sabores para conocer el precio del combo."}</span>
                     <span className="pos-combo-card-cta">Elegir combo</span>
                   </button>
+                )) : (tab === "wings" ? filteredWings : filteredLasagnas).map((item) => (
+                  <button className="pos-product-card pos-temporary-menu-card" key={item.code} onClick={() => openTemporaryItem(item)} type="button">
+                    <span className="pos-temporary-menu-visual" aria-hidden="true">{item.family === "wings" ? <Drumstick size={42} /> : <Sandwich size={42} />}</span>
+                    <span className="pos-product-title">{item.name}</span>
+                    <span className="pos-product-meta">{item.description}</span>
+                    <strong>{formatCop(item.price_cop)}</strong>
+                    <small className="pos-temporary-menu-note">Costos y consumos pendientes de integración</small>
+                  </button>
                 ))}
-            {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : filteredCombos.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
+            {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : tab === "combos" ? filteredCombos.length : tab === "wings" ? filteredWings.length : filteredLasagnas.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
           </div>
           {stockNotice ? <p className="form-status error">{stockNotice}</p> : null}
-          {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : filteredCombos.length) > 0 ? (
-            <div className="pos-card-size-controls" aria-label={`Tamano de tarjetas de ${tab === "pizzas" ? "pizzas" : "productos"}`}>
+          {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : tab === "combos" ? filteredCombos.length : tab === "wings" ? filteredWings.length : filteredLasagnas.length) > 0 ? (
+            <div className="pos-card-size-controls" aria-label={`Tamano de tarjetas de ${tab === "pizzas" ? "pizzas" : tab === "wings" ? "alitas" : tab === "lasagnas" ? "lasañas" : "productos"}`}>
               <button disabled={activeCardScale === minCardScale} onClick={() => updateActiveCardScale(-1)} type="button"><Minus size={18} /></button>
               <span>Tarjetas</span>
               <button disabled={activeCardScale === maxCardScale} onClick={() => updateActiveCardScale(1)} type="button"><Plus size={18} /></button>
@@ -1998,7 +2295,7 @@ export function PosOrderWorkspace({
           ) : null}
         </section>
 
-        <aside className="pos-cart-panel">
+        <aside className="pos-cart-panel" ref={cartPanelRef}>
           <div className="pos-cart-header">
             <ShoppingCart size={22} />
             <strong>Pedido</strong>
@@ -2086,6 +2383,8 @@ export function PosOrderWorkspace({
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
                   {line.kind === "direct_sale" ? <small>Venta libre · sin movimiento de inventario</small> : null}
                   {line.kind === "direct_sale" ? <small>Costo compra: {formatCop((line.direct_sale?.acquisition_unit_cost_cop ?? 0) * line.quantity)} · {line.direct_sale?.funds_origin === "cash_session" ? "Dinero de caja" : "Dinero externo"}</small> : null}
+                  {line.kind === "temporary_menu" ? <small className="pos-temporary-menu-note">Costo y consumo pendientes de integración</small> : null}
+                  {line.kind === "temporary_menu" ? <small>{line.temporary_menu?.components.map((component) => `${component.quantity} ${component.name}`).join(" · ")}</small> : null}
                   {line.kind === "combo" ? (
                     <>
                       <small>{line.sku ?? "Sin SKU"} · combo</small>
@@ -2178,20 +2477,12 @@ export function PosOrderWorkspace({
                 const selected = method === "rappi" ? orderChannel === "rappi" : method === "didi" ? orderChannel === "didi" : orderChannel === "direct" && paymentMethod === method;
                 return <button className={selected ? "active" : ""} key={method} onClick={() => {
                   if (method === "rappi") {
-                    setOrderChannel("rappi");
-                    setPaymentMethod("rappi");
+                    selectPlatformDelivery("rappi");
                   } else if (method === "didi") {
-                    setOrderChannel("didi");
-                    setDidiCollectionParty("platform");
-                    setPaymentMethod("didi");
+                    selectPlatformDelivery("didi");
                   } else {
                     setOrderChannel("direct");
                     setPaymentMethod(method);
-                  }
-                  if (method === "rappi" || method === "didi") {
-                    setDiscount(null);
-                    setDiscountInput("");
-                    setDiscountModalOpen(false);
                   }
                 }} type="button">
                   <Icon size={15} /><span>{paymentLabel(method)}</span>
@@ -2200,16 +2491,17 @@ export function PosOrderWorkspace({
             </div>
           </fieldset>
           {orderChannel === "didi" ? <section className="pos-didi-service-panel" aria-label="Configuración del servicio DiDi">
-            <fieldset><legend>Servicio DiDi</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiService === "didi_standard"} className={didiService === "didi_standard" ? "active" : ""} onClick={() => setDidiService("didi_standard")} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Food</span></button><button aria-pressed={didiService === "didi_tu_negocio"} className={didiService === "didi_tu_negocio" ? "active" : ""} onClick={() => setDidiService("didi_tu_negocio")} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Tu Negocio</span></button></div></fieldset>
-            <fieldset><legend>¿Quién paga?</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiCollectionParty === "business"} className={didiCollectionParty === "business" ? "active" : ""} onClick={() => { setDidiCollectionParty("business"); setPaymentMethod("cash"); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Mensajero</span></button><button aria-pressed={didiCollectionParty === "platform"} className={didiCollectionParty === "platform" ? "active" : ""} onClick={() => { setDidiCollectionParty("platform"); setPaymentMethod("didi"); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Cliente por DiDi</span></button></div></fieldset>
+            <fieldset><legend>Servicio DiDi</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiService === "didi_standard"} className={didiService === "didi_standard" ? "active" : ""} onClick={() => selectPlatformDelivery("didi", "didi_standard", didiCollectionParty)} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Food</span></button><button aria-pressed={didiService === "didi_tu_negocio"} className={didiService === "didi_tu_negocio" ? "active" : ""} onClick={() => selectPlatformDelivery("didi", "didi_tu_negocio", didiCollectionParty)} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>DiDi Tu Negocio</span></button></div></fieldset>
+            <fieldset><legend>¿Quién paga?</legend><div className="pos-didi-choice-grid"><button aria-pressed={didiCollectionParty === "business"} className={didiCollectionParty === "business" ? "active" : ""} onClick={() => { setDidiCollectionParty("business"); setPaymentMethod("cash"); setDiscount(null); setDiscountInput(""); setDiscountModalOpen(false); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Mensajero</span></button><button aria-pressed={didiCollectionParty === "platform"} className={didiCollectionParty === "platform" ? "active" : ""} onClick={() => { setDidiCollectionParty("platform"); setPaymentMethod("didi"); }} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>Cliente por DiDi</span></button></div></fieldset>
             {didiCollectionParty === "business" ? <fieldset><legend>Pago recibido por la tienda</legend><div className="pos-didi-choice-grid">{(["cash", "transfer", "mixed", "pending"] as PaymentMethod[]).map((method) => <button aria-pressed={paymentMethod === method} className={paymentMethod === method ? "active" : ""} key={method} onClick={() => setPaymentMethod(method)} type="button"><CheckCircle2 aria-hidden="true" size={15} /><span>{paymentLabel(method)}</span></button>)}</div></fieldset> : null}
           </section> : null}
-          {platformPayment ? (
-            <section className="pos-platform-estimate" aria-label={`Liquidación estimada de ${paymentLabel(platformPayment)}`}>
-              <h2>Liquidación estimada</h2>
+          {usesQuotedPricing ? (
+            <section className="pos-platform-estimate" aria-label={platformPayment ? `Liquidación estimada de ${paymentLabel(platformPayment)}` : "Cobro recibido de DiDi"}>
+              <h2>{platformPayment ? "Liquidación estimada" : "Cobro recibido de DiDi"}</h2>
+              {!platformPayment ? <small>Actualiza cada valor con el comprobante de DiDi. La diferencia se registrará como descuento del pedido.</small> : null}
               <div className="pos-platform-table-wrap">
                 <table className="pos-platform-table">
-                  <thead><tr><th>Producto × Cantidad</th><th>Venta unit.</th><th>Importe</th></tr></thead>
+                  <thead><tr><th>Producto × Cantidad</th><th>{platformPayment ? "Venta unit." : "Cobro unit."}</th><th>Importe</th></tr></thead>
                   <tbody>{platformSettlementEntries.map((line) => (
                     <tr key={line.cart_line_key}>
                       <td><strong>{line.name}</strong><small>{line.quantity} ×{line.detail ? ` · ${line.detail}` : ""}</small></td>
@@ -2217,7 +2509,7 @@ export function PosOrderWorkspace({
                         <div className="pos-platform-unit-input">
                           <span aria-hidden="true">$</span>
                           <input aria-label={`Venta unitaria de ${line.name}`} inputMode="numeric" onChange={(event) => {
-                            if (!platformPayment) return;
+                            if (!usesQuotedPricing) return;
                             const value = Number(event.target.value.replace(/\D/g, "") || 0);
                             setPlatformLineUnitPriceOverrides((current) => ({
                               ...current,
@@ -2225,7 +2517,7 @@ export function PosOrderWorkspace({
                             }));
                           }} value={formatInteger(line.final_unit_cop)} />
                           <button aria-label={`Restablecer venta unitaria de ${line.name}`} className="icon-button pos-platform-unit-reset" onClick={() => {
-                            if (!platformPayment) return;
+                            if (!usesQuotedPricing) return;
                             setPlatformLineUnitPriceOverrides((current) => {
                               const remaining = { ...current[platformOverrideKey] };
                               delete remaining[line.cart_line_key];
@@ -2239,27 +2531,27 @@ export function PosOrderWorkspace({
                   ))}</tbody>
                 </table>
               </div>
-              {hasInvalidPlatformPricing ? <small className="text-danger">La venta unitaria no puede superar el precio original.</small> : null}
+              {hasInvalidPlatformPricing ? <small className="text-danger">El cobro unitario no puede superar el precio original.</small> : null}
             </section>
           ) : null}
           {didiTuNegocioChargeSetting && didiCollectionParty === "business" ? (
             <section className="pos-didi-billing-estimate" aria-label="Factura estimada de DiDi Tu Negocio">
               <h2>Factura DiDi estimada</h2>
-              <span>Venta cobrada por la tienda <strong>{formatCop(total)}</strong></span>
+              <span>Venta cobrada por la tienda <strong>{formatCop(didiMessengerCollectedCop)}</strong></span>
               <span>Monto de facturación DiDi <strong>-{formatCop(didiTuNegocioBillingChargeCop)}</strong></span>
               <span className="pos-didi-billing-net">Neto después de DiDi <strong>{formatCop(didiTuNegocioNetAfterBillingCop)}</strong></span>
               <small>El cobro completo se registra según la forma de pago elegida; la comisión queda pendiente de pago a DiDi.</small>
             </section>
           ) : null}
 
-          {!platformPayment ? <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
+          {!platformPayment && !didiMessengerCollection ? <button className="pos-discount-action" disabled={subtotal <= 0} onClick={openDiscountModal} type="button">
             <BadgePercent size={17} /> {discount ? "Editar descuento" : "Aplicar descuento"}
           </button> : null}
           <div className="pos-total-box">
-            {platformPayment ? <>
+            {usesQuotedPricing ? <>
               <span className="pos-subtotal-line">Subtotal <strong>{formatCop(platformSubtotalCop)}</strong></span>
-              <span className="pos-discount-line">Comisiones <strong>-{formatCop(platformCommissionCop)}</strong></span>
-              <span>Total esperado <strong>{formatCop(platformNetExpectedCop)}</strong></span>
+              <span className="pos-discount-line">{platformPayment ? "Comisiones" : "Ajuste promocional DiDi"} <strong>-{formatCop(platformCommissionCop)}</strong></span>
+              <span>{platformPayment ? "Total esperado" : "Cobro recibido"} <strong>{formatCop(platformNetExpectedCop)}</strong></span>
             </> : <>
               {comboPriceAdjustmentCop !== 0 ? <span className="pos-subtotal-line">Subtotal componentes <strong>{formatCop(subtotalBeforeComboDiscount)}</strong></span> : null}
               {comboPriceAdjustmentCop !== 0 ? <span className={comboPriceAdjustmentCop > 0 ? "pos-subtotal-line" : "pos-discount-line"}>{comboPriceAdjustmentCop > 0 ? "Ajuste combo" : "Descuento combo"} <strong>{comboPriceAdjustmentCop > 0 ? "+" : "-"}{formatCop(Math.abs(comboPriceAdjustmentCop))}</strong></span> : null}
@@ -2268,7 +2560,7 @@ export function PosOrderWorkspace({
               <span>Total <strong>{formatCop(total)}</strong></span>
             </>}
           </div>
-          {discount ? (
+          {!didiMessengerCollection && discount ? (
             <div className="pos-discount-actions">
               <button className="ghost-button" onClick={openDiscountModal} type="button"><Pencil size={14} /> Editar</button>
               <button className="ghost-button" onClick={() => setDiscount(null)} type="button"><X size={14} /> Quitar descuento</button>
@@ -2367,10 +2659,11 @@ export function PosOrderWorkspace({
       {productSettingsOpen ? (
         <ProductViewSettingsModal
           canEditPizzaPhotos={isSystemAdmin && canConfigurePizzaPhotos}
-          onChange={setProductViewSettings}
+          onChange={updateProductViewSettings}
           onClose={() => setProductSettingsOpen(false)}
           pizzas={pizzas}
           settings={productViewSettings}
+          syncNotice={productViewSettingsNotice}
         />
       ) : null}
 
@@ -2401,6 +2694,30 @@ export function PosOrderWorkspace({
           pizzas={pizzas}
           selections={comboSelections}
         />
+      ) : null}
+
+      {temporaryItem ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label={`Configurar ${temporaryItem.name}`} aria-modal="true" className="modal-panel compact-modal pos-temporary-menu-modal" role="dialog">
+            <header className="modal-header">
+              <div><strong>{temporaryItem.name}</strong><span>{temporaryItem.description}</span></div>
+              <button className="icon-button" onClick={() => setTemporaryItem(null)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="pos-temporary-menu-modal-body">
+              <div className="pos-temporary-menu-components">
+                {temporaryItem.components.map((component) => <span key={`${component.name}-${component.quantity}`}><strong>{component.quantity}</strong>{component.name}</span>)}
+              </div>
+              {temporaryItem.allows_fries_substitution ? <div className="pos-temporary-menu-choice" role="radiogroup" aria-label="Acompañamiento">
+                <button aria-checked={temporarySelectionMode === "drink"} className={temporarySelectionMode === "drink" ? "selected" : ""} onClick={() => setTemporarySelectionMode("drink")} role="radio" type="button"><CupSoda size={17} />Gaseosa</button>
+                <button aria-checked={temporarySelectionMode === "fries"} className={temporarySelectionMode === "fries" ? "selected" : ""} onClick={() => setTemporarySelectionMode("fries")} role="radio" type="button"><PackagePlus size={17} />Papas adicionales</button>
+              </div> : null}
+              {temporarySelectionMode === "drink" && temporaryItem.beverage_choice_required ? <label className="field"><span>Gaseosa {temporaryItem.beverage_presentation}</span><select onChange={(event) => setTemporaryBeverageId(event.target.value)} value={temporaryBeverageId}><option value="">Seleccionar gaseosa</option>{saleProducts.filter((product) => product.presentation === temporaryItem.beverage_presentation && product.sale_price_cop > 0).map((product) => <option key={product.id} value={product.id}>{product.name} {product.presentation}</option>)}</select></label> : null}
+              {temporarySelectionMode === "fries" ? <p className="pos-temporary-menu-replacement">La gaseosa se sustituirá por la misma cantidad adicional de papas. El precio del combo no cambia.</p> : null}
+              <small className="pos-temporary-menu-note">Esta venta quedará marcada para integración posterior de costos y consumos; no descontará inventario ni empaques.</small>
+            </div>
+            <footer className="modal-actions"><button className="ghost-button" onClick={() => setTemporaryItem(null)} type="button">Cancelar</button><button className="positive-button" onClick={() => addTemporaryItem(temporaryItem, temporarySelectionMode, temporaryBeverageId)} type="button">Agregar al pedido · {formatCop(temporaryItem.price_cop)}</button></footer>
+          </section>
+        </div>
       ) : null}
 
       {wizard ? (
@@ -2682,6 +2999,53 @@ export function PosOrderWorkspace({
         />
       ) : null}
 
+      {cashSessionDecisionOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Caja requerida para efectivo" aria-modal="true" className="modal-panel compact-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>No hay caja abierta</strong>
+                <span>El efectivo solo se registra en una caja abierta.</span>
+              </div>
+              <button className="icon-button" onClick={() => setCashSessionDecisionOpen(false)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <div className="compact-card">
+              <p className="form-help">Puedes abrirla ahora o confirmar el pedido como pendiente para cobrarlo después. La segunda opción no crea pagos ni movimientos de caja.</p>
+              <div className="form-actions modal-form-actions">
+                <button className="ghost-button" onClick={() => setCashSessionDecisionOpen(false)} type="button">Regresar</button>
+                <button className="secondary-button" onClick={deferCashCollection} type="button">Abrir caja más tarde</button>
+                <button className="primary-button" onClick={() => { setCashSessionDecisionOpen(false); setOpenCashSessionModalOpen(true); }} type="button">Abrir caja</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {openCashSessionModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Abrir caja" aria-modal="true" className="modal-panel compact-modal" role="dialog">
+            <header className="modal-header">
+              <div>
+                <strong>Abrir caja</strong>
+                <span>Registra la base inicial antes de recibir efectivo.</span>
+              </div>
+              <button className="icon-button" onClick={() => setOpenCashSessionModalOpen(false)} title="Cerrar" type="button"><X size={18} /></button>
+            </header>
+            <form action={openCashSession} className="compact-card">
+              <label className="field">
+                <span>Base inicial</span>
+                <input autoFocus inputMode="decimal" min="0" name="opening_cash_cop" placeholder="$ 0" required type="number" />
+              </label>
+              {openCashSessionState.status !== "idle" ? <p className={`form-status ${openCashSessionState.status}`}>{openCashSessionState.message}</p> : null}
+              <div className="form-actions modal-form-actions">
+                <button className="ghost-button" onClick={() => setOpenCashSessionModalOpen(false)} type="button">Cancelar</button>
+                <button className="primary-button" type="submit">Abrir caja</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
       {cashModalOpen ? (
         <div className="modal-backdrop" role="presentation">
           <section aria-label="Cobro en efectivo" aria-modal="true" className="modal-panel cash-payment-modal" role="dialog">
@@ -2696,15 +3060,15 @@ export function PosOrderWorkspace({
             <div className="cash-payment-body">
               <div className="cash-payment-header">
                 <div className="cash-total-display">
-                  <span>Total a pagar</span>
-                  <strong>{formatCop(total)}</strong>
+                  <span>{didiMessengerCollection ? "Cobro recibido" : "Total a pagar"}</span>
+                  <strong>{formatCop(cashPaymentTotal)}</strong>
                 </div>
                 <button
                   className={["cash-exact-button", cashSelectedOption === "exact" ? "selected" : ""].filter(Boolean).join(" ")}
                   onClick={() => {
-                    setCashReceived(String(total));
+                    setCashReceived(String(cashPaymentTotal));
                     setCashSelectedOption("exact");
-                    confirmCashPayment(total);
+                    confirmCashPayment(cashPaymentTotal);
                   }}
                   disabled={cashSubmitting}
                   type="button"
@@ -2805,10 +3169,10 @@ export function PosOrderWorkspace({
                 </span>
                 <span className="cash-summary-change">
                   <Repeat2 size={26} />
-                  Cambio:<strong>{cashReceivedValue >= total ? formatCop(cashChange) : "-"}</strong>
+                  Cambio:<strong>{cashReceivedValue >= cashPaymentTotal ? formatCop(cashChange) : "-"}</strong>
                 </span>
               </div>
-              {cashReceivedValue > 0 && cashReceivedValue < total ? <p className="form-status error">El monto recibido no cubre el total.</p> : null}
+              {cashReceivedValue > 0 && cashReceivedValue < cashPaymentTotal ? <p className="form-status error">El monto recibido no cubre el total.</p> : null}
             </div>
 
             <footer className="form-actions modal-form-actions cash-payment-footer">
@@ -2816,7 +3180,7 @@ export function PosOrderWorkspace({
                 <PaymentPrintSelector onChange={setPrintSelection} value={printSelection} />
                 <button className="ghost-button" onClick={closeCashModal} type="button">Cancelar</button>
               </div>
-              <button className="positive-button" disabled={cashReceivedValue < total || cashSubmitting} onClick={() => confirmCashPayment(cashReceivedValue)} type="button">
+              <button className="positive-button" disabled={cashReceivedValue < cashPaymentTotal || cashSubmitting} onClick={() => confirmCashPayment(cashReceivedValue)} type="button">
                 {cashSubmitting ? "Registrando..." : "Registrar pago"}
               </button>
             </footer>
@@ -2832,7 +3196,7 @@ export function PosOrderWorkspace({
               <button className="icon-button" onClick={closePaymentConfirmModal} title="Cerrar" type="button"><X size={18} /></button>
             </header>
             <div className="payment-confirmation-body">
-              <div className="cash-total-display"><span>{platformPayment ? "Total esperado" : "Total a registrar"}</span><strong>{formatCop(registrationTotalCop)}</strong></div>
+              <div className="cash-total-display"><span>{platformPayment ? "Total esperado" : didiMessengerCollection ? "Cobro recibido" : "Total a registrar"}</span><strong>{formatCop(registrationTotalCop)}</strong></div>
               <div className="payment-confirmation-method"><span>{isPendingPayment ? "Estado de cobro" : "Método de pago"}</span><strong>{paymentLabel(paymentMethod)}</strong></div>
             </div>
             <footer className="form-actions modal-form-actions cash-payment-footer">
@@ -3243,13 +3607,15 @@ function ProductViewSettingsModal({
   onChange,
   onClose,
   pizzas,
-  settings
+  settings,
+  syncNotice
 }: {
   canEditPizzaPhotos: boolean;
   onChange: (settings: ProductViewSettings) => void;
   onClose: () => void;
   pizzas: PosPizzaOption[];
   settings: ProductViewSettings;
+  syncNotice: string;
 }) {
   function updateSetting(key: keyof ProductViewSettings, value: boolean) {
     onChange({ ...settings, [key]: value });
@@ -3261,24 +3627,69 @@ function ProductViewSettingsModal({
         <header className="modal-header">
           <div>
             <strong>Configuración de productos</strong>
-            <span>Preferencias guardadas en este navegador.</span>
+            <span>Preferencias guardadas en tu cuenta.</span>
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
         <div className="pos-products-settings-list">
-          <label>
-            <input checked={settings.showCost} onChange={(event) => updateSetting("showCost", event.target.checked)} type="checkbox" />
-            <span>Mostrar costo</span>
-          </label>
-          <label>
-            <input checked={settings.showStock} onChange={(event) => updateSetting("showStock", event.target.checked)} type="checkbox" />
-            <span>Mostrar stock</span>
-          </label>
-          <label>
-            <input checked={settings.showSoldOut} onChange={(event) => updateSetting("showSoldOut", event.target.checked)} type="checkbox" />
-            <span>Mostrar productos agotados</span>
-          </label>
+          <section className="pos-view-settings-group" aria-labelledby="product-view-settings">
+            <div className="pos-view-settings-heading">
+              <PackageSearch aria-hidden="true" size={17} />
+              <div><strong id="product-view-settings">Productos</strong><span>Información visible en bebidas y otros productos.</span></div>
+            </div>
+            <div className="pos-view-settings-options">
+              <label>
+                <input checked={settings.showCost} onChange={(event) => updateSetting("showCost", event.target.checked)} type="checkbox" />
+                <span>Mostrar costo</span>
+              </label>
+              <label>
+                <input checked={settings.showStock} onChange={(event) => updateSetting("showStock", event.target.checked)} type="checkbox" />
+                <span>Mostrar stock</span>
+              </label>
+              <label>
+                <input checked={settings.showSoldOut} onChange={(event) => updateSetting("showSoldOut", event.target.checked)} type="checkbox" />
+                <span>Mostrar productos agotados</span>
+              </label>
+            </div>
+          </section>
+          <section className="pos-view-settings-group" aria-labelledby="pizza-view-settings">
+            <div className="pos-view-settings-heading">
+              <Star aria-hidden="true" size={17} />
+              <div><strong id="pizza-view-settings">Pizzas</strong><span>Elementos visibles en las tarjetas de sabores.</span></div>
+            </div>
+            <div className="pos-view-settings-options pos-pizza-view-options">
+              <label>
+                <input checked={settings.showPizzaPhoto} onChange={(event) => updateSetting("showPizzaPhoto", event.target.checked)} type="checkbox" />
+                <span>Mostrar foto</span>
+              </label>
+              <label>
+                <input checked={settings.showPizzaFlavor} onChange={(event) => updateSetting("showPizzaFlavor", event.target.checked)} type="checkbox" />
+                <span>Mostrar sabor</span>
+              </label>
+              <label>
+                <input checked={settings.showPizzaCategory} onChange={(event) => updateSetting("showPizzaCategory", event.target.checked)} type="checkbox" />
+                <span>Mostrar categoría</span>
+              </label>
+              <label>
+                <input checked={settings.showPizzaPrice} onChange={(event) => updateSetting("showPizzaPrice", event.target.checked)} type="checkbox" />
+                <span>Mostrar precio desde</span>
+              </label>
+            </div>
+          </section>
+          <section className="pos-view-settings-group" aria-labelledby="interface-view-settings">
+            <div className="pos-view-settings-heading">
+              <Settings aria-hidden="true" size={17} />
+              <div><strong id="interface-view-settings">Interfaz</strong><span>Controles visibles en la cabecera de Crear pedido.</span></div>
+            </div>
+            <div className="pos-view-settings-options pos-interface-view-options">
+              <label>
+                <input checked={settings.showSearch} onChange={(event) => updateSetting("showSearch", event.target.checked)} type="checkbox" />
+                <span>Mostrar buscador</span>
+              </label>
+            </div>
+          </section>
           {canEditPizzaPhotos ? <PosPizzaImageSettings pizzas={pizzas} /> : null}
+          {syncNotice ? <small className={syncNotice.startsWith("Guardado") || syncNotice.startsWith("Guardando") ? "success" : "error"}>{syncNotice}</small> : null}
         </div>
         <footer className="form-actions modal-form-actions"><button className="positive-button" onClick={onClose} type="button">Listo</button></footer>
       </section>
@@ -3556,9 +3967,9 @@ function ComboSelectorModal({
 }: {
   combo: PosComboOption;
   variantId: string | null;
-  onPizzaClear: (slotOrder: number) => void;
+  onPizzaClear: (slotOrder: number, baseSortOrder: number) => void;
   selections: Record<string, string[]>;
-  onPizzaSelect: (slotOrder: number, variantId: string, groupId: string, optionId: string, appendHalf?: boolean) => void;
+  onPizzaSelect: (slotOrder: number, baseSortOrder: number, variantId: string, groupId: string, optionId: string, appendHalf?: boolean) => void;
   onAdd: () => void;
   onClose: () => void;
   pizzas: PosPizzaOption[];
@@ -3569,15 +3980,23 @@ function ComboSelectorModal({
   const pizzaSlots = (combo.variants[0]?.groups ?? [])
     .filter((group) => group.group_kind === "pizza" && group.is_required)
     .sort((left, right) => left.sort_order - right.sort_order)
-    .map((templateGroup) => ({
+    .flatMap((templateGroup) => Array.from({ length: Math.max(1, templateGroup.quantity_to_choose) }, (_, position) => ({
       ...templateGroup,
+      // A group can represent several whole pizzas. Each becomes an independent
+      // selector so its flavor, halves and cart line stay traceable.
+      sort_order: templateGroup.sort_order + position / 1000,
+      base_sort_order: templateGroup.sort_order,
+      position,
       choices: allGroups
         .filter(({ group }) => group.group_kind === "pizza" && group.sort_order === templateGroup.sort_order)
         .flatMap(({ candidate, group }) => group.options.map((option) => ({ candidate, group, option })))
-    }));
+    })));
+  const selectionForSlot = (groupId: string, slot: typeof pizzaSlots[number]) =>
+    selections[comboPizzaSelectionKey(groupId, slot.sort_order)]
+    ?? (slot.sort_order === slot.base_sort_order ? selections[groupId] ?? [] : []);
   const selectedChoicesBySlot = pizzaSlots.map((slot) => ({
     slot,
-    choices: slot.choices.filter(({ group, option }) => (selections[group.id] ?? []).includes(option.id))
+    choices: slot.choices.filter(({ group, option }) => selectionForSlot(group.id, slot).includes(option.id))
   }));
   const selectedPizzaChoices = selectedChoicesBySlot.flatMap(({ slot, choices }) => choices.map((choice) => ({ slot, ...choice })));
   const slotMode = (slot: typeof pizzaSlots[number]): PizzaMode =>
@@ -3591,6 +4010,10 @@ function ComboSelectorModal({
     slot.choices[0]?.option.presentation?.replace(/-([0-9])/, " - $1")
       ?? slot.name
       ?? "esta pizza";
+  const pizzaSlotLabel = (slot: typeof pizzaSlots[number], index: number) =>
+    pizzaSlots.filter((candidate) => candidate.base_sort_order === slot.base_sort_order).length > 1
+      ? `${slot.name || "Pizza"} ${slot.position + 1}`
+      : slot.name || `Pizza ${index + 1}`;
   const slotIsComplete = (slot: typeof pizzaSlots[number]) => {
     const count = selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length ?? 0;
     return count === requiredSelectionsForSlot(slot);
@@ -3605,6 +4028,22 @@ function ComboSelectorModal({
     && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingPizzaTypeSlot.sort_order)?.choices.length ?? 0) === 0
     && slotModes[pendingPizzaTypeSlot.sort_order] === undefined
   );
+  const pendingSlotIndex = pendingSlot ? pizzaSlots.findIndex((slot) => slot.sort_order === pendingSlot.sort_order) : -1;
+  const pendingSelectionCount = pendingSlot
+    ? selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingSlot.sort_order)?.choices.length ?? 0
+    : 0;
+  const pizzaOrdinal = (index: number) => ["primera", "segunda", "tercera", "cuarta"][index] ?? `pizza ${index + 1}`;
+  const pizzaDescriptor = (slot: typeof pizzaSlots[number], index: number) => {
+    const size = pizzaSlotPresentation(slot).replace(/\s*-\s*\d+CM\b/i, "").toLowerCase();
+    return `la ${pizzaOrdinal(index)} pizza ${size}`;
+  };
+  const pendingPizzaDescriptor = pendingSlot ? pizzaDescriptor(pendingSlot, pendingSlotIndex) : "la pizza";
+  const pendingFlavorLabel = pendingSelectionCount === 1 ? "Segundo sabor" : "Primer sabor";
+  const pendingInstruction = needsPizzaTypeChoice
+    ? `Define si ${pendingPizzaDescriptor} será entera o mitad y mitad.`
+    : pendingSlot
+      ? `Elige el ${pendingSelectionCount === 1 ? "segundo" : "primer"} sabor de ${pendingPizzaDescriptor}.`
+      : "Revisa los productos y el precio del combo.";
   const appliedVariant = combo.variants
     .filter((candidate) => selectedPizzaChoices.some((choice) => choice.candidate.id === candidate.id))
     .sort((left, right) => right.sale_price_cop - left.sale_price_cop)[0] ?? null;
@@ -3617,6 +4056,7 @@ function ComboSelectorModal({
       label: choices.map(({ option }) => comboOptionLabel(option)).join(" / "),
       groupName: [...choices].sort((left, right) => right.candidate.sale_price_cop - left.candidate.sale_price_cop)[0]?.candidate.name ?? "",
       slotName: slot.name,
+      slotOrder: slot.sort_order,
       isHalf: choices.length === 2
     }));
   const selectedBeverages = includedProductGroups.flatMap((group) =>
@@ -3643,11 +4083,9 @@ function ComboSelectorModal({
     ? 2 + pizzaSlots.filter((slot) => slotHasHalfEligibleFlavor(slot) && slotModes[slot.sort_order] !== undefined).length + selectedChoicesBySlot.reduce((sum, entry) => sum + Math.min(entry.choices.length, requiredSelectionsForSlot(entry.slot)), 0)
     : totalSteps;
   const stepLabel = needsPizzaTypeChoice
-    ? "Elige el tipo de pizza"
+    ? `Define ${pendingPizzaDescriptor}`
     : pendingSlot
-    ? slotMode(pendingSlot) === "half" && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === pendingSlot.sort_order)?.choices.length ?? 0) === 1
-      ? `Elige el segundo sabor de la pizza: ${pizzaSlotPresentation(pendingSlot)}`
-      : `Elige el sabor de la pizza: ${pizzaSlotPresentation(pendingSlot)}`
+    ? `Elige el ${pendingSelectionCount === 1 ? "segundo" : "primer"} sabor de ${pendingPizzaDescriptor}`
     : "Revisa tu combo";
 
   useEffect(() => {
@@ -3656,27 +4094,27 @@ function ComboSelectorModal({
     return () => window.clearTimeout(timeoutId);
   }, [stepTransitionLabel]);
 
-  function handlePizzaSelect(slotOrder: number, candidateVariantId: string, groupId: string, optionId: string) {
+  function handlePizzaSelect(slotOrder: number, baseSortOrder: number, candidateVariantId: string, groupId: string, optionId: string) {
     const slot = pizzaSlots.find((candidate) => candidate.sort_order === slotOrder);
     const selectingHalf = slot ? slotMode(slot) === "half" : false;
     const nextSlot = pizzaSlots.find((slot) => slot.sort_order > slotOrder);
     if (selectingHalf && slot && (selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slotOrder)?.choices.length ?? 0) === 0) {
-      setStepTransitionLabel(`el segundo sabor de ${slot.name}`);
+      setStepTransitionLabel(`el segundo sabor de ${pizzaDescriptor(slot, pizzaSlots.findIndex((candidate) => candidate.sort_order === slot.sort_order))}`);
     } else if (nextSlot) {
-      setStepTransitionLabel(`la pizza: ${pizzaSlotPresentation(nextSlot)}`);
+      setStepTransitionLabel(`el primer sabor de ${pizzaDescriptor(nextSlot, pizzaSlots.findIndex((candidate) => candidate.sort_order === nextSlot.sort_order))}`);
     }
-    onPizzaSelect(slotOrder, candidateVariantId, groupId, optionId, selectingHalf);
+    onPizzaSelect(slotOrder, baseSortOrder, candidateVariantId, groupId, optionId, selectingHalf);
   }
 
   function changeSlotMode(slot: typeof pizzaSlots[number], mode: PizzaMode) {
     if ((selectedChoicesBySlot.find((entry) => entry.slot.sort_order === slot.sort_order)?.choices.length ?? 0) > 0) {
-      onPizzaClear(slot.sort_order);
+      onPizzaClear(slot.sort_order, slot.base_sort_order);
     }
     setSlotModes((current) => ({ ...current, [slot.sort_order]: mode }));
   }
 
   function resetPizzaType(slot: typeof pizzaSlots[number]) {
-    onPizzaClear(slot.sort_order);
+    onPizzaClear(slot.sort_order, slot.base_sort_order);
     setSlotModes((current) => {
       const next = { ...current };
       delete next[slot.sort_order];
@@ -3690,8 +4128,12 @@ function ComboSelectorModal({
         <header className="modal-header">
           <div>
             <strong>{combo.name}</strong>
-            <span className={stepTransitionLabel ? "pos-combo-step-label is-advancing" : "pos-combo-step-label"}>Paso {currentStep} de {totalSteps} · {stepLabel}</span>
-            <small>{combo.description ?? "Elige las opciones del combo."}</small>
+            <span className={stepTransitionLabel ? "pos-combo-step-label is-advancing" : "pos-combo-step-label"}>Paso {currentStep} de {totalSteps}</span>
+            <div aria-live="polite" className={stepTransitionLabel ? "pos-combo-selection-progress is-advancing" : "pos-combo-selection-progress"}>
+              <span>{pendingSlot ? `Pizza ${pendingSlotIndex + 1} de ${pizzaSlots.length}` : "Configuración completa"}</span>
+              <strong>{pendingSlot ? needsPizzaTypeChoice ? "Tipo de pizza" : pendingFlavorLabel : "Revisa tu combo"}</strong>
+              <small>{pendingInstruction}</small>
+            </div>
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
@@ -3723,7 +4165,7 @@ function ComboSelectorModal({
                   .map(({ candidate, group, option }) => {
                   const projectedPrice = Math.max(candidate.sale_price_cop, ...selectedPizzaChoices.filter((choice) => choice.slot.sort_order !== pendingSlot.sort_order).map((choice) => choice.candidate.sale_price_cop));
                   return (
-                    <button className="pos-product-card pos-second-flavor-card pos-combo-choice-card" key={`${group.id}-${option.id}`} onClick={() => handlePizzaSelect(pendingSlot.sort_order, candidate.id, group.id, option.id)} type="button">
+                    <button className="pos-product-card pos-second-flavor-card pos-combo-choice-card" key={`${group.id}-${option.id}`} onClick={() => handlePizzaSelect(pendingSlot.sort_order, pendingSlot.base_sort_order, candidate.id, group.id, option.id)} type="button">
                       <ProductImage alt={option.name} src={option.image_src} />
                       <span className="pos-product-title">{option.name}</span>
                       <strong>Combo {formatCop(projectedPrice)}</strong>
@@ -3734,12 +4176,12 @@ function ComboSelectorModal({
             </WizardStep>
           </div> : <div className="pos-combo-catalog pos-combo-review-body"><WizardStep title="Revisa tu combo">
             <div className="pos-combo-review-list">
-              {selectedPizzas.map((item) => {
-                const slot = pizzaSlots.find((candidate) => candidate.name === item.slotName);
+              {selectedPizzas.map((item, index) => {
+                const slot = pizzaSlots.find((candidate) => candidate.sort_order === item.slotOrder);
                 return (
-                  <div className="pos-combo-review-row" key={`pizza-${item.slotName}`}>
-                    <div><span>{item.slotName}{item.isHalf ? " · Mitad y mitad" : ""}</span><strong>1x {item.label}</strong></div>
-                    {slot ? <button className="ghost-button" onClick={() => onPizzaClear(slot.sort_order)} type="button">Cambiar</button> : null}
+                  <div className="pos-combo-review-row" key={`pizza-${item.slotOrder}`}>
+                    <div><span>{slot ? `${pizzaSlotLabel(slot, index)}${item.isHalf ? " · Mitad y mitad" : ""}` : item.slotName}</span><strong>1x {item.label}</strong></div>
+                    {slot ? <button className="ghost-button" onClick={() => onPizzaClear(slot.sort_order, slot.base_sort_order)} type="button">Cambiar</button> : null}
                   </div>
                 );
               })}
@@ -3754,7 +4196,7 @@ function ComboSelectorModal({
         </div>
         <footer className="pos-wizard-footer pos-combo-selector-footer">
           <div className="pos-combo-footer-summary" aria-live="polite">
-            {pizzaSlots.map((slot, index) => <div key={slot.id}><span>{slot.name || `Pizza ${index + 1}`}</span><strong>{selectedPizzas[index]?.label ?? "Selecciona un sabor"}</strong></div>)}
+            {pizzaSlots.map((slot, index) => <div key={`${slot.id}:${slot.sort_order}`}><span>{pizzaSlotLabel(slot, index)}</span><strong>{selectedPizzas[index]?.label ?? "Selecciona un sabor"}</strong></div>)}
             <div><span>Bebida</span><strong>{footerBeverages.length ? footerBeverages.join(" · ") : "Incluida"}</strong></div>
             <div className="pos-combo-footer-price"><span>Precio combo</span><strong>{variant ? formatCop(variant.sale_price_cop) : needsPizzaTypeChoice ? `Desde ${formatCop(minimumComboPrice)}` : "Por definir"}</strong></div>
           </div>

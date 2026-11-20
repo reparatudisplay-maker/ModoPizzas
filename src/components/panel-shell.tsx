@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BadgePercent, Banknote, ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, Menu, Package, PackagePlus, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, Wallet } from "lucide-react";
+import { ChartNoAxesCombined, ChefHat, ChevronDown, ClipboardList, Factory, FilePenLine, HandCoins, Home, Menu, Package, Pizza, Plus, Printer, ReceiptText, Settings, ShoppingCart, Tags, Thermometer, Truck, UserCog, UtensilsCrossed, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -144,23 +144,20 @@ export function PanelShell({ children, title, subtitle = "", userEmail, roleName
     { key: "gastos-categorias", href: "/panel/gastos/categorias", label: "Categorias de gasto", icon: Tags, show: canAccess("gastos") }
   ];
   const cashLinks: NavLink[] = [
-    { key: "caja-estado", href: "/panel/caja", label: "Estado / Apertura", icon: Wallet, show: canAccess("caja") },
+    { key: "caja-estado", href: "/panel/caja", label: "Apertura y cierre", icon: Wallet, show: canAccess("caja") },
     { key: "caja-movimientos", href: "/panel/caja/movimientos", label: "Movimientos", icon: ReceiptText, show: canAccess("caja") },
-    { key: "caja-cierre", href: "/panel/caja/cierre", label: "Cierre de caja", icon: Banknote, show: canAccess("caja") },
     { key: "caja-liquidaciones", href: "/panel/caja/liquidaciones", label: "Liquidaciones", icon: ReceiptText, show: canAccess("caja") }
   ];
   const kitchenLinks: NavLink[] = [
     { key: "cocina", href: "/panel/cocina", label: "Pedidos en cocina", icon: ChefHat, show: canAccess("cocina") }
   ];
   const menuMainLinks: NavLink[] = [
-    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Recetas", icon: Pizza, show: canAccess("menu") },
-    { key: "menu-empaques", href: "/panel/menu/empaques", label: "Empaques", icon: PackagePlus, show: canAccess("menu") }
+    { key: "menu-familias", href: "/panel/menu/familias", label: "Familias", icon: UtensilsCrossed, show: canAccess("menu") },
+    { key: "menu-pizzas", href: "/panel/menu/pizzas", label: "Pizzas", icon: Pizza, show: canAccess("menu") }
   ];
 const menuPriceLinks: NavLink[] = [
   { key: "menu-precios-pizzas", href: "/panel/menu/precios/pizzas", label: "Pizzas", icon: ReceiptText, show: canAccess("menu") },
-  { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") },
-  { key: "menu-precios-combos", href: "/panel/menu/precios/combos", label: "Combos", icon: BadgePercent, show: canAccess("menu") },
-  { key: "menu-precios-adiciones", href: "/panel/menu/precios/adiciones", label: "Adiciones", icon: Plus, show: canAccess("menu") }
+  { key: "menu-precios-productos", href: "/panel/menu/precios/productos", label: "Productos", icon: Package, show: canAccess("menu") }
 ];
   const productionLinks: NavLink[] = [
     { key: "produccion-registrar", href: "/panel/produccion/registrar", label: "Producciones", icon: Plus, show: canAccess("produccion") },
@@ -185,8 +182,8 @@ const menuPriceLinks: NavLink[] = [
   const expensesActive = expenseLinks.some((link) => link.key === active);
   const cashActive = cashLinks.some((link) => link.key === active);
   const kitchenActive = kitchenLinks.some((link) => link.key === active);
-  const menuPricesActive = menuPriceLinks.some((link) => link.key === active);
-  const menuActive = menuMainLinks.some((link) => link.key === active) || menuPricesActive;
+  const menuPricesActive = menuPriceLinks.some((link) => link.key === active) || active === "menu-precios-combos" || active === "menu-precios-adiciones";
+  const menuActive = menuMainLinks.some((link) => link.key === active) || active === "menu-empaques" || menuPricesActive;
   const productionActive = active === "produccion" || productionLinks.some((link) => link.key === active);
   const reportsActive = reportLinks.some((link) => link.key === active);
   const settingsActive = adminLinks.some((link) => link.key === active);
@@ -280,8 +277,8 @@ const menuPriceLinks: NavLink[] = [
   };
 
   const menuRootItems: RootItem[] = [
-    { kind: "link", key: "menu-pizzas", link: menuMainLinks[0] },
-    { kind: "link", key: "menu-empaques", link: menuMainLinks[1] },
+    { kind: "link", key: "menu-familias", link: menuMainLinks[0] },
+    { kind: "link", key: "menu-pizzas", link: menuMainLinks[1] },
     { kind: "group", key: "menu-prices", label: "Precios", title: "Precios", icon: ReceiptText, show: canAccess("menu"), active: menuPricesActive, links: menuPriceLinks }
   ];
 
@@ -331,6 +328,7 @@ const menuPriceLinks: NavLink[] = [
           <span>{item.label}</span>
           <ChevronDown className="submenu-chevron" size={16} />
         </summary>
+        {item.key === "menu" ? <Link aria-label="Agregar familia de menú" className="menu-family-create-link" href="/panel/menu/familias" title="Agregar familia"><Plus size={15} /></Link> : null}
         <div>
           {item.nested
             ? nested.map((nestedItem) => {

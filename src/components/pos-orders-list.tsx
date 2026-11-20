@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgeCheck, Banknote, Ban, CalendarClock, CheckCircle2, CheckSquare, ChefHat, CircleDollarSign, ClipboardList, CreditCard, Eye, MapPinned, Pizza, ReceiptText, Search, Settings, ShoppingBag, Store, Trash2, UserRound, UserRoundCog, WalletCards, X } from "lucide-react";
+import { BadgeCheck, Ban, CalendarClock, CheckCircle2, CheckSquare, ChefHat, CircleDollarSign, ClipboardList, CreditCard, Eye, MapPinned, Pizza, ReceiptText, Search, Settings, ShoppingBag, Store, Trash2, UserRound, UserRoundCog, WalletCards, X } from "lucide-react";
 import {
   cancelPosOrder,
   deletePosOrderForTesting,
@@ -51,7 +51,7 @@ export type PosOrderListRow = {
   }>;
   items: Array<{
     id: string;
-    item_kind: "pizza" | "sale_product";
+    item_kind: "pizza" | "sale_product" | "temporary_menu";
     quantity: number;
     product_name_snapshot: string;
     sku_snapshot: string | null;
@@ -81,13 +81,20 @@ export type PosOrderListRow = {
   }>;
 };
 
+type ChargedItemAmount = {
+  total_cop: number;
+  unit_cop: number;
+};
+
 const initialState: FormActionState = { status: "idle", message: "" };
 const orderColumnsKey = "modopizzas.pos-orders.columns";
+const orderColumnsVersionKey = "modopizzas.pos-orders.columns-version";
+const orderColumnsVersion = "2";
 const orderColumnWidthsKey = "modopizzas.pos-orders.column-widths";
 type OrderColumn = "code" | "kind" | "customer" | "user" | "summary" | "items" | "subtotal" | "combo_adjustment" | "discount" | "delivery" | "total" | "payment" | "status" | "date" | "time" | "actions";
 type DatePreset = "" | "today" | "yesterday" | "week" | "last_15_days" | "current_month" | "previous_month";
 const allOrderColumns: OrderColumn[] = ["code", "kind", "customer", "user", "summary", "items", "subtotal", "combo_adjustment", "discount", "delivery", "total", "payment", "status", "date", "time", "actions"];
-const defaultOrderColumns: OrderColumn[] = ["code", "kind", "user", "summary", "combo_adjustment", "total", "payment", "status", "date", "actions"];
+const defaultOrderColumns: OrderColumn[] = ["code", "kind", "summary", "total", "payment", "status", "date", "actions"];
 const orderColumnLabels: Record<OrderColumn, string> = {
   code: "Código",
   kind: "Tipo",
@@ -102,14 +109,38 @@ const orderColumnLabels: Record<OrderColumn, string> = {
   total: "Total",
   payment: "Pago",
   status: "Estado",
-  date: "Fecha venta",
+  date: "Fecha y hora",
   time: "Hora",
   actions: "Acciones"
 };
 
+function chargedItemAmounts(order: PosOrderListRow): ChargedItemAmount[] {
+  const grossByItem = order.items.map((item) => item.line_subtotal_cop + item.additions.reduce((sum, addition) => sum + addition.line_subtotal_cop, 0));
+  const grossCents = grossByItem.map((amount) => Math.max(0, Math.round(amount * 100)));
+  const grossTotalCents = grossCents.reduce((sum, amount) => sum + amount, 0);
+  const collectedCents = Math.max(0, Math.round((order.total_cop - order.delivery_cop) * 100));
+  let allocatedCents = 0;
+
+  return order.items.map((item, index) => {
+    const isLastItem = index === order.items.length - 1;
+    const totalCents = grossTotalCents <= 0
+      ? 0
+      : isLastItem
+        ? Math.max(0, collectedCents - allocatedCents)
+        : Math.round(grossCents[index] * collectedCents / grossTotalCents);
+    allocatedCents += totalCents;
+    const total_cop = totalCents / 100;
+    return { total_cop, unit_cop: item.quantity > 0 ? total_cop / item.quantity : total_cop };
+  });
+}
+
 function initialOrderColumns() {
   if (typeof window === "undefined") return defaultOrderColumns;
   try {
+    if (window.localStorage.getItem(orderColumnsVersionKey) !== orderColumnsVersion) {
+      window.localStorage.setItem(orderColumnsVersionKey, orderColumnsVersion);
+      return defaultOrderColumns;
+    }
     const parsed = JSON.parse(window.localStorage.getItem(orderColumnsKey) ?? "[]");
     const columns = Array.isArray(parsed) ? parsed.filter((item): item is OrderColumn => allOrderColumns.includes(item)) : [];
     if (columns.length === 0) return defaultOrderColumns;
@@ -346,16 +377,14 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
       case "total": return formatCop(order.total_cop);
       case "payment": return paymentLabel(order.payment_method);
       case "status": return <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{statusLabel(order.status)}</span>;
-      case "date": return new Date(order.ordered_at).toLocaleDateString("es-CO", { timeZone: "America/Bogota" });
+      case "date": return formatDateTime(order.ordered_at);
       case "time": return new Date(order.ordered_at).toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" });
       case "actions": return (
-        <>
+        <span className="order-row-actions">
           <button className="icon-button" onClick={() => setDetailOrder(order)} title={`Ver detalle de ${order.code}`} type="button"><Eye size={16} /></button>
-          {canEditOperationalDate ? <button className="icon-button" onClick={() => setDateOrder(order)} title={`Editar fecha de ${order.code}`} type="button"><CalendarClock size={16} /></button> : null}
-          {canEditPayment && order.status !== "cancelled" ? <button className="icon-button" onClick={() => setPaymentOrder(order)} title={`Editar pago de ${order.code}`} type="button"><WalletCards size={16} /></button> : null}
           {order.status !== "cancelled" && order.status !== "delivered" ? <CancelOrderButton id={order.id} /> : null}
           {canDeleteForTests && order.status !== "cancelled" ? <button className="icon-button danger-button" onClick={() => void openDeletion(order)} title={`Eliminar ${order.code} en modo pruebas`} type="button"><Trash2 size={16} /></button> : null}
-        </>
+        </span>
       );
     }
   };
@@ -447,7 +476,7 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
           </section>
         </div>
       ) : null}
-      {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
+      {detailOrder ? <PosOrderDetailModal canEditOperationalDate={canEditOperationalDate} canEditPayment={canEditPayment} onEditDate={() => { setDateOrder(detailOrder); setDetailOrder(null); }} onEditPayment={() => { setPaymentOrder(detailOrder); setDetailOrder(null); }} order={detailOrder} onClose={() => setDetailOrder(null)} /> : null}
       {dateOrder ? <OperationalDateModal order={dateOrder} onClose={() => setDateOrder(null)} /> : null}
       {paymentOrder ? <PaymentMethodModal order={paymentOrder} onClose={() => setPaymentOrder(null)} /> : null}
       {deletionOrder ? <DeletePosOrderTestModal key={`${deletionOrder.id}:${deletionPreview ? "loaded" : "loading"}`} error={deletionPreviewError} loading={deletionPreviewLoading} order={deletionOrder} preview={deletionPreview} onClose={closeDeletion} /> : null}
@@ -456,14 +485,9 @@ export function PosOrdersList({ canDeleteForTests, canEditOperationalDate, canEd
 }
 
 function OrderSummary({ order }: { order: PosOrderListRow }) {
-  const visibleItems = order.items.slice(0, 2);
-  const hiddenCount = Math.max(0, order.items.length - visibleItems.length);
-  return (
-    <div className="order-row-summary">
-      {visibleItems.map((item) => <span key={item.id}>{item.quantity}× {item.product_name_snapshot}</span>)}
-      {hiddenCount > 0 ? <small>+{hiddenCount} productos más</small> : null}
-    </div>
-  );
+  const chargedAmounts = chargedItemAmounts(order);
+  const summary = order.items.map((item, index) => `${item.quantity}× ${item.product_name_snapshot} · ${formatCop(chargedAmounts[index]?.total_cop ?? 0)}`).join(" · ");
+  return <span className="order-row-summary" title={summary}>{summary || "Sin ítems"}</span>;
 }
 
 function CancelOrderButton({ id }: { id: string }) {
@@ -826,7 +850,7 @@ function UpdatePaymentMethodButton({ disabled }: { disabled: boolean }) {
   return <button className="primary-button" disabled={pending || disabled} type="submit">{pending ? "Actualizando..." : "Actualizar pago"}</button>;
 }
 
-function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClose }: { canEditOperationalDate: boolean; onEditDate: () => void; order: PosOrderListRow; onClose: () => void }) {
+function PosOrderDetailModal({ canEditOperationalDate, canEditPayment, onEditDate, onEditPayment, order, onClose }: { canEditOperationalDate: boolean; canEditPayment: boolean; onEditDate: () => void; onEditPayment: () => void; order: PosOrderListRow; onClose: () => void }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
@@ -837,6 +861,7 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
 
   const cashPayment = order.payments.find((payment) => payment.method === "cash");
   const kitchenItems = order.items.flatMap((item) => item.kitchen);
+  const chargedAmounts = chargedItemAmounts(order);
   const comboPriceAdjustmentCop = Number(order.combo_price_adjustment_cop ?? 0);
   const normalizedComboPriceAdjustmentCop = Number.isFinite(comboPriceAdjustmentCop) ? comboPriceAdjustmentCop : 0;
   const hasPriceBreakdown = normalizedComboPriceAdjustmentCop !== 0 || order.discount_cop > 0 || order.delivery_cop > 0;
@@ -852,32 +877,27 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
       <section aria-label={`Detalle del pedido ${order.code}`} aria-modal="true" className="modal-panel order-detail-modal" role="dialog">
         <header className="modal-header order-detail-header">
           <div className="order-detail-header-main">
-            <div className="order-detail-header-copy">
-              <span className="order-detail-header-icon"><ShoppingBag size={18} /></span>
-              <div>
-                <h2>Pedido <b>{order.code}</b></h2>
-                <span>Venta: {formatDateTime(order.ordered_at)}</span>
-                <small>Detalle completo del pedido en Modo Pizzas.</small>
-              </div>
-            </div>
             <div className="order-detail-header-actions">
-              <KitchenTicketPrintButton orderCode={order.code} orderId={order.id} />
-              <CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} />
+              <span className="order-detail-print-action"><KitchenTicketPrintButton orderCode={order.code} orderId={order.id} /></span>
+              <span className="order-detail-print-action"><CustomerReceiptPrintButton orderCode={order.code} orderId={order.id} /></span>
               {canEditOperationalDate ? <button className="ghost-button kitchen-ticket-trigger" onClick={onEditDate} type="button"><CalendarClock size={13} /> Editar fecha</button> : null}
+              {canEditPayment && order.status !== "cancelled" ? <button className="ghost-button kitchen-ticket-trigger" onClick={onEditPayment} type="button"><WalletCards size={13} /> Editar pago</button> : null}
             </div>
           </div>
           <button className="icon-button order-detail-close-button" onClick={onClose} title="Cerrar" type="button"><X size={16} /></button>
-          <section className="order-detail-overview" aria-label="Resumen operativo">
-            <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{order.status === "cancelled" ? <Ban size={14} /> : <CheckCircle2 size={14} />}{statusLabel(order.status)}</span>
-            <span className="order-detail-badge"><Store size={14} />{kindLabel(order.kind)}</span>
-            <span className="order-detail-badge"><Banknote size={14} />{paymentLabel(order.payment_method)}</span>
-            <span className={`order-detail-badge ${order.payment_method === "pending" ? "pending" : ""}`}><BadgeCheck size={14} />{paymentStatus}</span>
-          </section>
         </header>
         <div className="order-detail-content">
 
           <section className="order-detail-section order-detail-section-general" aria-label="Información general">
-            <h3><ClipboardList size={19} /> Información general</h3>
+            <div className="order-detail-section-heading order-detail-general-heading">
+              <h3><ClipboardList size={19} /> Información general</h3>
+              <div className="order-detail-general-order-meta" aria-label={`Resumen del pedido ${order.code}`}>
+                <ShoppingBag size={15} />
+                <strong>Pedido {order.code}</strong>
+                <span>{formatDateTime(order.ordered_at)}</span>
+                <span className={`stock-pill ${order.status === "cancelled" ? "danger" : "ok"}`}>{order.status === "cancelled" ? <Ban size={13} /> : <CheckCircle2 size={13} />}{statusLabel(order.status)}</span>
+              </div>
+            </div>
             <div className="order-detail-general">
               <div><UserRound size={16} /><span>Cliente</span><strong>{order.customer_name ?? "Sin cliente"}</strong></div>
               {order.customer_phone ? <div><UserRound size={16} /><span>Teléfono</span><strong>{order.customer_phone}</strong></div> : null}
@@ -894,10 +914,11 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
           <section className="order-detail-section order-detail-section-items" aria-label="Items del pedido">
             <h3><Pizza size={19} /> Items</h3>
             <div className="order-detail-items">
-              {order.items.map((item) => {
+              {order.items.map((item, index) => {
                 const presentation = item.item_kind === "sale_product" && item.presentation_quantity !== null && item.presentation_unit
                   ? formatPresentationQuantity(item.presentation_quantity, item.presentation_unit)
                   : null;
+                const chargedAmount = chargedAmounts[index];
                 return (
                   <article className="order-detail-item" key={item.id}>
                     <div className="order-detail-item-copy">
@@ -910,8 +931,8 @@ function PosOrderDetailModal({ canEditOperationalDate, onEditDate, order, onClos
                       </div>
                     </div>
                     <div className="order-detail-line-total">
-                      <small>Unitario {formatCop(item.unit_price_cop)}</small>
-                      <strong>{formatCop(item.line_subtotal_cop)}</strong>
+                      <small>Unitario cobrado {formatCop(chargedAmount?.unit_cop ?? 0)}</small>
+                      <strong>{formatCop(chargedAmount?.total_cop ?? 0)}</strong>
                     </div>
                   </article>
                 );

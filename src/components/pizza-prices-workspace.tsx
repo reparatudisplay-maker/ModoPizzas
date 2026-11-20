@@ -2,7 +2,7 @@
 
 import { useActionState, useCallback, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Pencil, Plus, Save, Settings, Trash2, X } from "lucide-react";
+import { CheckCircle2, PauseCircle, Pencil, Pizza, Plus, Save, Settings, Tags, Trash2, X } from "lucide-react";
 import { deletePizzaPrice, savePizzaPrice, savePizzaSizeBaseSource, savePizzaSizeComponentQuantities, type FormActionState } from "@/app/admin/actions";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
 
@@ -268,6 +268,8 @@ export function PizzaPricesWorkspace({
       return matchesQuery && matchesStatus && matchesCategory && matchesSize;
     });
   }, [categoryFilter, normalizedQuery, prices, sizeFilter, status]);
+  const activePriceCount = prices.filter((price) => price.is_active).length;
+  const inactivePriceCount = prices.length - activePriceCount;
 
   function toggleColumn(column: PriceColumn) {
     setColumns((current) => (current.includes(column) ? current.filter((item) => item !== column) : [...current, column]));
@@ -275,7 +277,14 @@ export function PizzaPricesWorkspace({
 
   return (
     <>
-      <section className="form-panel">
+      <section className="pizza-prices-workspace">
+        <div className="pizza-workspace-metrics pizza-price-metrics" aria-label="Resumen de precios de pizzas">
+          <article><span><Pizza size={20} /></span><div><small>Precios configurados</small><strong>{prices.length}</strong></div></article>
+          <article className="success"><span><CheckCircle2 size={20} /></span><div><small>Activos</small><strong>{activePriceCount}</strong></div></article>
+          <article className="muted"><span><PauseCircle size={20} /></span><div><small>Inactivos</small><strong>{inactivePriceCount}</strong></div></article>
+          <article><span><Tags size={20} /></span><div><small>Categorías</small><strong>{categories.filter((category) => category.is_active).length}</strong></div></article>
+        </div>
+      <section className="form-panel pizza-prices-panel">
         <div className="section-title-row inventory-toolbar-row">
           <h2>Precios de pizzas</h2>
           <div className="purchase-toolbar">
@@ -362,6 +371,7 @@ export function PizzaPricesWorkspace({
             </tbody>
           </table>
         </div>
+      </section>
       </section>
       {modal !== undefined ? (
         <PizzaPriceModal

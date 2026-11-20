@@ -38,7 +38,7 @@ type OrderRow = {
   }>;
   pos_order_items: Array<{
     id: string;
-    item_kind: "pizza" | "sale_product";
+    item_kind: "pizza" | "sale_product" | "temporary_menu";
     quantity: number;
     product_name_snapshot: string;
     sku_snapshot: string | null;

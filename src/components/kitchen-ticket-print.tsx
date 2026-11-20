@@ -5,7 +5,7 @@ import { Download, LoaderCircle, Printer, X } from "lucide-react";
 import { getKitchenTicket, getPrintTemplates, type KitchenTicket } from "@/app/admin/actions";
 import { PrintTemplateBlankLines, PrintTemplateCustomElement, PrintTemplateElementFrame, PrintTemplatePart } from "@/components/print-template-elements";
 import { defaultPrintTemplate, type PrintTemplate, type PrintTemplateElement } from "@/lib/print-templates";
-import { formatStockQuantity } from "@/lib/units";
+import { canonicalStockUnit, formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
 import { canUseBrowserPrint, printThermalDocuments } from "@/lib/thermal-print";
 import { downloadThermalPdf, shareOrOpenThermalPdf } from "@/lib/thermal-pdf";
 import { getBleErrorMessage, printBleThermalDocuments, shouldUseBlePrinter } from "@/lib/ble-thermal-printer";
@@ -25,8 +25,18 @@ function kindLabel(kind: string) {
   return "Local";
 }
 
-function formatQuantity(quantity: number, unit: Parameters<typeof formatStockQuantity>[1]) {
+function formatQuantity(quantity: number, unit: StockUnit) {
+  if (canonicalStockUnit(unit) === "g") {
+    const grams = unit === "kg" ? quantity * 1000 : quantity;
+    return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Math.round(grams))} G`;
+  }
   return formatStockQuantity(quantity, unit);
+}
+
+function deliveryLabel(item: KitchenTicket["items"][number]) {
+  const presentation = item.presentation ? formatPresentationQuantity(item.presentation.quantity, item.presentation.unit) : "";
+  if (!presentation || item.name.toLocaleUpperCase("es-CO").includes(presentation.toLocaleUpperCase("es-CO"))) return item.name;
+  return `${item.name} ${presentation}`;
 }
 
 function baseLabel(item: KitchenTicket["items"][number]) {
@@ -72,11 +82,9 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
             </header>
 
             {item.base ? (
-              <div className="kitchen-ticket-group">
+              <div className="kitchen-ticket-group kitchen-ticket-base">
+                <PrintTemplatePart as="b" element={element} part="title">BASE</PrintTemplatePart>
                 <p><PrintTemplatePart element={element} part="label">{baseLabel(item)}</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{formatQuantity(item.base.quantity, item.base.unit)}</PrintTemplatePart></p>
-                {item.base.production_batches.map((batch, batchIndex) => (
-                  <PrintTemplatePart as="small" element={element} key={`${batch.production_number}-${batchIndex}`} part="value">Producción P{batch.production_number ?? "—"} · {formatQuantity(batch.quantity, batch.unit)}</PrintTemplatePart>
-                ))}
               </div>
             ) : null}
 
@@ -90,9 +98,13 @@ export const KitchenTicketDocument = ({ compact = false, template = defaultPrint
   );
   const fields: Record<string, (element: PrintTemplateElement) => ReactNode> = {
     kitchen_header: (element) => <header className="kitchen-ticket-header"><PrintTemplatePart as="strong" element={element} part="title">COMANDA DE COCINA</PrintTemplatePart><PrintTemplatePart as="b" element={element} part="value">{ticket.order.code}</PrintTemplatePart></header>,
-    kitchen_order: (element) => <div className="kitchen-ticket-order-notes"><PrintTemplatePart element={element} part="value">{kindLabel(ticket.order.kind)} · {formatTicketDate(ticket.order.ordered_at)}</PrintTemplatePart></div>,
+    kitchen_order: (element) => <div className="kitchen-ticket-order-notes kitchen-ticket-order-meta">
+      <PrintTemplatePart element={element} part="value">
+        {[ticket.order.kind === "local" ? ticket.order.table_name : null, kindLabel(ticket.order.kind), formatTicketDate(ticket.order.ordered_at)].filter(Boolean).join(" - ")}
+      </PrintTemplatePart>
+    </div>,
     kitchen_pizzas: pizzaSection,
-    kitchen_delivery: (element) => deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><PrintTemplatePart as="b" element={element} part="title">PARA ENTREGAR</PrintTemplatePart><ul>{deliveryItems.map((item) => <li key={item.id}><PrintTemplatePart element={element} part="value">{item.quantity} × {item.name}</PrintTemplatePart></li>)}</ul></section> : null,
+    kitchen_delivery: (element) => deliveryItems.length > 0 ? <section className="kitchen-ticket-delivery"><PrintTemplatePart as="b" element={element} part="title">PARA ENTREGAR</PrintTemplatePart><ul>{deliveryItems.map((item) => <li key={item.id}><PrintTemplatePart element={element} part="value">{item.quantity} × {deliveryLabel(item)}</PrintTemplatePart></li>)}</ul></section> : null,
     kitchen_summary: (element) => pizzaItems.length > 1 ? <section className="kitchen-ticket-summary">
       <PrintTemplatePart as="b" element={element} part="title">RESUMEN OPERATIVO</PrintTemplatePart>
       <p><PrintTemplatePart element={element} part="label">TOTAL PIZZAS</PrintTemplatePart><PrintTemplatePart as="strong" element={element} part="value">{ticket.summary.pizza_count}</PrintTemplatePart></p>

@@ -35,6 +35,175 @@ export type FormActionState = {
   message: string;
 };
 
+function menuFamilySlug(value: string) {
+  return normalizeMasterText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export async function saveMenuFamily(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const description = getOptionalString(formData, "description");
+  const slug = menuFamilySlug(name);
+
+  if (!name || !slug) return { status: "error", message: "Ingresa un nombre válido para la familia." };
+
+  const { error } = await supabase.rpc("create_menu_family", {
+    p_name: name,
+    p_slug: slug,
+    p_description: description
+  });
+  if (error) {
+    if (/create_menu_family|menu_families|schema cache|does not exist/i.test(error.message)) {
+      return { status: "error", message: "La arquitectura de familias aún no está instalada. Aplica primero la migración 0157." };
+    }
+    return { status: "error", message: /duplicate|unique/i.test(error.message) ? "Ya existe una familia con ese nombre." : error.message };
+  }
+
+  revalidatePath("/panel/menu/familias");
+  return { status: "success", message: "Familia creada. Ahora puedes configurar recetas, presentaciones, precios, combos, adiciones y empaques." };
+}
+
+const universalMenuEntities = new Set([
+  "presentation",
+  "item",
+  "recipe_component",
+  "recipe_substitution",
+  "price",
+  "addition",
+  "addition_item",
+  "combo",
+  "combo_variant",
+  "combo_component",
+  "combo_component_option",
+  "packaging_rule"
+]);
+
+function universalMenuSchemaMessage(message: string) {
+  return /menu_family_|menu_families|schema cache|does not exist/i.test(message)
+    ? "La arquitectura universal aún no está instalada. Aplica primero la migración 0157."
+    : message;
+}
+
+function universalMenuSource(formData: FormData, prefix = "") {
+  const sourceKind = getString(formData, `${prefix}source_kind`);
+  const sourceId = getString(formData, `${prefix}source_id`);
+  if (!(["inventory_item", "preparation"] as string[]).includes(sourceKind) || !sourceId) return null;
+  return {
+    source_kind: sourceKind,
+    inventory_item_id: sourceKind === "inventory_item" ? sourceId : null,
+    source_preparation_id: sourceKind === "preparation" ? sourceId : null
+  };
+}
+
+export async function saveUniversalMenuRecord(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const entity = getString(formData, "entity");
+  const familyId = getString(formData, "family_id");
+  if (!universalMenuEntities.has(entity) || !familyId) return { status: "error", message: "La configuración de familia no es válida." };
+
+  const recordId = getOptionalString(formData, "record_id");
+  const name = upperText(getOptionalString(formData, "name")) ?? "";
+  const presentationId = getOptionalString(formData, "presentation_id");
+  const quantity = getDecimal(formData, "quantity_base", 0);
+  const unit = getString(formData, "base_unit");
+  const source = universalMenuSource(formData);
+  let table = "";
+  let payload: Record<string, unknown> = {};
+
+  if (entity === "presentation") {
+    if (!name) return { status: "error", message: "Indica el nombre de la presentación." };
+    table = "menu_family_presentations";
+    payload = { family_id: familyId, name, description: getOptionalString(formData, "description") };
+  } else if (entity === "item") {
+    const sku = upperText(getOptionalString(formData, "sku")) ?? "";
+    if (!name || !sku) return { status: "error", message: "Indica nombre y código del plato." };
+    table = "menu_family_items";
+    payload = { family_id: familyId, name, sku, commercial_description: getOptionalString(formData, "description") };
+  } else if (entity === "recipe_component" || entity === "recipe_substitution") {
+    const itemId = getString(formData, "family_item_id");
+    if (!itemId || !source || quantity <= 0 || !(["g", "ml", "unit"] as string[]).includes(unit)) return { status: "error", message: "Completa el plato, insumo, cantidad y unidad de la receta." };
+    table = entity === "recipe_component" ? "menu_family_recipe_components" : "menu_family_recipe_substitutions";
+    payload = entity === "recipe_component"
+      ? { family_item_id: itemId, presentation_id: presentationId, ...source, quantity_base: quantity, base_unit: unit, option_group: getOptionalString(formData, "option_group"), is_required: formData.get("is_required") === "on" }
+      : { component_id: getString(formData, "component_id"), ...source, quantity_base: quantity, base_unit: unit, is_active: formData.get("is_active") !== "off" };
+    if (entity === "recipe_substitution" && !getString(formData, "component_id")) return { status: "error", message: "Selecciona el componente que se puede sustituir." };
+  } else if (entity === "price") {
+    const itemId = getString(formData, "family_item_id");
+    const price = getDecimal(formData, "sale_price_cop", -1);
+    if (!itemId || price < 0) return { status: "error", message: "Completa plato y precio de venta." };
+    table = "menu_family_prices";
+    payload = { family_item_id: itemId, presentation_id: presentationId, sale_price_cop: price, is_active: formData.get("is_active") !== "off" };
+  } else if (entity === "addition") {
+    const sku = upperText(getOptionalString(formData, "sku")) ?? "";
+    const price = getDecimal(formData, "sale_price_cop", -1);
+    if (!name || !sku || !source || quantity <= 0 || price < 0 || !(["g", "ml", "unit"] as string[]).includes(unit)) return { status: "error", message: "Completa nombre, código, insumo, cantidad, unidad y precio de la adición." };
+    table = "menu_family_additions";
+    payload = { family_id: familyId, name, sku, ...source, quantity_base: quantity, base_unit: unit, sale_price_cop: price, max_allowed: Math.max(1, getInteger(formData, "max_allowed", 1)), is_active: formData.get("is_active") !== "off", is_available: formData.get("is_available") !== "off" };
+  } else if (entity === "addition_item") {
+    const additionId = getString(formData, "addition_id");
+    const itemId = getString(formData, "family_item_id");
+    if (!additionId || !itemId) return { status: "error", message: "Selecciona adición y plato compatibles." };
+    table = "menu_family_addition_items";
+    payload = { addition_id: additionId, family_item_id: itemId, presentation_id: presentationId };
+  } else if (entity === "combo") {
+    const sku = upperText(getOptionalString(formData, "sku")) ?? "";
+    if (!name || !sku) return { status: "error", message: "Indica nombre y código del combo." };
+    table = "menu_family_combos";
+    payload = { family_id: familyId, name, sku, description: getOptionalString(formData, "description"), is_active: formData.get("is_active") !== "off" };
+  } else if (entity === "combo_variant") {
+    const comboId = getString(formData, "combo_id");
+    const price = getDecimal(formData, "sale_price_cop", -1);
+    if (!comboId || !name || price < 0) return { status: "error", message: "Completa combo, variante y precio." };
+    table = "menu_family_combo_variants";
+    payload = { combo_id: comboId, name, sale_price_cop: price, is_active: formData.get("is_active") !== "off" };
+  } else if (entity === "combo_component" || entity === "combo_component_option") {
+    const sourceKind = getString(formData, "source_kind");
+    const sourceId = getString(formData, "source_id");
+    const quantityValue = Math.max(1, getInteger(formData, "quantity", 1));
+    if (!sourceId || !(["family_item", "inventory_item"] as string[]).includes(sourceKind)) return { status: "error", message: "Selecciona el componente del combo." };
+    table = entity === "combo_component" ? "menu_family_combo_components" : "menu_family_combo_component_options";
+    payload = entity === "combo_component"
+      ? { variant_id: getString(formData, "variant_id"), name: name || "COMPONENTE", source_kind: sourceKind, family_item_id: sourceKind === "family_item" ? sourceId : null, inventory_item_id: sourceKind === "inventory_item" ? sourceId : null, presentation_id: presentationId, quantity: quantityValue, is_required: formData.get("is_required") !== "off" }
+      : { component_id: getString(formData, "component_id"), source_kind: sourceKind, family_item_id: sourceKind === "family_item" ? sourceId : null, inventory_item_id: sourceKind === "inventory_item" ? sourceId : null, presentation_id: presentationId, quantity: quantityValue, is_active: formData.get("is_active") !== "off" };
+    if (!getString(formData, entity === "combo_component" ? "variant_id" : "component_id")) return { status: "error", message: "Selecciona el grupo del combo." };
+  } else if (entity === "packaging_rule") {
+    const itemId = getString(formData, "family_item_id");
+    const packagingId = getString(formData, "packaging_inventory_item_id");
+    const serviceKind = getString(formData, "service_kind");
+    if (!itemId || !packagingId || quantity <= 0 || !(["local", "pickup", "takeaway", "delivery"] as string[]).includes(serviceKind)) return { status: "error", message: "Completa plato, modalidad, empaque y cantidad." };
+    table = "menu_family_packaging_rules";
+    payload = { family_item_id: itemId, presentation_id: presentationId, packaging_inventory_item_id: packagingId, service_kind: serviceKind, quantity_base: quantity, is_active: formData.get("is_active") !== "off" };
+  }
+
+  const result = recordId
+    ? await supabase.from(table).update(payload).eq("id", recordId).select("id").maybeSingle()
+    : await supabase.from(table).insert(payload).select("id").maybeSingle();
+  if (result.error || !result.data) return { status: "error", message: universalMenuSchemaMessage(result.error?.message ?? "No fue posible guardar la configuración.") };
+  revalidatePath(`/panel/menu/familias/${familyId}`);
+  revalidatePath("/panel/menu/familias");
+  return { status: "success", message: "Configuración guardada." };
+}
+
+export async function deleteUniversalMenuRecord(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const table = getString(formData, "table");
+  const id = getString(formData, "id");
+  const familyId = getString(formData, "family_id");
+  const allowedTables = new Set([
+    "menu_family_presentations", "menu_family_items", "menu_family_recipe_components", "menu_family_recipe_substitutions",
+    "menu_family_prices", "menu_family_additions", "menu_family_addition_items", "menu_family_combos", "menu_family_combo_variants",
+    "menu_family_combo_components", "menu_family_combo_component_options", "menu_family_packaging_rules"
+  ]);
+  if (!allowedTables.has(table) || !id || !familyId) return { status: "error", message: "El registro no es válido." };
+  const { error } = await supabase.from(table).delete().eq("id", id);
+  if (error) return { status: "error", message: universalMenuSchemaMessage(error.message) };
+  revalidatePath(`/panel/menu/familias/${familyId}`);
+  return { status: "success", message: "Registro eliminado." };
+}
+
 export async function savePosPackagingRule(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const ruleId = getString(formData, "rule_id");
@@ -135,7 +304,7 @@ export async function regularizePendingInventoryDebts(_previousState: FormAction
 }
 
 export type KitchenTicket = {
-  order: { id: string; code: string; kind: string; ordered_at: string };
+  order: { id: string; code: string; kind: string; ordered_at: string; table_name: string | null };
   items: Array<{
     id: string;
     kind: "pizza" | "sale_product";
@@ -143,6 +312,7 @@ export type KitchenTicket = {
     name: string;
     notes: string | null;
     size: string | null;
+    presentation: { quantity: number; unit: StockUnit } | null;
     requires_preparation: boolean;
     base: {
       mode: "purchased_base" | "production_dough" | string;
@@ -362,6 +532,7 @@ export type ProductionActionState = FormActionState & {
 };
 
 export type PosOrderActionState = FormActionState & {
+  requiresCashSession?: boolean;
   stockShortages?: PosStockShortage[];
   order?: {
     id: string;
@@ -1474,6 +1645,47 @@ export async function savePosPizzaImage(_previousState: FormActionState, formDat
   }
   revalidatePath("/panel/pedidos/nuevo");
   return { status: "success", message: removeImage ? "Foto interna restablecida." : "Foto interna actualizada." };
+}
+
+type PosProductViewSettingsInput = {
+  showCost: boolean;
+  showStock: boolean;
+  showSoldOut: boolean;
+  showSearch: boolean;
+  showPizzaPhoto: boolean;
+  showPizzaFlavor: boolean;
+  showPizzaCategory: boolean;
+  showPizzaPrice: boolean;
+};
+
+function parsePosProductViewSettings(value: unknown): PosProductViewSettingsInput | null {
+  if (!value || typeof value !== "object") return null;
+  const settings = value as Record<string, unknown>;
+  const keys = ["showCost", "showStock", "showSoldOut", "showPizzaPhoto", "showPizzaFlavor", "showPizzaCategory", "showPizzaPrice"] as const;
+  if (keys.some((key) => typeof settings[key] !== "boolean")) return null;
+  return {
+    showCost: settings.showCost as boolean,
+    showStock: settings.showStock as boolean,
+    showSoldOut: settings.showSoldOut as boolean,
+    showSearch: typeof settings.showSearch === "boolean" ? settings.showSearch : true,
+    showPizzaPhoto: settings.showPizzaPhoto as boolean,
+    showPizzaFlavor: settings.showPizzaFlavor as boolean,
+    showPizzaCategory: settings.showPizzaCategory as boolean,
+    showPizzaPrice: settings.showPizzaPrice as boolean
+  };
+}
+
+export async function savePosProductViewSettings(value: unknown): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const user = await requireUserPermission(supabase, "pedidos");
+  const settings = parsePosProductViewSettings(value);
+  if (!settings) return { status: "error", message: "La configuración visual no es válida." };
+
+  const { error } = await supabase
+    .from("pos_user_product_view_settings")
+    .upsert({ profile_id: user.id, settings }, { onConflict: "profile_id" });
+  if (error) return { status: "error", message: error.message };
+  return { status: "success", message: "Configuración guardada." };
 }
 
 export async function savePizzaAddition(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -3443,6 +3655,23 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
 
   if (!Array.isArray(items) || items.length === 0) return { status: "error", message: "Agrega al menos un producto al pedido." };
   if (paymentMethod === "cash" && cashReceivedCop <= 0) return { status: "error", message: "Confirma el cobro en efectivo." };
+  if (paymentMethod === "cash") {
+    const { data: cashSession, error: cashSessionError } = await supabase
+      .from("cash_sessions")
+      .select("id")
+      .eq("status", "open")
+      .order("opened_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (cashSessionError) return { status: "error", message: cashSessionError.message };
+    if (!cashSession) {
+      return {
+        status: "error",
+        message: "Abre caja antes de confirmar pagos en efectivo.",
+        requiresCashSession: true
+      };
+    }
+  }
   if (allowPendingStock) {
     const {
       data: { user }
@@ -3542,6 +3771,10 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   const operationalItems = (rpcItems as unknown[]).filter((item) => {
     const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
     return record?.kind !== "direct_sale";
+  });
+  const hasTemporaryMenuItems = (rpcItems as unknown[]).some((item) => {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    return record?.kind === "temporary_menu";
   });
   if (directSaleItems.length > 0 && sourceChannel !== "direct") return { status: "error", message: "La venta libre no puede liquidarse como Rappi o DiDi." };
 
@@ -3653,6 +3886,9 @@ export async function createPosOrder(_previousState: PosOrderActionState, formDa
   }
 
   if (error) {
+    if (hasTemporaryMenuItems && (error.code === "PGRST202" || /producto temporal|temporary_menu|pos_temporary_menu|tipo de item no valido/i.test(error.message))) {
+      return { status: "error", message: "Las ventas temporales de Alitas y Lasañas requieren aplicar la actualización pendiente de POS." };
+    }
     const errorWithDetails = error as typeof error & { details?: string | null };
     let stockShortages: PosStockShortage[] = [];
     if (error.message === "POS_STOCK_SHORTAGE" && errorWithDetails.details) {
@@ -3785,7 +4021,14 @@ export async function getKitchenTicket(orderId: string): Promise<KitchenTicketSt
   if (!orderId) return { status: "error", message: "Pedido no válido." };
 
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("get_kitchen_ticket", { p_order_id: orderId });
+  const [{ data, error }, orderDetailsResult] = await Promise.all([
+    supabase.rpc("get_kitchen_ticket", { p_order_id: orderId }),
+    supabase
+      .from("pos_orders")
+      .select("table_name_snapshot, pos_order_items(id, item_kind, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))")
+      .eq("id", orderId)
+      .maybeSingle()
+  ]);
   if (error || !data) return { status: "error", message: error?.message ?? "No se pudo cargar la comanda de cocina." };
 
   const asRecord = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -3818,6 +4061,17 @@ export async function getKitchenTicket(orderId: string): Promise<KitchenTicketSt
     return { status: "error", message: "La comanda recibida no tiene un pedido válido." };
   }
 
+  const orderDetails = asRecord(orderDetailsResult.data);
+  const presentationByOrderItemId = new Map(asArray(orderDetails.pos_order_items).map((entry) => {
+    const inventoryItem = asRecord(asRecord(entry).inventory_item);
+    const unit = text(inventoryItem.presentation_unit) as StockUnit;
+    const presentationQuantity = quantity(inventoryItem.presentation_quantity);
+    const presentation = asRecord(entry).item_kind === "sale_product" && presentationQuantity > 0 && ["g", "kg", "ml", "l", "unit"].includes(unit)
+      ? { quantity: presentationQuantity, unit }
+      : null;
+    return [text(asRecord(entry).id), presentation] as const;
+  }));
+
   const items = asArray(raw.items).map((entry) => {
     const item = asRecord(entry);
     const rawBase = asRecord(item.base);
@@ -3829,6 +4083,7 @@ export async function getKitchenTicket(orderId: string): Promise<KitchenTicketSt
       name: text(item.name, "Producto sin nombre"),
       notes: optionalText(item.notes),
       size: optionalText(item.size),
+      presentation: presentationByOrderItemId.get(text(item.id)) ?? null,
       requires_preparation: item.requires_preparation === true,
       base: hasBase ? {
         mode: sourceMode(rawBase.mode),
@@ -3871,7 +4126,8 @@ export async function getKitchenTicket(orderId: string): Promise<KitchenTicketSt
         id: text(rawOrder.id),
         code: text(rawOrder.code),
         kind: text(rawOrder.kind),
-        ordered_at: text(rawOrder.ordered_at)
+        ordered_at: text(rawOrder.ordered_at),
+        table_name: optionalText(orderDetails.table_name_snapshot) ?? optionalText(rawOrder.table_name_snapshot)
       },
       items,
       summary: {
@@ -4101,6 +4357,33 @@ export async function updatePosOrderPaymentMethod(_previousState: FormActionStat
   revalidatePath("/panel/caja");
   revalidatePath("/panel/reportes");
   return { status: "success", message: "Metodo de pago actualizado." };
+}
+
+export async function updatePendingPosOrderTable(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const orderId = getString(formData, "order_id");
+  const tableId = getOptionalString(formData, "table_id");
+  if (!orderId) return { status: "error", message: "Pedido no válido." };
+
+  const { data: order, error: orderError } = await supabase
+    .from("pos_orders")
+    .select("id, kind, payment_method, status")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError || !order) return { status: "error", message: orderError?.message ?? "El pedido ya no está disponible." };
+  if (order.payment_method !== "pending" || order.status === "cancelled") return { status: "error", message: "Solo puedes actualizar la mesa de un cobro pendiente activo." };
+  if (order.kind !== "local") return { status: "error", message: "La mesa solo aplica para consumo en local." };
+
+  const { error } = await supabase.rpc("assign_pos_order_table", {
+    p_order_id: orderId,
+    p_table_id: tableId
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/panel/pedidos/nuevo");
+  revalidatePath("/panel/pedidos");
+  revalidatePath("/panel/cocina");
+  return { status: "success", message: tableId ? "Mesa actualizada." : "Mesa quitada del pedido." };
 }
 
 export async function updateKitchenOrderItemStatus(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {

@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, Check, ImagePlus, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, ImagePlus, Layers3, PauseCircle, Pencil, Pizza, Plus, Settings, Trash2, X } from "lucide-react";
 import {
   moveMenuPizzaItem,
   savePizzaAddition,
@@ -341,6 +341,8 @@ export function MenuPizzasWorkspace({
   const routeMessageStatus = searchParams.get("message_status") === "success" ? "success" : "error";
   const visibleColumns = columnsBySection[section] as string[];
   const normalizedQuery = normalizeMasterText(query);
+  const activeFlavorCount = flavors.filter((item) => item.is_active).length;
+  const inactiveFlavorCount = flavors.length - activeFlavorCount;
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -425,7 +427,7 @@ export function MenuPizzasWorkspace({
   }
 
   return (
-    <>
+    <section className="pizza-recipes-workspace">
       <nav aria-label="Secciones de pizzas" className="section-tabs inventory-section-tabs">
         {availableSections.map((item) => (
           <button className={`ghost-button${section === item ? " active-tab" : ""}`} key={item} onClick={() => changeSection(item)} type="button">
@@ -435,6 +437,13 @@ export function MenuPizzasWorkspace({
       </nav>
 
       {routeMessage ? <p className={`form-status ${routeMessageStatus}`}>{routeMessage}</p> : null}
+
+      {availableSections.includes("sabores") ? <div className="pizza-workspace-metrics" aria-label="Resumen de pizzas">
+        <article><span><Pizza size={20} /></span><div><small>Total de sabores</small><strong>{flavors.length}</strong></div></article>
+        <article className="success"><span><CheckCircle2 size={20} /></span><div><small>Activos</small><strong>{activeFlavorCount}</strong></div></article>
+        <article className="muted"><span><PauseCircle size={20} /></span><div><small>Inactivos</small><strong>{inactiveFlavorCount}</strong></div></article>
+        <article><span><Layers3 size={20} /></span><div><small>Categorías</small><strong>{categories.filter((item) => item.is_active).length}</strong></div></article>
+      </div> : null}
 
       {section === "bases" ? (
         <section className="form-panel">
@@ -558,7 +567,7 @@ export function MenuPizzasWorkspace({
           </section>
         </div>
       ) : null}
-    </>
+    </section>
   );
 }
 

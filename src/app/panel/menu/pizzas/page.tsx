@@ -8,6 +8,7 @@ import {
 } from "@/components/menu-pizzas-workspace";
 import { type PizzaPriceBaseSource, type PizzaPriceSource, type PizzaSizeComponentQuantity } from "@/components/pizza-prices-workspace";
 import { PanelShell } from "@/components/panel-shell";
+import { PizzaManagementTabs, PizzaPriceTabs } from "@/components/menu-pizza-tabs";
 import { buildProductionInventory, type ProductionAllocationInput, type ProductionBatchInput, type ProductionConsumptionInput, type ProductionTraceAllocationInput } from "@/lib/production-inventory";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
@@ -450,8 +451,9 @@ export async function MenuPizzasModule({ mode }: { mode: "pizzas" | "adiciones" 
   })) as PizzaAdditionRecord[];
 
   return (
-    <PanelShell active={mode === "adiciones" ? "menu-precios-adiciones" : "menu-pizzas"} hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title={mode === "adiciones" ? "Adiciones" : "Pizzas"} userEmail={user.email ?? "usuario"}>
+    <PanelShell active={mode === "adiciones" ? "menu-precios-pizzas" : "menu-pizzas"} hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title={mode === "adiciones" ? "Adiciones" : "Pizzas"} userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
+      {mode === "adiciones" ? <PizzaPriceTabs active="additions" /> : <PizzaManagementTabs active="recipes" />}
         <MenuPizzasWorkspace
         additionIngredientSources={additionIngredientSources}
         additions={additions}

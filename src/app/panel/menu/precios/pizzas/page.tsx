@@ -1,4 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
+import { PizzaPriceTabs } from "@/components/menu-pizza-tabs";
 import {
   PizzaPricesWorkspace,
   type PizzaPriceCategory,
@@ -354,6 +355,7 @@ export default async function MenuPreciosPizzasPage() {
   return (
     <PanelShell active="menu-precios-pizzas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Precios de pizzas" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
+      <PizzaPriceTabs active="prices" />
       <PizzaPricesWorkspace baseSources={baseSources} categories={categories} componentQuantities={componentQuantities} flavors={flavors} prices={prices} sizes={sizes} sources={sources} />
     </PanelShell>
   );

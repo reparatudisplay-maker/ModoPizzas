@@ -1,5 +1,6 @@
 import { PanelShell } from "@/components/panel-shell";
 import { PackagingRulesWorkspace } from "@/components/packaging-rules-workspace";
+import { PizzaManagementTabs } from "@/components/menu-pizza-tabs";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { formatPresentationQuantity, type StockUnit } from "@/lib/units";
@@ -26,5 +27,5 @@ export default async function MenuEmpaquesPage() {
   const saleProducts = (productsResult.data ?? []).map((item) => ({ id: item.id, name: item.name, presentation: item.presentation_quantity && item.presentation_unit ? formatPresentationQuantity(Number(item.presentation_quantity), item.presentation_unit as StockUnit) : null }));
   const supplies = (suppliesResult.data ?? []).map((item) => ({ id: item.id, name: item.name }));
   const rules = rulesResult.error ? [] : (rulesResult.data ?? []).map((rule) => ({ id: rule.id, target_kind: rule.target_kind as "pizza_size" | "sale_product", target_id: rule.target_kind === "pizza_size" ? rule.pizza_size_id ?? "" : rule.sale_product_id ?? "", service_kind: rule.service_kind, packaging_inventory_item_id: rule.packaging_inventory_item_id, packaging_name: getPackagingName(rule.packaging_item), quantity_base: Number(rule.quantity_base) }));
-  return <PanelShell active="menu-empaques" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Empaques" userEmail={user.email ?? "usuario"}>{errors[0] ? <p className="alert">{errors[0].message}</p> : null}<PackagingRulesWorkspace pizzaSizes={pizzaSizes} rules={rules} saleProducts={saleProducts} supplies={supplies} /></PanelShell>;
+  return <PanelShell active="menu-pizzas" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Pizzas" userEmail={user.email ?? "usuario"}>{errors[0] ? <p className="alert">{errors[0].message}</p> : null}<PizzaManagementTabs active="packaging" /><PackagingRulesWorkspace pizzaSizes={pizzaSizes} rules={rules} saleProducts={saleProducts} supplies={supplies} /></PanelShell>;
 }

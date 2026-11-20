@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { BadgeDollarSign, ChevronDown, Grid2X2, Layers3, List, Package, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { deleteComboConfig, saveComboConfig, type FormActionState } from "@/app/admin/actions";
 import { optimizeImageInput } from "@/lib/client-images";
 import { formatCop } from "@/lib/format";
@@ -185,6 +185,12 @@ function formatPercent(value: number | null) {
   return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 }).format(value)}%`;
 }
 
+function comboType(combo: ComboPriceRecord) {
+  const kinds = new Set(combo.variants.flatMap((variant) => variant.groups.map((group) => group.group_kind)));
+  if (kinds.size > 1) return "mixed";
+  return kinds.has("pizza") ? "pizza" : "product";
+}
+
 export function ComboPricesWorkspace({
   combos,
   pizzaFlavors,
@@ -197,73 +203,80 @@ export function ComboPricesWorkspace({
   sizes: ComboSizeOption[];
 }) {
   const [query, setQuery] = useState("");
+  const [type, setType] = useState<"all" | "pizza" | "product" | "mixed">("all");
+  const [status, setStatus] = useState<"all" | "active" | "inactive">("all");
+  const [view, setView] = useState<"list" | "cards">("list");
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ComboPriceRecord | null | "new">(null);
   const normalizedQuery = normalizeMasterText(query);
   const filtered = combos.filter((combo) => {
     const text = `${combo.sku} ${combo.name} ${combo.description ?? ""}`;
-    return !normalizedQuery || normalizeMasterText(text).includes(normalizedQuery);
+    const matchesStatus = status === "all" || (status === "active" ? combo.is_active : !combo.is_active);
+    const matchesType = type === "all" || comboType(combo) === type;
+    return matchesStatus && matchesType && (!normalizedQuery || normalizeMasterText(text).includes(normalizedQuery));
   });
+  const activeCount = combos.filter((combo) => combo.is_active).length;
+  const inactiveCount = combos.length - activeCount;
+  const bestMargin = combos
+    .filter((combo) => combo.is_active)
+    .map((combo) => ({ combo, margin: comboMetrics(combo).margin }))
+    .filter((item): item is { combo: ComboPriceRecord; margin: number } => item.margin !== null)
+    .sort((a, b) => b.margin - a.margin)[0] ?? null;
+
+  function toggleExpanded(comboId: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(comboId)) next.delete(comboId);
+      else next.add(comboId);
+      return next;
+    });
+  }
 
   return (
     <>
-      <section className="form-panel">
-        <div className="section-title-row inventory-toolbar-row">
-          <h2>Combos</h2>
-          <div className="purchase-toolbar">
-            <form className="table-filters" onSubmit={(event) => event.preventDefault()}>
-              <input autoComplete="off" onChange={(event) => setQuery(uppercaseMasterName(event.target.value))} placeholder="Buscar combo" value={query} />
-            </form>
-            <button className="primary-button icon-text-button" onClick={() => setModal("new")} type="button">
-              <Plus size={18} /> Agregar combo
-            </button>
+      <section className="combo-prices-workspace">
+        <header className="combo-prices-heading">
+          <span className="combo-prices-heading-icon"><Layers3 size={25} /></span>
+          <div><h1>Combos</h1><p>Gestiona el contenido y los precios por sabor.</p></div>
+          <button className="primary-button icon-text-button" onClick={() => setModal("new")} type="button"><Plus size={18} /> Agregar combo</button>
+        </header>
+
+        <div className="combo-prices-toolbar">
+          <label className="combo-prices-search"><Search size={18} /><input autoComplete="off" onChange={(event) => setQuery(uppercaseMasterName(event.target.value))} placeholder="Buscar combo..." value={query} /></label>
+          <label className="sr-only" htmlFor="combo-type-filter">Tipo</label>
+          <select id="combo-type-filter" onChange={(event) => setType(event.target.value as typeof type)} value={type}>
+            <option value="all">Todos los tipos</option>
+            <option value="pizza">Solo pizzas</option>
+            <option value="product">Solo productos</option>
+            <option value="mixed">Pizza y productos</option>
+          </select>
+          <label className="sr-only" htmlFor="combo-status-filter">Estado</label>
+          <select id="combo-status-filter" onChange={(event) => setStatus(event.target.value as typeof status)} value={status}>
+            <option value="all">Todos los estados</option>
+            <option value="active">Activos</option>
+            <option value="inactive">Inactivos</option>
+          </select>
+          <div className="combo-prices-view-toggle" aria-label="Vista de combos">
+            <button aria-pressed={view === "list"} className={view === "list" ? "active" : ""} onClick={() => setView("list")} type="button"><List size={17} /> Vista lista</button>
+            <button aria-pressed={view === "cards"} className={view === "cards" ? "active" : ""} onClick={() => setView("cards")} type="button"><Grid2X2 size={17} /> Vista tarjetas</button>
           </div>
         </div>
-        <div className="menu-pizzas-table-wrap">
-          <table className="data-table menu-pizzas-table">
-            <thead>
-              <tr>
-                <th>FOTO</th>
-                <th>SKU</th>
-                <th>COMBO</th>
-                <th>CONTENIDO</th>
-                <th>PRECIO NORMAL</th>
-                <th>PRECIO COMBO</th>
-                <th>AHORRO</th>
-                <th>COSTO</th>
-                <th>UTILIDAD</th>
-                <th>MARGEN</th>
-                <th>ESTADO</th>
-                <th>ACCIONES</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((combo) => {
-                return (
-                  <tr key={combo.id}>
-                    <td><ComboThumb alt={combo.name} src={combo.image_src} /></td>
-                    <td>{combo.sku}</td>
-                    <td><strong>{combo.name}</strong><br /><small>{combo.description ?? "Sin descripcion"}</small></td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantContent(variant, pizzaFlavors, saleProducts)}</div>) || "Sin grupos"}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).normal}</div>)}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{formatCop(variant.sale_price_cop)}</div>)}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).savings}</div>)}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).cost}</div>)}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).profit}</div>)}</td>
-                    <td>{combo.variants.map((variant) => <div key={variant.id ?? variant.sort_order}>{variantMetrics(variant).margin}</div>)}</td>
-                    <td><span className={`stock-pill ${combo.is_active ? "ok" : "muted"}`}>{combo.is_active ? "Activo" : "Inactivo"}</span></td>
-                    <td>
-                      <span className="row-actions center-actions">
-                        <button className="icon-button" onClick={() => setModal(combo)} title="Editar combo" type="button"><Pencil size={16} /></button>
-                        <DeleteComboButton combo={combo} />
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 ? <tr><td colSpan={12}>Sin combos configurados.</td></tr> : null}
-            </tbody>
-          </table>
+
+        <div className="combo-prices-metrics" aria-label="Resumen de combos">
+          <Metric icon={<Layers3 size={20} />} label="Total de combos" value={String(combos.length)} />
+          <Metric icon={<Package size={20} />} label="Activos" value={String(activeCount)} tone="success" />
+          <Metric icon={<ChevronDown size={20} />} label="Inactivos" value={String(inactiveCount)} tone="muted" />
+          <Metric icon={<BadgeDollarSign size={20} />} label="Mayor margen" value={bestMargin ? bestMargin.combo.name : "Sin cálculo"} detail={bestMargin ? formatPercent(bestMargin.margin) : undefined} tone="accent" />
         </div>
+
+        {view === "list" ? <div className="combo-list" role="list">
+          <div className="combo-list-labels" aria-hidden="true"><span>COMBO</span><span>CONTENIDO</span><span>RANGO DE PRECIOS</span><span>MARGEN</span><span>ESTADO</span><span>ACCIONES</span></div>
+          {filtered.map((combo) => <ComboListItem combo={combo} expanded={expanded.has(combo.id)} key={combo.id} onEdit={() => setModal(combo)} onToggle={() => toggleExpanded(combo.id)} pizzaFlavors={pizzaFlavors} saleProducts={saleProducts} />)}
+          {filtered.length === 0 ? <p className="combo-empty">No hay combos que coincidan con los filtros.</p> : null}
+        </div> : <div className="combo-price-card-grid">
+          {filtered.map((combo) => <ComboCardItem combo={combo} key={combo.id} onEdit={() => setModal(combo)} pizzaFlavors={pizzaFlavors} saleProducts={saleProducts} />)}
+          {filtered.length === 0 ? <p className="combo-empty">No hay combos que coincidan con los filtros.</p> : null}
+        </div>}
       </section>
 
       {modal ? (
@@ -277,6 +290,37 @@ export function ComboPricesWorkspace({
       ) : null}
     </>
   );
+}
+
+function Metric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail?: string; tone?: "success" | "muted" | "accent" }) {
+  return <article className={`combo-metric ${tone ?? ""}`}><span>{icon}</span><div><small>{label}</small><strong>{value}</strong></div>{detail ? <b>{detail}</b> : null}</article>;
+}
+
+function ComboListItem({ combo, expanded, onEdit, onToggle, pizzaFlavors, saleProducts }: { combo: ComboPriceRecord; expanded: boolean; onEdit: () => void; onToggle: () => void; pizzaFlavors: ComboPizzaFlavorOption[]; saleProducts: ComboSaleProductOption[] }) {
+  const priceRange = formatMoneyRange(Math.min(...combo.variants.map((item) => item.sale_price_cop)), Math.max(...combo.variants.map((item) => item.sale_price_cop)));
+  const metrics = comboMetrics(combo);
+  return <article className={`combo-list-item ${expanded ? "expanded" : ""}`} role="listitem">
+    <div className="combo-list-row">
+      <button aria-expanded={expanded} aria-label={`${expanded ? "Ocultar" : "Ver"} detalle de ${combo.name}`} className="combo-expand-button" onClick={onToggle} type="button"><ChevronDown size={19} /></button>
+      <ComboThumb alt={combo.name} src={combo.image_src} />
+      <div className="combo-list-identity"><strong>{combo.name}</strong><span>{combo.sku}</span>{combo.description ? <small>{combo.description}</small> : null}</div>
+      <div className="combo-list-content">{combo.variants.map((variant) => <span key={variant.id ?? variant.sort_order}>{variantContent(variant, pizzaFlavors, saleProducts)}</span>)}</div>
+      <strong className="combo-list-prices">{priceRange}</strong>
+      <span className="combo-margin-pill">{metrics.margin === null ? "Sin margen" : formatPercent(metrics.margin)}</span>
+      <span className={`stock-pill ${combo.is_active ? "ok" : "muted"}`}>{combo.is_active ? "Activo" : "Inactivo"}</span>
+      <span className="row-actions combo-list-actions"><button className="icon-button" onClick={onEdit} title="Editar combo" type="button"><Pencil size={16} /></button><DeleteComboButton combo={combo} /></span>
+    </div>
+    {expanded ? <ComboBreakdown combo={combo} pizzaFlavors={pizzaFlavors} saleProducts={saleProducts} /> : null}
+  </article>;
+}
+
+function ComboBreakdown({ combo, pizzaFlavors, saleProducts }: { combo: ComboPriceRecord; pizzaFlavors: ComboPizzaFlavorOption[]; saleProducts: ComboSaleProductOption[] }) {
+  return <div className="combo-breakdown"><div className="combo-breakdown-heading"><span>SABOR / CATEGORÍA</span><span>PRECIO NORMAL</span><span>PRECIO COMBO</span><span>AHORRO</span><span>COSTO (RANGO)</span><span>UTILIDAD (RANGO)</span><span>MARGEN</span></div>{combo.variants.map((variant) => { const metrics = variantMetrics(variant); return <div className="combo-breakdown-row" key={variant.id ?? variant.sort_order}><strong>{variantContent(variant, pizzaFlavors, saleProducts)}</strong><span>{metrics.normal}</span><span>{formatCop(variant.sale_price_cop)}</span><b>{metrics.savings}</b><span>{metrics.cost}</span><span>{metrics.profit}</span><span>{metrics.margin}</span></div>; })}</div>;
+}
+
+function ComboCardItem({ combo, onEdit, pizzaFlavors, saleProducts }: { combo: ComboPriceRecord; onEdit: () => void; pizzaFlavors: ComboPizzaFlavorOption[]; saleProducts: ComboSaleProductOption[] }) {
+  const metrics = comboMetrics(combo);
+  return <article className="combo-price-card"><header><ComboThumb alt={combo.name} src={combo.image_src} /><div><strong>{combo.name}</strong><span>{combo.sku}</span></div><span className={`stock-pill ${combo.is_active ? "ok" : "muted"}`}>{combo.is_active ? "Activo" : "Inactivo"}</span></header><p>{combo.description || combo.variants.map((variant) => variantContent(variant, pizzaFlavors, saleProducts)).join(" · ")}</p><div className="combo-card-stats"><span>Precio desde <b>{formatCop(combo.sale_price_cop)}</b></span><span>Margen <b>{metrics.margin === null ? "Sin margen" : formatPercent(metrics.margin)}</b></span></div><footer><button className="secondary-button icon-text-button" onClick={onEdit} type="button"><Pencil size={16} /> Editar</button><DeleteComboButton combo={combo} /></footer></article>;
 }
 
 function ComboModal({

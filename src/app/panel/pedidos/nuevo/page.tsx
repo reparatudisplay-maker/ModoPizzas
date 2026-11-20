@@ -1,5 +1,5 @@
 import { PanelShell } from "@/components/panel-shell";
-import { PosOrderWorkspace, type CartLine, type PosAdditionOption, type PosComboOption, type PosEditablePendingOrder, type PosOrderTableOption, type PosPackagingRule, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption } from "@/components/pos-order-workspace";
+import { PosOrderWorkspace, type CartLine, type PosAdditionOption, type PosComboOption, type PosEditablePendingOrder, type PosOrderTableOption, type PosPackagingRule, type PosPendingPayment, type PosPizzaBaseOption, type PosPizzaOption, type PosPlatformPaymentSetting, type PosSaleProductOption, type ProductViewSettings } from "@/components/pos-order-workspace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requirePanelAccess } from "@/lib/panel-auth";
 import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from "@/lib/units";
@@ -7,6 +7,16 @@ import { formatPresentationQuantity, formatStockQuantity, type StockUnit } from 
 export const dynamic = "force-dynamic";
 
 const productImageBucket = "product-images";
+const defaultProductViewSettings: ProductViewSettings = {
+  showCost: true,
+  showStock: true,
+  showSoldOut: true,
+  showSearch: true,
+  showPizzaPhoto: true,
+  showPizzaFlavor: true,
+  showPizzaCategory: true,
+  showPizzaPrice: true
+};
 
 type PriceRow = {
   id: string;
@@ -105,10 +115,18 @@ type PlatformPaymentSettingRow = {
 type PendingPaymentRow = {
   id: string;
   code: string;
+  kind: "local" | "pickup" | "delivery";
   ordered_at: string;
   customer_name: string | null;
+  table_id: string | null;
   table_name_snapshot?: string | null;
   total_cop: number | string;
+  pos_order_items: Array<{
+    item_kind: "pizza" | "sale_product" | "free_sale" | "temporary_menu";
+    quantity: number | string;
+    product_name_snapshot: string | null;
+    inventory_item: Array<{ presentation_quantity: number | string | null; presentation_unit: StockUnit | null }> | { presentation_quantity: number | string | null; presentation_unit: StockUnit | null } | null;
+  }>;
 };
 
 type EditablePendingOrderRow = {
@@ -125,7 +143,7 @@ type EditablePendingOrderRow = {
   collection_party: string;
   pos_order_items: Array<{
     id: string;
-    item_kind: "pizza" | "sale_product" | "free_sale";
+    item_kind: "pizza" | "sale_product" | "free_sale" | "temporary_menu";
     pizza_price_config_id: string | null;
     inventory_item_id: string | null;
     cart_line_key: string | null;
@@ -165,6 +183,23 @@ type PackagingRuleRow = {
   quantity_base: number | string;
   packaging_item: { name: string } | null;
 };
+
+type ProductViewSettingsRow = { settings: unknown };
+
+function parseProductViewSettings(value: unknown): ProductViewSettings {
+  if (!value || typeof value !== "object") return defaultProductViewSettings;
+  const settings = value as Record<string, unknown>;
+  return {
+    showCost: typeof settings.showCost === "boolean" ? settings.showCost : defaultProductViewSettings.showCost,
+    showStock: typeof settings.showStock === "boolean" ? settings.showStock : defaultProductViewSettings.showStock,
+    showSoldOut: typeof settings.showSoldOut === "boolean" ? settings.showSoldOut : defaultProductViewSettings.showSoldOut,
+    showSearch: typeof settings.showSearch === "boolean" ? settings.showSearch : defaultProductViewSettings.showSearch,
+    showPizzaPhoto: typeof settings.showPizzaPhoto === "boolean" ? settings.showPizzaPhoto : defaultProductViewSettings.showPizzaPhoto,
+    showPizzaFlavor: typeof settings.showPizzaFlavor === "boolean" ? settings.showPizzaFlavor : defaultProductViewSettings.showPizzaFlavor,
+    showPizzaCategory: typeof settings.showPizzaCategory === "boolean" ? settings.showPizzaCategory : defaultProductViewSettings.showPizzaCategory,
+    showPizzaPrice: typeof settings.showPizzaPrice === "boolean" ? settings.showPizzaPrice : defaultProductViewSettings.showPizzaPrice
+  };
+}
 
 function bogotaDayRange() {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
@@ -264,7 +299,8 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
     orderTablesResult,
     pendingPaymentsResult,
     paidPaymentsResult,
-    packagingRulesResult
+    packagingRulesResult,
+    productViewSettingsResult
   ] = await Promise.all([
     supabase
       .from("pizza_flavors")
@@ -301,15 +337,16 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
       .select("*")
       .order("platform"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
-    supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
+    supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
     (() => {
       const today = bogotaDayRange();
-      return supabase.from("pos_orders").select("id, code, ordered_at, customer_name, table_name_snapshot, total_cop").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
+      return supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
     })(),
     supabase
       .from("pos_packaging_rules")
       .select("id, target_kind, pizza_size_id, sale_product_id, service_kind, packaging_inventory_item_id, quantity_base, packaging_item:inventory_items!pos_packaging_rules_packaging_inventory_item_id_fkey(name)")
-      .eq("is_active", true)
+      .eq("is_active", true),
+    supabase.from("pos_user_product_view_settings").select("settings").eq("profile_id", user.id).maybeSingle()
   ]);
 
   const error =
@@ -324,6 +361,7 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
     platformPaymentSettingsResult.error;
 
   const flavorRows = (flavorsResult.data ?? []) as unknown as FlavorRow[];
+  const initialProductViewSettings = parseProductViewSettings((productViewSettingsResult.data as ProductViewSettingsRow | null)?.settings);
   const additionRows = (additionsResult.data ?? []) as unknown as AdditionRow[];
   const saleProductRows = (saleProductsResult.data ?? []) as SaleProductRow[];
   const comboRows = (combosResult.data ?? []) as unknown as ComboRow[];
@@ -458,21 +496,41 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
     didi_tu_negocio_commission_tax_percent: Number(setting.didi_tu_negocio_commission_tax_percent ?? 0)
   }));
   const orderTables: PosOrderTableOption[] = orderTablesResult.error ? [] : ((orderTablesResult.data ?? []) as PosOrderTableOption[]);
-  const pendingPayments: PosPendingPayment[] = ((pendingPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
+  const pendingPayments: PosPendingPayment[] = ((pendingPaymentsResult.data ?? []) as unknown as PendingPaymentRow[]).map((order) => ({
     id: order.id,
     code: order.code,
+    kind: order.kind,
     ordered_at: order.ordered_at,
     customer_name: order.customer_name,
+    table_id: order.table_id,
     table_name: order.table_name_snapshot ?? null,
-    total_cop: Number(order.total_cop ?? 0)
+    total_cop: Number(order.total_cop ?? 0),
+    items: (order.pos_order_items ?? []).flatMap((item) => {
+      if (!item.product_name_snapshot || Number(item.quantity) <= 0) return [];
+      const inventoryItem = Array.isArray(item.inventory_item) ? item.inventory_item[0] ?? null : item.inventory_item;
+      const presentation = item.item_kind === "sale_product" && inventoryItem?.presentation_quantity && inventoryItem.presentation_unit
+        ? formatPresentationQuantity(Number(inventoryItem.presentation_quantity), inventoryItem.presentation_unit)
+        : null;
+      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity) }];
+    })
   }));
-  const paidTodayPayments: PosPendingPayment[] = ((paidPaymentsResult.data ?? []) as PendingPaymentRow[]).map((order) => ({
+  const paidTodayPayments: PosPendingPayment[] = ((paidPaymentsResult.data ?? []) as unknown as PendingPaymentRow[]).map((order) => ({
     id: order.id,
     code: order.code,
+    kind: order.kind,
     ordered_at: order.ordered_at,
     customer_name: order.customer_name,
+    table_id: order.table_id,
     table_name: order.table_name_snapshot ?? null,
-    total_cop: Number(order.total_cop ?? 0)
+    total_cop: Number(order.total_cop ?? 0),
+    items: (order.pos_order_items ?? []).flatMap((item) => {
+      if (!item.product_name_snapshot || Number(item.quantity) <= 0) return [];
+      const inventoryItem = Array.isArray(item.inventory_item) ? item.inventory_item[0] ?? null : item.inventory_item;
+      const presentation = item.item_kind === "sale_product" && inventoryItem?.presentation_quantity && inventoryItem.presentation_unit
+        ? formatPresentationQuantity(Number(inventoryItem.presentation_quantity), inventoryItem.presentation_unit)
+        : null;
+      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity) }];
+    })
   }));
   const packagingRules: PosPackagingRule[] = packagingRulesResult.error ? [] : ((packagingRulesResult.data ?? []) as unknown as PackagingRuleRow[])
     .map((rule) => ({
@@ -698,7 +756,7 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
     <PanelShell active="pedidos-nuevo" hideHeader moduleKeys={moduleKeys} roleNames={roleNames} title="Crear pedido" userEmail={user.email ?? "usuario"}>
       {error ? <p className="alert">{error.message}</p> : null}
       {editError ? <p className="alert">{editError}</p> : null}
-      <PosOrderWorkspace key={editingOrder?.id ?? "new-order"} additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} editingOrder={editingOrder} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
+      <PosOrderWorkspace key={editingOrder?.id ?? "new-order"} additions={additions} baseOptions={baseOptions} canConfigurePizzaPhotos canEditSaleDate={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} canRecordPendingStock={roleNames.includes("admin_sistema") || roleNames.includes("gerente")} combos={combos} editingOrder={editingOrder} initialProductViewSettings={initialProductViewSettings} isSystemAdmin={roleNames.includes("admin_sistema")} orderTables={orderTables} packagingRules={packagingRules} paidTodayPayments={paidTodayPayments} pendingPayments={pendingPayments} pizzas={pizzas} platformPaymentSettings={platformPaymentSettings} saleProducts={saleProducts} userId={user.id} />
     </PanelShell>
   );
 }

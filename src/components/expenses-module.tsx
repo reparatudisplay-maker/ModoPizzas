@@ -218,7 +218,7 @@ function ExpenseModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section aria-label="Registrar gasto" aria-modal="true" className="modal-panel purchase-modal" role="dialog">
+      <section aria-label="Registrar gasto" aria-modal="true" className="modal-panel purchase-modal expense-modal" role="dialog">
         <header className="modal-header">
           <div>
             <strong>Registrar gasto</strong>
@@ -226,24 +226,24 @@ function ExpenseModal({
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
-        <form action={action} className="compact-card">
-          <div className="form-grid">
-            <div className="field">
+        <form action={action} className="compact-card expense-form">
+          <div className="form-grid expense-form-grid">
+            <div className="field expense-category-field">
               <label>Categoria</label>
               <select name="category_id" required>
                 <option value="">Seleccionar</option>
                 {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
               </select>
             </div>
-            <div className="field">
+            <div className="field expense-amount-field">
               <label>Valor</label>
               <input inputMode="decimal" min="0.01" name="amount_cop" placeholder="$ 0" required type="number" />
             </div>
-            <div className="field">
+            <div className="field expense-date-field">
               <label>Fecha y hora</label>
               <input defaultValue={localDateTimeValue()} name="spent_at" required type="datetime-local" />
             </div>
-            <div className="field">
+            <div className="field expense-source-field">
               <label>Origen del pago</label>
               <select name="payment_source" onChange={(event) => setSource(event.target.value)} value={source}>
                 <option value="cash_session">Caja actual</option>
@@ -252,38 +252,38 @@ function ExpenseModal({
                 <option value="other">Otro / No afecta caja</option>
               </select>
             </div>
-            <div className="field full">
+            <div className="field full expense-description-field">
               <label>Concepto / descripcion</label>
               <input autoComplete="off" name="description" placeholder="Concepto del gasto" required />
             </div>
             {source === "custody_fund" ? (
-              <div className="field">
+              <div className="field expense-custody-field">
                 <label>Fondo de resguardo</label>
                 <select name="custody_fund_id" required>
                   {custodyFunds.map((fund) => <option key={fund.id} value={fund.id}>{fund.name} - {formatCop(fund.balance_cop)}</option>)}
                 </select>
               </div>
             ) : null}
-            <div className="field">
+            <div className="field expense-supplier-field">
               <label>Proveedor</label>
               <select name="supplier_id">
                 <option value="">Sin proveedor</option>
                 {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
               </select>
             </div>
-            <div className="field">
+            <div className="field expense-beneficiary-field">
               <label>Proveedor / beneficiario</label>
               <input autoComplete="off" name="beneficiary_name" placeholder="Opcional" />
             </div>
-            <div className="field">
+            <div className="field expense-document-field">
               <label>Documento / factura</label>
               <input autoComplete="off" name="document_number" placeholder="Opcional" />
             </div>
-            <div className="field full">
+            <div className="field full expense-receipt-field">
               <label>Comprobante</label>
               <input autoComplete="off" name="receipt_url" placeholder="URL o referencia opcional" />
             </div>
-            <div className="field full">
+            <div className="field full expense-notes-field">
               <label>Observaciones</label>
               <textarea name="notes" placeholder="Opcional" />
             </div>
