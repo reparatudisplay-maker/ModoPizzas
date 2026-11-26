@@ -52,7 +52,9 @@ export const temporaryMenuCatalog: TemporaryMenuItem[] = [
     description: "8 alitas + 300 G papas + gaseosa 1 L",
     image_src: null,
     components: [{ name: "ALITAS ENTERAS", quantity: "8" }, { name: "PAPAS", quantity: "300 G" }, { name: "GASEOSA", quantity: "1 L" }],
-    beverage_presentation: "1 L"
+    beverage_presentation: "1 L",
+    beverage_choice_required: true,
+    allows_fries_substitution: true
   },
   {
     code: "ALITAS-GRANDE",
@@ -63,7 +65,9 @@ export const temporaryMenuCatalog: TemporaryMenuItem[] = [
     description: "16 alitas + 600 G papas + gaseosa 1,5 L",
     image_src: null,
     components: [{ name: "ALITAS ENTERAS", quantity: "16" }, { name: "PAPAS", quantity: "600 G" }, { name: "GASEOSA", quantity: "1,5 L" }],
-    beverage_presentation: "1,5 L"
+    beverage_presentation: "1,5 L",
+    beverage_choice_required: true,
+    allows_fries_substitution: true
   },
   {
     code: "ALITA-SUELTA",

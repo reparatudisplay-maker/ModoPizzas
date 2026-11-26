@@ -20,6 +20,7 @@ export type PaymentPrintSelection = {
 export type PaymentPrintJob = PaymentPrintSelection & {
   id: string;
   orderId: string;
+  preview?: boolean;
 };
 
 function formatDate(value: string) {
@@ -184,6 +185,7 @@ export function PostPaymentPrintJob({ job, onClose, onError }: { job: PaymentPri
   const [printError, setPrintError] = useState("");
   const [printMessage, setPrintMessage] = useState("");
   const [printing, setPrinting] = useState(false);
+  const directPrintStartedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -220,7 +222,7 @@ export function PostPaymentPrintJob({ job, onClose, onError }: { job: PaymentPri
   }, [job, onError]);
 
   const handlePrint = async () => {
-    if (documents.length === 0 || !printRootRef.current) return;
+    if (documents.length === 0 || !printRootRef.current) return false;
     setPrintError("");
     setPrintMessage("");
     setPrinting(true);
@@ -234,20 +236,31 @@ export function PostPaymentPrintJob({ job, onClose, onError }: { job: PaymentPri
           }
         }
         setPrintMessage("Documentos enviados por Bluetooth. Confirma la salida física.");
-        return;
+        return true;
       }
       if (!printThermalDocuments(printables, "Documentos del pedido")) throw new Error("No se pudo abrir el documento térmico para imprimir.");
       setPrintMessage("Se abrió el diálogo de impresión del navegador.");
+      return true;
     } catch (error) {
       const message = shouldUseBlePrinter() ? getBleErrorMessage(error) : error instanceof Error ? error.message : "No se pudo preparar la impresión.";
       setPrintError(message);
       onError(message);
+      return false;
     } finally {
       setPrinting(false);
     }
   };
 
+  useEffect(() => {
+    if (job.preview !== false || documents.length === 0 || directPrintStartedRef.current) return;
+    directPrintStartedRef.current = true;
+    void handlePrint().then((printed) => { if (printed) onClose(); });
+  }, [documents, handlePrint, job.preview, onClose]);
+
   if (documents.length === 0) return null;
+  if (job.preview === false) {
+    return <div aria-hidden="true" className="post-payment-print-root" ref={printRootRef}>{documents.map((document) => <div className="post-payment-print-document" key={document.kind}>{document.node}</div>)}</div>;
+  }
   return (
     <div className="modal-backdrop kitchen-ticket-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section aria-label="Vista previa de impresión" aria-modal="true" className="modal-panel kitchen-ticket-preview-modal" role="dialog">

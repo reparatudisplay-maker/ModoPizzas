@@ -42,6 +42,30 @@ function menuFamilySlug(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+async function nextMenuFamilyItemSku(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  familyId: string
+) {
+  const { data: family, error: familyError } = await supabase
+    .from("menu_families")
+    .select("slug")
+    .eq("id", familyId)
+    .maybeSingle();
+  if (familyError || !family) throw new Error(familyError?.message ?? "No se encontró la familia.");
+
+  const prefix = (menuFamilySlug(family.slug).replace(/-/g, "").slice(0, 3) || "REC").toUpperCase();
+  const { data: existing, error: existingError } = await supabase
+    .from("menu_family_items")
+    .select("sku")
+    .ilike("sku", `${prefix}-%`);
+  if (existingError) throw new Error(existingError.message);
+  const next = (existing ?? []).reduce((highest, item) => {
+    const match = new RegExp(`^${prefix}-(\\d+)$`).exec(item.sku ?? "");
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0) + 1;
+  return `${prefix}-${String(next).padStart(3, "0")}`;
+}
+
 export async function saveMenuFamily(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
   const supabase = await createServerSupabaseClient();
   const name = upperText(getOptionalString(formData, "name")) ?? "";
@@ -64,6 +88,24 @@ export async function saveMenuFamily(_previousState: FormActionState, formData: 
 
   revalidatePath("/panel/menu/familias");
   return { status: "success", message: "Familia creada. Ahora puedes configurar recetas, presentaciones, precios, combos, adiciones y empaques." };
+}
+
+export async function updateMenuFamily(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const familyId = getString(formData, "family_id");
+  const description = getOptionalString(formData, "description");
+  const isActive = formData.get("is_active") === "on";
+  if (!familyId) return { status: "error", message: "La familia no es válida." };
+
+  const { error } = await supabase
+    .from("menu_families")
+    .update({ description, is_active: isActive })
+    .eq("id", familyId);
+  if (error) return { status: "error", message: universalMenuSchemaMessage(error.message) };
+
+  revalidatePath("/panel/menu/familias");
+  revalidatePath(`/panel/menu/familias/${familyId}`);
+  return { status: "success", message: isActive ? "Familia activada." : "Familia desactivada." };
 }
 
 const universalMenuEntities = new Set([
@@ -118,16 +160,37 @@ export async function saveUniversalMenuRecord(_previousState: FormActionState, f
     table = "menu_family_presentations";
     payload = { family_id: familyId, name, description: getOptionalString(formData, "description") };
   } else if (entity === "item") {
-    const sku = upperText(getOptionalString(formData, "sku")) ?? "";
-    if (!name || !sku) return { status: "error", message: "Indica nombre y código del plato." };
+    if (!name) return { status: "error", message: "Indica el nombre de la receta." };
+    let sku = upperText(getOptionalString(formData, "sku")) ?? "";
+    if (!recordId && !sku) {
+      try {
+        sku = await nextMenuFamilyItemSku(supabase, familyId);
+      } catch (error) {
+        return { status: "error", message: error instanceof Error ? error.message : "No fue posible generar el SKU." };
+      }
+    }
     table = "menu_family_items";
-    payload = { family_id: familyId, name, sku, commercial_description: getOptionalString(formData, "description") };
+    payload = recordId
+      ? { name, commercial_description: getOptionalString(formData, "description"), is_active: formData.get("is_active") === "on" }
+      : { family_id: familyId, name, sku, commercial_description: getOptionalString(formData, "description"), is_active: formData.get("is_active") === "on" };
   } else if (entity === "recipe_component" || entity === "recipe_substitution") {
     const itemId = getString(formData, "family_item_id");
     if (!itemId || !source || quantity <= 0 || !(["g", "ml", "unit"] as string[]).includes(unit)) return { status: "error", message: "Completa el plato, insumo, cantidad y unidad de la receta." };
     table = entity === "recipe_component" ? "menu_family_recipe_components" : "menu_family_recipe_substitutions";
+    let sortOrder: number | undefined;
+    if (entity === "recipe_component" && !recordId) {
+      const { data: lastComponent, error: orderError } = await supabase
+        .from("menu_family_recipe_components")
+        .select("sort_order")
+        .eq("family_item_id", itemId)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (orderError) return { status: "error", message: universalMenuSchemaMessage(orderError.message) };
+      sortOrder = (lastComponent?.sort_order ?? -1) + 1;
+    }
     payload = entity === "recipe_component"
-      ? { family_item_id: itemId, presentation_id: presentationId, ...source, quantity_base: quantity, base_unit: unit, option_group: getOptionalString(formData, "option_group"), is_required: formData.get("is_required") === "on" }
+      ? { family_item_id: itemId, presentation_id: presentationId, ...source, quantity_base: quantity, base_unit: unit, option_group: getOptionalString(formData, "option_group"), is_required: formData.get("is_required") === "on", ...(sortOrder === undefined ? {} : { sort_order: sortOrder }) }
       : { component_id: getString(formData, "component_id"), ...source, quantity_base: quantity, base_unit: unit, is_active: formData.get("is_active") !== "off" };
     if (entity === "recipe_substitution" && !getString(formData, "component_id")) return { status: "error", message: "Selecciona el componente que se puede sustituir." };
   } else if (entity === "price") {
@@ -181,10 +244,82 @@ export async function saveUniversalMenuRecord(_previousState: FormActionState, f
   const result = recordId
     ? await supabase.from(table).update(payload).eq("id", recordId).select("id").maybeSingle()
     : await supabase.from(table).insert(payload).select("id").maybeSingle();
-  if (result.error || !result.data) return { status: "error", message: universalMenuSchemaMessage(result.error?.message ?? "No fue posible guardar la configuración.") };
+  if (result.error || !result.data) {
+    const message = universalMenuSchemaMessage(result.error?.message ?? "No fue posible guardar la configuración.");
+    return { status: "error", message: entity === "item" && /duplicate|unique/i.test(message) ? "Ya existe una receta con ese nombre en esta familia." : message };
+  }
   revalidatePath(`/panel/menu/familias/${familyId}`);
   revalidatePath("/panel/menu/familias");
   return { status: "success", message: "Configuración guardada." };
+}
+
+export async function reorderUniversalMenuRecipeComponent(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const familyId = getString(formData, "family_id");
+  const componentId = getString(formData, "component_id");
+  const swapComponentId = getString(formData, "swap_component_id");
+  if (!familyId || !componentId || !swapComponentId) return { status: "error", message: "No se pudo ordenar el ingrediente." };
+
+  const { data: components, error } = await supabase
+    .from("menu_family_recipe_components")
+    .select("id, family_item_id, sort_order, menu_family_items!inner(family_id)")
+    .in("id", [componentId, swapComponentId]);
+  if (error || !components || components.length !== 2) return { status: "error", message: universalMenuSchemaMessage(error?.message ?? "Los ingredientes ya no están disponibles.") };
+
+  const [current, target] = components as Array<{ id: string; family_item_id: string; sort_order: number; menu_family_items: Array<{ family_id: string }> }>;
+  if (current.family_item_id !== target.family_item_id || current.menu_family_items[0]?.family_id !== familyId || target.menu_family_items[0]?.family_id !== familyId) {
+    return { status: "error", message: "Los ingredientes no pertenecen a la misma receta." };
+  }
+
+  const { data: siblings, error: siblingsError } = await supabase
+    .from("menu_family_recipe_components")
+    .select("id, sort_order")
+    .eq("family_item_id", current.family_item_id)
+    .order("sort_order")
+    .order("id");
+  if (siblingsError || !siblings) return { status: "error", message: universalMenuSchemaMessage(siblingsError?.message ?? "No fue posible ordenar los ingredientes.") };
+  const currentIndex = siblings.findIndex((component) => component.id === componentId);
+  const targetIndex = siblings.findIndex((component) => component.id === swapComponentId);
+  if (currentIndex < 0 || targetIndex < 0) return { status: "error", message: "Los ingredientes ya no están disponibles." };
+  [siblings[currentIndex], siblings[targetIndex]] = [siblings[targetIndex], siblings[currentIndex]];
+  const updates = await Promise.all(siblings.map((component, index) => supabase.from("menu_family_recipe_components").update({ sort_order: index }).eq("id", component.id)));
+  const failed = updates.find((result) => result.error);
+  if (failed?.error) return { status: "error", message: universalMenuSchemaMessage(failed.error.message) };
+
+  revalidatePath(`/panel/menu/familias/${familyId}`);
+  return { status: "success", message: "Orden actualizado." };
+}
+
+export async function copyUniversalMenuRecipeBaseComponents(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
+  const supabase = await createServerSupabaseClient();
+  const familyId = getString(formData, "family_id");
+  const itemId = getString(formData, "family_item_id");
+  const presentationId = getString(formData, "presentation_id");
+  if (!familyId || !itemId || !presentationId) return { status: "error", message: "Selecciona receta y presentación." };
+
+  const [{ data: item, error: itemError }, { data: presentation, error: presentationError }] = await Promise.all([
+    supabase.from("menu_family_items").select("id").eq("id", itemId).eq("family_id", familyId).maybeSingle(),
+    supabase.from("menu_family_presentations").select("id").eq("id", presentationId).eq("family_id", familyId).maybeSingle()
+  ]);
+  if (itemError || presentationError || !item || !presentation) return { status: "error", message: universalMenuSchemaMessage(itemError?.message ?? presentationError?.message ?? "La receta o presentación no pertenece a esta familia.") };
+
+  const [{ data: baseComponents, error: baseError }, { data: existingComponents, error: existingError }] = await Promise.all([
+    supabase.from("menu_family_recipe_components").select("family_item_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, option_group, is_required, sort_order").eq("family_item_id", itemId).is("presentation_id", null).order("sort_order"),
+    supabase.from("menu_family_recipe_components").select("source_kind, inventory_item_id, source_preparation_id").eq("family_item_id", itemId).eq("presentation_id", presentationId)
+  ]);
+  if (baseError || existingError) return { status: "error", message: universalMenuSchemaMessage(baseError?.message ?? existingError?.message ?? "No fue posible consultar los ingredientes base.") };
+  if (!baseComponents?.length) return { status: "error", message: "Esta receta todavía no tiene ingredientes base para copiar." };
+
+  const existingKeys = new Set((existingComponents ?? []).map((component) => `${component.source_kind}:${component.inventory_item_id ?? component.source_preparation_id}`));
+  const copies = baseComponents
+    .filter((component) => !existingKeys.has(`${component.source_kind}:${component.inventory_item_id ?? component.source_preparation_id}`))
+    .map((component) => ({ ...component, presentation_id: presentationId }));
+  if (!copies.length) return { status: "error", message: "Esta presentación ya contiene los ingredientes base." };
+
+  const { error } = await supabase.from("menu_family_recipe_components").insert(copies);
+  if (error) return { status: "error", message: universalMenuSchemaMessage(error.message) };
+  revalidatePath(`/panel/menu/familias/${familyId}`);
+  return { status: "success", message: "Ingredientes base copiados. Ahora ajusta las cantidades." };
 }
 
 export async function deleteUniversalMenuRecord(_previousState: FormActionState, formData: FormData): Promise<FormActionState> {
@@ -198,6 +333,15 @@ export async function deleteUniversalMenuRecord(_previousState: FormActionState,
     "menu_family_combo_components", "menu_family_combo_component_options", "menu_family_packaging_rules"
   ]);
   if (!allowedTables.has(table) || !id || !familyId) return { status: "error", message: "El registro no es válido." };
+  if (table === "menu_family_items") {
+    const { data: recipe, error: recipeError } = await supabase
+      .from("menu_family_items")
+      .select("id")
+      .eq("id", id)
+      .eq("family_id", familyId)
+      .maybeSingle();
+    if (recipeError || !recipe) return { status: "error", message: universalMenuSchemaMessage(recipeError?.message ?? "La receta no pertenece a esta familia.") };
+  }
   const { error } = await supabase.from(table).delete().eq("id", id);
   if (error) return { status: "error", message: universalMenuSchemaMessage(error.message) };
   revalidatePath(`/panel/menu/familias/${familyId}`);
@@ -1656,6 +1800,7 @@ type PosProductViewSettingsInput = {
   showPizzaFlavor: boolean;
   showPizzaCategory: boolean;
   showPizzaPrice: boolean;
+  showPrintPreview: boolean;
 };
 
 function parsePosProductViewSettings(value: unknown): PosProductViewSettingsInput | null {
@@ -1671,7 +1816,8 @@ function parsePosProductViewSettings(value: unknown): PosProductViewSettingsInpu
     showPizzaPhoto: settings.showPizzaPhoto as boolean,
     showPizzaFlavor: settings.showPizzaFlavor as boolean,
     showPizzaCategory: settings.showPizzaCategory as boolean,
-    showPizzaPrice: settings.showPizzaPrice as boolean
+    showPizzaPrice: settings.showPizzaPrice as boolean,
+    showPrintPreview: typeof settings.showPrintPreview === "boolean" ? settings.showPrintPreview : true
   };
 }
 

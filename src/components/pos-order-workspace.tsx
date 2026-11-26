@@ -6,7 +6,7 @@ import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from "re
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { flushSync, useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Banknote, Bike, CarFront, CheckCircle2, ChevronLeft, ChevronRight, Clock, CupSoda, Drumstick, Edit3, HandCoins, Landmark, MapPinned, Minus, PackagePlus, PackageSearch, Pencil, Pizza, Plus, ReceiptText, Repeat2, RotateCcw, Sandwich, Search, Settings, ShoppingBag, ShoppingCart, Star, Store, Truck, WalletCards, X, Zap } from "lucide-react";
+import { BadgePercent, Banknote, Bike, CarFront, CheckCircle2, ChevronLeft, ChevronRight, Clock, CupSoda, Drumstick, Edit3, HandCoins, Landmark, Minus, Moon, PackagePlus, PackageSearch, Pencil, Pizza, Plus, Printer, ReceiptText, Repeat2, RotateCcw, Sandwich, Search, Settings, ShoppingBag, ShoppingCart, Star, Store, Sun, Truck, WalletCards, X, Zap } from "lucide-react";
 import { createPosOrder, getPosInventoryConsumptionPreview, openCashSessionAction, savePosPizzaImage, savePosProductViewSettings, updatePendingPosOrderTable, updatePosOrderPaymentMethod, type FormActionState, type PosInventoryConsumptionPreview, type PosOrderActionState, type PosStockShortage } from "@/app/admin/actions";
 import { formatColombianNumber, formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
@@ -143,6 +143,8 @@ export type PosPendingPayment = {
   items: Array<{
     name: string;
     quantity: number;
+    unit_price_cop: number;
+    line_subtotal_cop: number;
   }>;
 };
 
@@ -335,6 +337,7 @@ export type ProductViewSettings = {
   showPizzaFlavor: boolean;
   showPizzaCategory: boolean;
   showPizzaPrice: boolean;
+  showPrintPreview: boolean;
 };
 
 const defaultPrintSelection: PaymentPrintSelection = { kitchen: false, receipt: false };
@@ -539,8 +542,6 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
   const [isPendingSectionOpen, setIsPendingSectionOpen] = useState(true);
   const [isPaidSectionOpen, setIsPaidSectionOpen] = useState(true);
   const [selected, setSelected] = useState<PosPendingPayment | null>(null);
-  const [tableOrder, setTableOrder] = useState<PosPendingPayment | null>(null);
-  const [tableId, setTableId] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer" | "mixed">("cash");
   const [state, setState] = useState<FormActionState>(initialState);
   const [tableState, setTableState] = useState<FormActionState>(initialState);
@@ -575,10 +576,7 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
 
   useEffect(() => {
     if (tableState.status !== "success") return;
-    const timeout = window.setTimeout(() => {
-      setTableOrder(null);
-      router.refresh();
-    }, 0);
+    const timeout = window.setTimeout(() => router.refresh(), 0);
     return () => window.clearTimeout(timeout);
   }, [router, tableState.status]);
 
@@ -593,17 +591,11 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
     setState(initialState);
   }
 
-  function selectTable(order: PosPendingPayment) {
-    setTableOrder(order);
-    setTableId(order.table_id ?? "");
-    setTableState(initialState);
-  }
-
-  function submitTable() {
-    if (!tableOrder) return;
+  function changeTable(order: PosPendingPayment, nextTableId: string) {
     const formData = new FormData();
-    formData.set("order_id", tableOrder.id);
-    formData.set("table_id", tableId);
+    formData.set("order_id", order.id);
+    formData.set("table_id", nextTableId);
+    setTableState(initialState);
     startTableTransition(async () => setTableState(await updatePendingPosOrderTable(initialState, formData)));
   }
 
@@ -623,7 +615,17 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
 
   function orderItemsDetail(order: PosPendingPayment) {
     if (!expandedOrderIds.has(order.id)) return null;
-    return <div className="pos-payment-order-detail">{order.items.length === 0 ? <span>Sin detalle disponible</span> : order.items.map((item, index) => <span key={`${order.id}-${index}`}><b>{item.quantity}×</b><span>{item.name}</span></span>)}</div>;
+    return <div className="pos-payment-order-detail">{order.items.length === 0 ? <span>Sin detalle disponible</span> : order.items.map((item, index) => <span key={`${order.id}-${index}`}><b>{item.quantity}×</b><span>{item.name}</span><small>{formatCop(item.unit_price_cop)} c/u</small><em>{formatCop(item.line_subtotal_cop)}</em></span>)}</div>;
+  }
+
+  function orderParty(order: PosPendingPayment, canChangeTable = false) {
+    const tableLabel = order.table_name ?? "Sin mesa";
+    return <div className="pos-pending-payment-party">
+      {canChangeTable && order.kind === "local"
+        ? <label className="pos-pending-payment-table"><span>Mesa:</span><select aria-label={`Mesa de ${order.code}`} disabled={isTablePending} onChange={(event) => changeTable(order, event.target.value)} value={order.table_id ?? ""}><option value="">S/M</option>{orderTables.map((table, index) => <option key={table.id} value={table.id}>{index + 1}</option>)}</select></label>
+        : <strong>{tableLabel}</strong>}
+      <small>{order.customer_name ?? "Sin cliente"}</small>
+    </div>;
   }
 
   function submitPayment() {
@@ -659,12 +661,11 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
                   <article className={expandedOrderIds.has(order.id) ? "expanded" : ""} key={order.id}>
                     {orderItemsToggle(order)}
                     <div className="pos-payment-order-code"><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
-                    <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
+                    {orderParty(order, true)}
                     <b>{formatCop(order.total_cop)}</b>
                     <span className="pos-pending-payment-actions">
-                      {order.kind === "local" ? <button aria-label={`Actualizar mesa de ${order.code}`} className="icon-button" onClick={() => selectTable(order)} title="Actualizar mesa" type="button"><MapPinned size={15} /></button> : null}
                       <Link aria-label={`Editar ${order.code}`} className="icon-button" href={`/panel/pedidos/nuevo?edit=${encodeURIComponent(order.id)}`} title="Editar pedido pendiente"><Pencil size={15} /></Link>
-                      <button className="secondary-button" onClick={() => selectPayment(order)} type="button">Cobrar</button>
+                      <button aria-label={`Cobrar ${order.code}`} className="pos-collect-payment-button" onClick={() => selectPayment(order)} title="Cobrar" type="button"><HandCoins size={16} /></button>
                     </span>
                     {orderItemsDetail(order)}
                   </article>
@@ -680,7 +681,7 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
                   <article className={expandedOrderIds.has(order.id) ? "expanded" : ""} key={order.id}>
                     {orderItemsToggle(order)}
                     <div className="pos-payment-order-code"><strong>{order.code}</strong><small>{orderTime(order.ordered_at)}</small></div>
-                    <div className="pos-pending-payment-party"><strong>{order.table_name ?? "Sin mesa"}</strong><small>{order.customer_name ?? "Sin cliente"}</small></div>
+                    {orderParty(order)}
                     <b>{formatCop(order.total_cop)}</b>
                     <span className="pos-payment-order-actions"><CustomerReceiptPrintButton label="" orderCode={order.code} orderId={order.id} /></span>
                     {orderItemsDetail(order)}
@@ -724,21 +725,6 @@ function PendingPaymentsButton({ orderTables, paidTodayPayments, pendingPayments
               {state.status === "error" ? <p className="form-status error">{state.message}</p> : null}
             </div>
             <footer className="modal-footer"><button className="ghost-button" onClick={() => setSelected(null)} type="button">Cancelar</button><button className="positive-button" disabled={isPending || (method === "cash" && cashReceivedValue < selectedTotal) || (method === "mixed" && (Math.round(mixedCashValue + mixedTransferValue) !== Math.round(selectedTotal) || mixedCashReceivedValue < mixedCashValue))} onClick={submitPayment} type="button">{isPending ? "Cobrando..." : "Confirmar cobro"}</button></footer>
-          </section>
-        </div>
-      ) : null}
-      {tableOrder ? (
-        <div className="modal-backdrop" role="presentation">
-          <section aria-label={`Actualizar mesa de ${tableOrder.code}`} aria-modal="true" className="modal-panel pending-order-table-modal" role="dialog">
-            <header className="modal-header">
-              <div><strong>Actualizar mesa</strong><span>{tableOrder.code} · solo cambia la ubicación del pedido.</span></div>
-              <button className="icon-button" onClick={() => setTableOrder(null)} title="Cerrar" type="button"><X size={18} /></button>
-            </header>
-            <div className="pending-order-table-body">
-              <label className="field"><span>Mesa</span><select onChange={(event) => setTableId(event.target.value)} value={tableId}><option value="">Sin mesa</option>{orderTables.map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}</select></label>
-              {tableState.status !== "idle" ? <p className={`form-status ${tableState.status}`}>{tableState.message}</p> : null}
-            </div>
-            <footer className="modal-footer"><button className="ghost-button" onClick={() => setTableOrder(null)} type="button">Cancelar</button><button className="primary-button" disabled={isTablePending} onClick={submitTable} type="button">{isTablePending ? "Actualizando..." : "Guardar mesa"}</button></footer>
           </section>
         </div>
       ) : null}
@@ -1024,6 +1010,7 @@ export function PosOrderWorkspace({
         setPrintJob({
           id: `${completedOrder.id}:${printSelection.kitchen ? "k" : ""}${printSelection.receipt ? "r" : ""}`,
           orderId: completedOrder.id,
+          preview: productViewSettings.showPrintPreview,
           ...printSelection
         });
       }
@@ -1208,7 +1195,7 @@ export function PosOrderWorkspace({
 
   function saleProductCartQuantity(productId: string, lines = cart) {
     return lines
-      .filter((line) => line.kind === "sale_product" && line.id === productId)
+      .filter((line) => (line.kind === "sale_product" && line.id === productId) || (line.kind === "temporary_menu" && line.temporary_menu?.selection_mode === "drink" && line.temporary_menu.beverage_inventory_item_id === productId))
       .reduce((sum, line) => sum + line.quantity, 0);
   }
 
@@ -1428,9 +1415,18 @@ export function PosOrderWorkspace({
   }
 
   function addTemporaryItem(item: TemporaryMenuItem, selectionMode: "drink" | "fries" | "none", beverageId = "") {
-    const beverage = selectionMode === "drink" ? saleProductById.get(beverageId) ?? null : null;
+    const compatibleBeverage = item.beverage_choice_required
+      ? saleProducts.find((product) => product.presentation === item.beverage_presentation && product.sale_price_cop > 0) ?? null
+      : null;
+    // The select displays the first compatible beverage by default. Preserve that visible default
+    // when the browser has not emitted a change event yet, while honoring any explicit choice.
+    const beverage = selectionMode === "drink" ? saleProductById.get(beverageId) ?? compatibleBeverage : null;
     if (item.beverage_choice_required && selectionMode === "drink" && !beverage) {
       setStockNotice(`Selecciona una gaseosa disponible de ${item.beverage_presentation}.`);
+      return;
+    }
+    if (!allowPendingStock && beverage && saleProductCartQuantity(beverage.id) >= saleProductStock(beverage.id)) {
+      setStockNotice(stockMessage(beverage.id));
       return;
     }
     const components = item.components.flatMap((component) => {
@@ -2013,7 +2009,12 @@ export function PosOrderWorkspace({
   }));
 
   async function openInventoryPreview() {
-    const inventoryPayload = payload.filter((line) => line.kind !== "direct_sale" && line.kind !== "temporary_menu");
+    const inventoryPayload = payload.flatMap((line) => {
+      if (line.kind === "direct_sale") return [];
+      if (line.kind !== "temporary_menu") return [line];
+      const beverageId = line.temporary_menu?.selection_mode === "drink" ? line.temporary_menu.beverage_inventory_item_id : null;
+      return beverageId ? [{ kind: "sale_product", id: beverageId, quantity: line.quantity, unit_price_cop: 0 }] : [];
+    });
     if (inventoryPayload.length === 0) {
       setInventoryPreviewOpen(true);
       setInventoryPreviewLoading(false);
@@ -2280,7 +2281,7 @@ export function PosOrderWorkspace({
                     <span className="pos-product-title">{item.name}</span>
                     <span className="pos-product-meta">{item.description}</span>
                     <strong>{formatCop(item.price_cop)}</strong>
-                    <small className="pos-temporary-menu-note">Costos y consumos pendientes de integración</small>
+                    <small className="pos-temporary-menu-note">{item.beverage_presentation ? "Costo pendiente; la gaseosa elegida descuenta inventario." : "Costo y consumo pendientes de integración."}</small>
                   </button>
                 ))}
             {(tab === "pizzas" ? filteredPizzas.length : tab === "products" ? filteredProducts.length : tab === "combos" ? filteredCombos.length : tab === "wings" ? filteredWings.length : filteredLasagnas.length) === 0 ? <p className="empty-state">Sin resultados.</p> : null}
@@ -2383,7 +2384,7 @@ export function PosOrderWorkspace({
                   {line.kind === "sale_product" ? <small>{line.sku ?? "Sin SKU"}</small> : null}
                   {line.kind === "direct_sale" ? <small>Venta libre · sin movimiento de inventario</small> : null}
                   {line.kind === "direct_sale" ? <small>Costo compra: {formatCop((line.direct_sale?.acquisition_unit_cost_cop ?? 0) * line.quantity)} · {line.direct_sale?.funds_origin === "cash_session" ? "Dinero de caja" : "Dinero externo"}</small> : null}
-                  {line.kind === "temporary_menu" ? <small className="pos-temporary-menu-note">Costo y consumo pendientes de integración</small> : null}
+                  {line.kind === "temporary_menu" ? <small className="pos-temporary-menu-note">{line.temporary_menu?.selection_mode === "drink" ? "Costo pendiente; la gaseosa elegida descuenta inventario." : "Costo y consumo pendientes de integración."}</small> : null}
                   {line.kind === "temporary_menu" ? <small>{line.temporary_menu?.components.map((component) => `${component.quantity} ${component.name}`).join(" · ")}</small> : null}
                   {line.kind === "combo" ? (
                     <>
@@ -2713,7 +2714,7 @@ export function PosOrderWorkspace({
               </div> : null}
               {temporarySelectionMode === "drink" && temporaryItem.beverage_choice_required ? <label className="field"><span>Gaseosa {temporaryItem.beverage_presentation}</span><select onChange={(event) => setTemporaryBeverageId(event.target.value)} value={temporaryBeverageId}><option value="">Seleccionar gaseosa</option>{saleProducts.filter((product) => product.presentation === temporaryItem.beverage_presentation && product.sale_price_cop > 0).map((product) => <option key={product.id} value={product.id}>{product.name} {product.presentation}</option>)}</select></label> : null}
               {temporarySelectionMode === "fries" ? <p className="pos-temporary-menu-replacement">La gaseosa se sustituirá por la misma cantidad adicional de papas. El precio del combo no cambia.</p> : null}
-              <small className="pos-temporary-menu-note">Esta venta quedará marcada para integración posterior de costos y consumos; no descontará inventario ni empaques.</small>
+              <small className="pos-temporary-menu-note">La gaseosa seleccionada se descontará mediante FIFO. Alitas, papas y empaques seguirán pendientes de integración.</small>
             </div>
             <footer className="modal-actions"><button className="ghost-button" onClick={() => setTemporaryItem(null)} type="button">Cancelar</button><button className="positive-button" onClick={() => addTemporaryItem(temporaryItem, temporarySelectionMode, temporaryBeverageId)} type="button">Agregar al pedido · {formatCop(temporaryItem.price_cop)}</button></footer>
           </section>
@@ -3617,9 +3618,32 @@ function ProductViewSettingsModal({
   settings: ProductViewSettings;
   syncNotice: string;
 }) {
+  type SettingsTab = "products" | "pizzas" | "interface" | "printing" | "photos";
+  const [activeTab, setActiveTab] = useState<SettingsTab>("products");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("modo-pizzas-theme");
+    setTheme(savedTheme === "light" || savedTheme === "dark" ? savedTheme : document.documentElement.dataset.theme === "light" ? "light" : "dark");
+  }, []);
+
   function updateSetting(key: keyof ProductViewSettings, value: boolean) {
     onChange({ ...settings, [key]: value });
   }
+
+  function updateTheme(nextTheme: "dark" | "light") {
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem("modo-pizzas-theme", nextTheme);
+  }
+
+  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof PackageSearch }> = [
+    { id: "products", label: "Productos", icon: PackageSearch },
+    { id: "pizzas", label: "Pizzas", icon: Star },
+    { id: "interface", label: "Interfaz", icon: Settings },
+    { id: "printing", label: "Impresión", icon: Printer },
+    ...(canEditPizzaPhotos ? [{ id: "photos" as SettingsTab, label: "Fotos", icon: Pizza }] : [])
+  ];
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -3631,8 +3655,11 @@ function ProductViewSettingsModal({
           </div>
           <button className="icon-button" onClick={onClose} title="Cerrar" type="button"><X size={18} /></button>
         </header>
+        <nav aria-label="Secciones de configuración" className="pos-products-settings-tabs">
+          {tabs.map(({ id, icon: Icon, label }) => <button aria-selected={activeTab === id} className={activeTab === id ? "active" : ""} key={id} onClick={() => setActiveTab(id)} role="tab" type="button"><Icon aria-hidden="true" size={15} />{label}</button>)}
+        </nav>
         <div className="pos-products-settings-list">
-          <section className="pos-view-settings-group" aria-labelledby="product-view-settings">
+          {activeTab === "products" ? <section className="pos-view-settings-group" aria-labelledby="product-view-settings">
             <div className="pos-view-settings-heading">
               <PackageSearch aria-hidden="true" size={17} />
               <div><strong id="product-view-settings">Productos</strong><span>Información visible en bebidas y otros productos.</span></div>
@@ -3651,8 +3678,8 @@ function ProductViewSettingsModal({
                 <span>Mostrar productos agotados</span>
               </label>
             </div>
-          </section>
-          <section className="pos-view-settings-group" aria-labelledby="pizza-view-settings">
+          </section> : null}
+          {activeTab === "pizzas" ? <section className="pos-view-settings-group" aria-labelledby="pizza-view-settings">
             <div className="pos-view-settings-heading">
               <Star aria-hidden="true" size={17} />
               <div><strong id="pizza-view-settings">Pizzas</strong><span>Elementos visibles en las tarjetas de sabores.</span></div>
@@ -3675,8 +3702,8 @@ function ProductViewSettingsModal({
                 <span>Mostrar precio desde</span>
               </label>
             </div>
-          </section>
-          <section className="pos-view-settings-group" aria-labelledby="interface-view-settings">
+          </section> : null}
+          {activeTab === "interface" ? <section className="pos-view-settings-group" aria-labelledby="interface-view-settings">
             <div className="pos-view-settings-heading">
               <Settings aria-hidden="true" size={17} />
               <div><strong id="interface-view-settings">Interfaz</strong><span>Controles visibles en la cabecera de Crear pedido.</span></div>
@@ -3687,8 +3714,26 @@ function ProductViewSettingsModal({
                 <span>Mostrar buscador</span>
               </label>
             </div>
-          </section>
-          {canEditPizzaPhotos ? <PosPizzaImageSettings pizzas={pizzas} /> : null}
+            <div className="pos-theme-choice" role="group" aria-label="Tema de la interfaz">
+              <span>Aspecto</span>
+              <button aria-pressed={theme === "dark"} className={theme === "dark" ? "active" : ""} onClick={() => updateTheme("dark")} type="button"><Moon size={15} />Modo oscuro</button>
+              <button aria-pressed={theme === "light"} className={theme === "light" ? "active" : ""} onClick={() => updateTheme("light")} type="button"><Sun size={15} />Modo claro</button>
+            </div>
+          </section> : null}
+          {activeTab === "printing" ? <section className="pos-view-settings-group" aria-labelledby="print-view-settings">
+            <div className="pos-view-settings-heading">
+              <Printer aria-hidden="true" size={17} />
+              <div><strong id="print-view-settings">Impresión</strong><span>Elige si confirmas cada documento antes de enviarlo.</span></div>
+            </div>
+            <div className="pos-view-settings-options pos-interface-view-options">
+              <label>
+                <input checked={settings.showPrintPreview} onChange={(event) => updateSetting("showPrintPreview", event.target.checked)} type="checkbox" />
+                <span>Mostrar vista previa de impresión</span>
+              </label>
+            </div>
+            <small className="pos-view-settings-help">Al desactivarla, la comanda y el ticket seleccionados se enviarán directamente a impresión.</small>
+          </section> : null}
+          {activeTab === "photos" && canEditPizzaPhotos ? <PosPizzaImageSettings pizzas={pizzas} /> : null}
           {syncNotice ? <small className={syncNotice.startsWith("Guardado") || syncNotice.startsWith("Guardando") ? "success" : "error"}>{syncNotice}</small> : null}
         </div>
         <footer className="form-actions modal-form-actions"><button className="positive-button" onClick={onClose} type="button">Listo</button></footer>

@@ -10,6 +10,12 @@ type PageProps = { params: Promise<{ familyId: string }> };
 
 function rows<T>(value: T[] | null) { return value ?? []; }
 
+function recipeBaseUnit(unit: string): "g" | "ml" | "unit" {
+  if (unit === "kg") return "g";
+  if (unit === "l") return "ml";
+  return unit === "g" || unit === "ml" ? unit : "unit";
+}
+
 export default async function MenuFamilyDetailPage({ params }: PageProps) {
   const { familyId } = await params;
   const supabase = await createServerSupabaseClient();
@@ -17,8 +23,8 @@ export default async function MenuFamilyDetailPage({ params }: PageProps) {
   const [familyResult, presentationsResult, itemsResult, componentsResult, substitutionsResult, pricesResult, additionsResult, combosResult, variantsResult, comboComponentsResult, comboComponentOptionsResult, packagingResult, inventoryResult, preparationsResult, suppliesResult] = await Promise.all([
     supabase.from("menu_families").select("id, name, description, is_active").eq("id", familyId).maybeSingle(),
     supabase.from("menu_family_presentations").select("id, name, description").eq("family_id", familyId).order("sort_order").order("name"),
-    supabase.from("menu_family_items").select("id, name, sku, commercial_description").eq("family_id", familyId).order("sort_order").order("name"),
-    supabase.from("menu_family_recipe_components").select("id, family_item_id, presentation_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, option_group, is_required").order("sort_order"),
+    supabase.from("menu_family_items").select("id, name, sku, commercial_description, image_url, is_active").eq("family_id", familyId).order("sort_order").order("name"),
+    supabase.from("menu_family_recipe_components").select("id, family_item_id, presentation_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit, option_group, is_required, sort_order").order("sort_order"),
     supabase.from("menu_family_recipe_substitutions").select("id, component_id, source_kind, inventory_item_id, source_preparation_id, quantity_base, base_unit"),
     supabase.from("menu_family_prices").select("id, family_item_id, presentation_id, sale_price_cop, is_active").eq("is_active", true),
     supabase.from("menu_family_additions").select("id, name, sku, sale_price_cop, quantity_base, base_unit, max_allowed").eq("family_id", familyId).order("sort_order").order("name"),
@@ -27,8 +33,8 @@ export default async function MenuFamilyDetailPage({ params }: PageProps) {
     supabase.from("menu_family_combo_components").select("id, variant_id, name, source_kind, family_item_id, inventory_item_id, presentation_id, quantity, is_required").order("sort_order"),
     supabase.from("menu_family_combo_component_options").select("id, component_id, source_kind, family_item_id, inventory_item_id, presentation_id, quantity").order("sort_order"),
     supabase.from("menu_family_packaging_rules").select("id, family_item_id, presentation_id, packaging_inventory_item_id, service_kind, quantity_base"),
-    supabase.from("inventory_items").select("id, name, unit").in("unit", ["g", "ml", "unit"]).order("name"),
-    supabase.from("preparations").select("id, name, base_unit").in("base_unit", ["g", "ml", "unit"]).order("name"),
+    supabase.from("inventory_items").select("id, name, unit").eq("item_kind", "ingredient").eq("is_active", true).in("unit", ["g", "kg", "ml", "l", "unit"]).order("name"),
+    supabase.from("preparations").select("id, name, base_unit").in("base_unit", ["g", "kg", "ml", "l", "unit"]).order("name"),
     supabase.from("inventory_items").select("id, name, unit").eq("item_kind", "supply").eq("unit", "unit").order("name")
   ]);
 
@@ -56,8 +62,8 @@ export default async function MenuFamilyDetailPage({ params }: PageProps) {
     comboComponents,
     comboComponentOptions: (rows(comboComponentOptionsResult.data) as UniversalMenuFamilyData["comboComponentOptions"]).filter((option) => comboComponentIds.has(option.component_id)),
     packagingRules: (rows(packagingResult.data) as UniversalMenuFamilyData["packagingRules"]).filter((rule) => itemIds.has(rule.family_item_id)),
-    inventorySources: rows(inventoryResult.data).map((source) => ({ id: source.id, name: source.name, unit: source.unit })) as UniversalMenuFamilyData["inventorySources"],
-    preparationSources: rows(preparationsResult.data).map((source) => ({ id: source.id, name: source.name, unit: source.base_unit })) as UniversalMenuFamilyData["preparationSources"],
+    inventorySources: rows(inventoryResult.data).map((source) => ({ id: source.id, name: source.name, unit: recipeBaseUnit(source.unit) })) as UniversalMenuFamilyData["inventorySources"],
+    preparationSources: rows(preparationsResult.data).map((source) => ({ id: source.id, name: source.name, unit: recipeBaseUnit(source.base_unit) })) as UniversalMenuFamilyData["preparationSources"],
     packagingSources: rows(suppliesResult.data).map((source) => ({ id: source.id, name: source.name, unit: source.unit })) as UniversalMenuFamilyData["packagingSources"]
   };
 

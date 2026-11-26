@@ -83,14 +83,25 @@ export async function loadFundBalances(supabase: SupabaseServerClient, funds: Ar
 export async function loadShiftSales(supabase: SupabaseServerClient, openedAt: string): Promise<ShiftSaleRow[]> {
   const { data, error } = await supabase
     .from("pos_orders")
-    .select("id, code, kind, payment_method, total_cop, created_at")
+    .select("id, code, kind, payment_method, total_cop, created_at, pos_order_items(id, quantity, product_name_snapshot, unit_price_cop, line_subtotal_cop)")
     .gte("created_at", openedAt)
     .neq("status", "cancelled")
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as ShiftSaleRow[]).map((sale) => ({
-    ...sale,
-    total_cop: Number(sale.total_cop ?? 0)
+  return ((data ?? []) as Array<ShiftSaleRow & { pos_order_items?: ShiftSaleRow["items"] }>).map((sale) => ({
+    id: sale.id,
+    code: sale.code,
+    kind: sale.kind,
+    payment_method: sale.payment_method,
+    total_cop: Number(sale.total_cop ?? 0),
+    created_at: sale.created_at,
+    items: (sale.pos_order_items ?? []).map((item) => ({
+      id: item.id,
+      quantity: Number(item.quantity ?? 0),
+      product_name_snapshot: item.product_name_snapshot,
+      unit_price_cop: Number(item.unit_price_cop ?? 0),
+      line_subtotal_cop: Number(item.line_subtotal_cop ?? 0)
+    }))
   }));
 }
 

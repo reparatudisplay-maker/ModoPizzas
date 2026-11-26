@@ -14,7 +14,6 @@ import {
 } from "@/app/admin/actions";
 import { formatCop } from "@/lib/format";
 import { normalizeMasterText, uppercaseMasterName } from "@/lib/master-normalization";
-import { CustomerReceiptPrintButton } from "@/components/pos-order-payment-print";
 
 export type CashRegisterOption = {
   id: string;
@@ -74,6 +73,13 @@ export type ShiftSaleRow = {
   payment_method: string;
   total_cop: number;
   created_at: string;
+  items: Array<{
+    id: string;
+    quantity: number;
+    product_name_snapshot: string;
+    unit_price_cop: number;
+    line_subtotal_cop: number;
+  }>;
 };
 
 export type PlatformShiftReceivableRow = {
@@ -397,13 +403,53 @@ function CashMovementGroup({ label, movements, kind, negative = false }: { label
 }
 
 function SalesGroup({ label, sales }: { label: string; sales: ShiftSaleRow[] }) {
-  const rows = sales.map((sale) => ({
-    key: sale.id,
-    label: `${sale.code} · ${formatHour(sale.created_at)} · ${orderKindLabels[sale.kind] ?? sale.kind}`,
-    value: sale.total_cop,
-    action: <CustomerReceiptPrintButton label="Ver" orderCode={sale.code} orderId={sale.id} previewOnly />
-  }));
-  return <CashGroup label={label} rows={rows} total={sales.reduce((sum, sale) => sum + sale.total_cop, 0)} />;
+  const [open, setOpen] = useState(false);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(() => new Set());
+  const total = sales.reduce((sum, sale) => sum + sale.total_cop, 0);
+  const toggleOrder = (orderId: string) => setExpandedOrderIds((current) => {
+    const next = new Set(current);
+    if (next.has(orderId)) next.delete(orderId);
+    else next.add(orderId);
+    return next;
+  });
+
+  return (
+    <div className="cash-group cash-sales-group">
+      <button className="cash-group-row" onClick={() => setOpen((current) => !current)} type="button">
+        <span>{sales.length > 0 ? (open ? <ChevronUp size={16} /> : <ChevronDown size={16} />) : null}{label}</span>
+        <strong>{formatCop(total)}</strong>
+      </button>
+      {open ? (
+        <div className="cash-group-detail cash-sales-group-detail">
+          {sales.map((sale) => {
+            const expanded = expandedOrderIds.has(sale.id);
+            return (
+              <div className="cash-sale-row" key={sale.id}>
+                <div className="cash-sale-summary">
+                  <button aria-expanded={expanded} aria-label={`${expanded ? "Ocultar" : "Ver"} detalle de ${sale.code}`} className="cash-sale-expand" onClick={() => toggleOrder(sale.id)} title={expanded ? "Ocultar detalle" : "Ver detalle"} type="button">
+                    {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  </button>
+                  <span>{sale.code} · {formatHour(sale.created_at)} · {orderKindLabels[sale.kind] ?? sale.kind}</span>
+                  <strong>{formatCop(sale.total_cop)}</strong>
+                </div>
+                {expanded ? (
+                  <div className="cash-sale-detail">
+                    {sale.items.length > 0 ? sale.items.map((item) => (
+                      <div key={item.id}>
+                        <span>{item.quantity}× {item.product_name_snapshot}</span>
+                        <span>{formatCop(item.unit_price_cop)} c/u</span>
+                        <strong>{formatCop(item.line_subtotal_cop)}</strong>
+                      </div>
+                    )) : <span>Sin detalle disponible.</span>}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function PlatformReceivablesGroup({ label, platform, receivables, sales }: { label: string; platform: "rappi" | "didi"; receivables: PlatformShiftReceivableRow[]; sales: ShiftSaleRow[] }) {

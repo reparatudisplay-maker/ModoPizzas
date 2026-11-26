@@ -15,7 +15,8 @@ const defaultProductViewSettings: ProductViewSettings = {
   showPizzaPhoto: true,
   showPizzaFlavor: true,
   showPizzaCategory: true,
-  showPizzaPrice: true
+  showPizzaPrice: true,
+  showPrintPreview: true
 };
 
 type PriceRow = {
@@ -125,6 +126,8 @@ type PendingPaymentRow = {
     item_kind: "pizza" | "sale_product" | "free_sale" | "temporary_menu";
     quantity: number | string;
     product_name_snapshot: string | null;
+    unit_price_cop: number | string;
+    line_subtotal_cop: number | string;
     inventory_item: Array<{ presentation_quantity: number | string | null; presentation_unit: StockUnit | null }> | { presentation_quantity: number | string | null; presentation_unit: StockUnit | null } | null;
   }>;
 };
@@ -152,6 +155,15 @@ type EditablePendingOrderRow = {
     sku_snapshot: string | null;
     unit_price_cop: number | string;
     notes: string | null;
+    pos_order_temporary_menu_details: {
+      catalog_code: string;
+      components_snapshot: unknown;
+      selection_snapshot: unknown;
+    } | Array<{
+      catalog_code: string;
+      components_snapshot: unknown;
+      selection_snapshot: unknown;
+    }> | null;
     pos_order_item_additions: Array<{
       addition_id: string;
       name_snapshot: string;
@@ -197,7 +209,8 @@ function parseProductViewSettings(value: unknown): ProductViewSettings {
     showPizzaPhoto: typeof settings.showPizzaPhoto === "boolean" ? settings.showPizzaPhoto : defaultProductViewSettings.showPizzaPhoto,
     showPizzaFlavor: typeof settings.showPizzaFlavor === "boolean" ? settings.showPizzaFlavor : defaultProductViewSettings.showPizzaFlavor,
     showPizzaCategory: typeof settings.showPizzaCategory === "boolean" ? settings.showPizzaCategory : defaultProductViewSettings.showPizzaCategory,
-    showPizzaPrice: typeof settings.showPizzaPrice === "boolean" ? settings.showPizzaPrice : defaultProductViewSettings.showPizzaPrice
+    showPizzaPrice: typeof settings.showPizzaPrice === "boolean" ? settings.showPizzaPrice : defaultProductViewSettings.showPizzaPrice,
+    showPrintPreview: typeof settings.showPrintPreview === "boolean" ? settings.showPrintPreview : defaultProductViewSettings.showPrintPreview
   };
 }
 
@@ -337,10 +350,10 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
       .select("*")
       .order("platform"),
     supabase.from("order_tables").select("id, name").eq("is_active", true).order("sort_order").order("name"),
-    supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
+    supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, unit_price_cop, line_subtotal_cop, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").eq("payment_method", "pending").neq("status", "cancelled").order("ordered_at", { ascending: false }),
     (() => {
       const today = bogotaDayRange();
-      return supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
+      return supabase.from("pos_orders").select("id, code, kind, ordered_at, customer_name, table_id, table_name_snapshot, total_cop, pos_order_items(item_kind, quantity, product_name_snapshot, unit_price_cop, line_subtotal_cop, inventory_item:inventory_items!pos_order_items_inventory_item_id_fkey(presentation_quantity, presentation_unit))").neq("payment_method", "pending").neq("status", "cancelled").gte("ordered_at", today.from).lt("ordered_at", today.to).order("ordered_at", { ascending: false });
     })(),
     supabase
       .from("pos_packaging_rules")
@@ -511,7 +524,7 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
       const presentation = item.item_kind === "sale_product" && inventoryItem?.presentation_quantity && inventoryItem.presentation_unit
         ? formatPresentationQuantity(Number(inventoryItem.presentation_quantity), inventoryItem.presentation_unit)
         : null;
-      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity) }];
+      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity), unit_price_cop: Number(item.unit_price_cop ?? 0), line_subtotal_cop: Number(item.line_subtotal_cop ?? 0) }];
     })
   }));
   const paidTodayPayments: PosPendingPayment[] = ((paidPaymentsResult.data ?? []) as unknown as PendingPaymentRow[]).map((order) => ({
@@ -529,7 +542,7 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
       const presentation = item.item_kind === "sale_product" && inventoryItem?.presentation_quantity && inventoryItem.presentation_unit
         ? formatPresentationQuantity(Number(inventoryItem.presentation_quantity), inventoryItem.presentation_unit)
         : null;
-      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity) }];
+      return [{ name: presentation && !item.product_name_snapshot.includes(presentation) ? `${item.product_name_snapshot} ${presentation}` : item.product_name_snapshot, quantity: Number(item.quantity), unit_price_cop: Number(item.unit_price_cop ?? 0), line_subtotal_cop: Number(item.line_subtotal_cop ?? 0) }];
     })
   }));
   const packagingRules: PosPackagingRule[] = packagingRulesResult.error ? [] : ((packagingRulesResult.data ?? []) as unknown as PackagingRuleRow[])
@@ -632,7 +645,7 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
   if (editOrderId) {
     const { data, error: pendingOrderError } = await supabase
       .from("pos_orders")
-      .select("id, code, kind, customer_name, customer_phone, notes, discount_cop, ordered_at, table_id, source_channel, collection_party, pos_order_items(id, item_kind, pizza_price_config_id, inventory_item_id, cart_line_key, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, notes, pos_order_item_additions(addition_id, name_snapshot, sku_snapshot, quantity, unit_price_cop)), pos_order_combo_snapshots(id), direct_sale_purchases(id, order_item_id, inventory_item_id, acquisition_unit_cost_cop, funds_origin, observation, cash_movement_id), kitchen_order_items(status)")
+      .select("id, code, kind, customer_name, customer_phone, notes, discount_cop, ordered_at, table_id, source_channel, collection_party, pos_order_items(id, item_kind, pizza_price_config_id, inventory_item_id, cart_line_key, quantity, product_name_snapshot, sku_snapshot, unit_price_cop, notes, pos_order_temporary_menu_details(catalog_code, components_snapshot, selection_snapshot), pos_order_item_additions(addition_id, name_snapshot, sku_snapshot, quantity, unit_price_cop)), pos_order_combo_snapshots(id), direct_sale_purchases(id, order_item_id, inventory_item_id, acquisition_unit_cost_cop, funds_origin, observation, cash_movement_id), kitchen_order_items(status)")
       .eq("id", editOrderId)
       .eq("payment_method", "pending")
       .neq("status", "cancelled")
@@ -712,6 +725,40 @@ export default async function NuevoPedidoPage({ searchParams }: { searchParams: 
               acquisition_unit_cost_cop: Number(purchase.acquisition_unit_cost_cop),
               funds_origin: purchase.funds_origin,
               observation: purchase.observation ?? ""
+            }
+          };
+        }
+        if (item.item_kind === "temporary_menu") {
+          const detail = Array.isArray(item.pos_order_temporary_menu_details)
+            ? item.pos_order_temporary_menu_details[0]
+            : item.pos_order_temporary_menu_details;
+          if (!detail || !Array.isArray(detail.components_snapshot) || !detail.selection_snapshot || typeof detail.selection_snapshot !== "object") return null;
+          const selection = detail.selection_snapshot as Record<string, unknown>;
+          const selectionMode = selection.mode === "drink" || selection.mode === "fries" ? selection.mode : "none";
+          const components = detail.components_snapshot.flatMap((component) => {
+            if (!component || typeof component !== "object") return [];
+            const value = component as Record<string, unknown>;
+            return typeof value.name === "string" && typeof value.quantity === "string" ? [{ name: value.name, quantity: value.quantity }] : [];
+          });
+          if (components.length === 0) return null;
+          return {
+            key: item.cart_line_key ?? `edit-${item.id}`,
+            signature: `edit-${item.id}-${index}`,
+            kind: "temporary_menu",
+            id: detail.catalog_code,
+            name: item.product_name_snapshot,
+            sku: item.sku_snapshot,
+            image_src: null,
+            quantity: Number(item.quantity),
+            unit_price_cop: Number(item.unit_price_cop),
+            notes: item.notes ?? undefined,
+            additions: [],
+            temporary_menu: {
+              family: detail.catalog_code === "LASANA-CARNE" ? "lasagnas" : "wings",
+              selection_mode: selectionMode,
+              beverage_inventory_item_id: typeof selection.beverage_inventory_item_id === "string" ? selection.beverage_inventory_item_id : null,
+              beverage_name: typeof selection.beverage_name === "string" ? selection.beverage_name : null,
+              components
             }
           };
         }

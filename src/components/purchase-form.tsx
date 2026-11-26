@@ -126,13 +126,10 @@ function PurchaseLineEditor({ brands, items, line, index, canRemove, transportAl
     const presentationUnit = item?.unit === "kg" ? "g" : item?.unit === "l" ? "ml" : item?.unit ?? "unit";
     update({ inventory_item_id: item?.id ?? "", brand_id: item?.brand_id ?? "", purchase_kind: item?.item_kind ?? "", purchase_mode: item?.purchase_mode ?? "total_weight", presentation_unit: presentationUnit, package_content_quantity: "", presentation_quantity: "", reference_sku: "" });
   };
-  return <fieldset className="purchase-line-card">
-    <legend>Línea {index + 1}</legend>
-    <div className="purchase-line-heading">
-      <p>{selected ? kindLabel(kind as PurchaseKind) : "Selecciona el producto de esta línea"}</p>
-      {canRemove ? <button className="icon-button danger-button" onClick={onRemove} title="Quitar producto" type="button"><Trash2 size={16} /></button> : null}
-    </div>
+  return <fieldset aria-label={`Línea ${index + 1} de la factura`} className="purchase-line-card">
+    <legend className="sr-only">Línea {index + 1}</legend>
     <div className="form-grid purchase-line-grid">
+      <span aria-hidden="true" className="purchase-line-index">{index + 1}</span>
       <ProductAutocomplete items={items} onSelect={selectProduct} selected={selected} />
       {selected ? <>
         <div className="field"><label>Tipo</label><input disabled value={kindLabel(kind as PurchaseKind)} /></div>
@@ -149,6 +146,7 @@ function PurchaseLineEditor({ brands, items, line, index, canRemove, transportAl
           {duplicate ? <p className="purchase-duplicate-warning">Este producto ya está en otra línea. Conserva ambas solo si cambian lote, marca, vencimiento o presentación.</p> : null}
         </aside> : null}
       </> : null}
+      {canRemove ? <button aria-label={`Eliminar línea ${index + 1}`} className="icon-button danger-button purchase-line-remove" onClick={onRemove} title="Eliminar producto" type="button"><Trash2 size={16} /></button> : null}
     </div>
   </fieldset>;
 }
@@ -255,34 +253,37 @@ export function PurchaseForm({ items, suppliers, brands, editPurchase, onSaved, 
       {editPurchase ? <input name="purchase_id" type="hidden" value={editPurchase.id} /> : null}
       <input name="purchase_lines_json" type="hidden" value={JSON.stringify(lines)} />
       <section className="purchase-invoice-details">
-        <div className="form-grid">
-          <div className="field"><label>Fecha de compra</label><input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" /></div>
-          <LookupSelect emptyLabel="Sin proveedor" label="Proveedor" name="supplier_id" onChange={setSupplierId} options={suppliers} value={supplierId} />
-          <div className="field"><label>Domicilio o transporte COP</label><input inputMode="numeric" name="transport_cost_cop" onChange={(event) => setTransport(formatInteger(event.target.value))} placeholder="$ 0" type="text" value={transport} /></div>
+        <div className="form-grid purchase-invoice-grid">
+          <div className="field purchase-date-field"><label>Fecha de compra</label><input defaultValue={editPurchase?.purchase_date ?? todayDateValue()} name="purchase_date" required type="date" /></div>
+          <div className="purchase-supplier-field"><LookupSelect emptyLabel="Sin proveedor" label="Proveedor" name="supplier_id" onChange={setSupplierId} options={suppliers} value={supplierId} /></div>
+          <div className="field purchase-transport-field"><label>Transporte COP</label><input inputMode="numeric" name="transport_cost_cop" onChange={(event) => setTransport(formatInteger(event.target.value))} placeholder="$ 0" type="text" value={transport} /></div>
+          <div className="field purchase-notes-field"><label>Notas (opcional)</label><input name="notes" onChange={(event) => setNotes(event.target.value.toUpperCase())} placeholder="Factura, observaciones o referencia" value={notes} /></div>
           <InvoicePhotoField initialUrl={editPurchase?.invoice_photo_url ?? null} />
-          <div className="field full"><label>Notas de factura</label><input name="notes" onChange={(event) => setNotes(event.target.value.toUpperCase())} placeholder="Factura, observaciones o referencia" value={notes} /></div>
         </div>
       </section>
       <section className="purchase-lines-section">
         <div className="section-title-row">
-          <div><h3>Productos de la factura</h3><p className="muted">Cada línea conserva su presentación, vencimiento, marca y costo de mercancía.</p></div>
+          <div><h3>Productos de la factura</h3><p className="muted">Presentación, vencimiento, marca y costo.</p></div>
           <button className="ghost-button icon-text-button" onClick={() => setLines((current) => [...current, emptyLine()])} type="button"><Plus size={18} /> Agregar producto</button>
         </div>
+        <div className="purchase-line-table-header" aria-hidden="true"><span>#</span><span>Producto</span><span>Tipo</span><span>Compra y cantidad</span><span>Presentación</span><span>Valor COP</span><span>Marca</span><span>Vence</span><span>Total</span><span /></div>
         <div className="purchase-lines-list">
           {lines.map((line, index) => <PurchaseLineEditor brands={brands} canRemove={lines.length > 1} duplicate={duplicateIds.has(line.inventory_item_id)} index={index} items={masters} key={line.key} line={line} onChange={(next) => setLines((current) => current.map((candidate) => candidate.key === line.key ? next : candidate))} onRemove={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} transportAllocation={allocations[index]} />)}
         </div>
       </section>
-      <section className="purchase-cost-summary" aria-label="Resumen de costos"><span>Mercancía <b>{moneyFormatter.format(merchandiseSubtotal)}</b></span><span>Domicilio <b>{moneyFormatter.format(transportCost)}</b></span><strong>Total factura <b>{moneyFormatter.format(total)}</b></strong><small>El domicilio se reparte proporcionalmente entre las líneas al guardar.</small></section>
-      {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
-      <div className="form-actions purchase-form-actions">
-        {editPurchase ? <button className="ghost-button" onClick={onCancel} type="button">Cancelar</button> : null}
-        <PurchaseSubmitButton disabled={!masters.length || lines.some((line) => !line.inventory_item_id)} isEditing={Boolean(editPurchase)} />
-      </div>
+      <footer className="purchase-form-footer">
+        <section className="purchase-cost-summary" aria-label="Resumen de costos"><span><small>Productos</small><b>{lines.length}</b></span><span><small>Mercancía</small><b>{moneyFormatter.format(merchandiseSubtotal)}</b></span><span><small>Domicilio</small><b>{moneyFormatter.format(transportCost)}</b></span><strong><small>Total factura</small><b>{moneyFormatter.format(total)}</b></strong></section>
+        {state.status !== "idle" ? <p className={`form-status ${state.status}`}>{state.message}</p> : null}
+        <div className="form-actions purchase-form-actions">
+          {onCancel ? <button className="ghost-button" onClick={onCancel} type="button">Cancelar</button> : null}
+          <PurchaseSubmitButton disabled={!masters.length || !lines.length || lines.some((line) => !line.inventory_item_id)} isEditing={Boolean(editPurchase)} />
+        </div>
+      </footer>
     </form>
   );
 }
 
-function PurchaseSubmitButton({ disabled, isEditing }: { disabled: boolean; isEditing: boolean }) { const { pending } = useFormStatus(); return <button className="primary-button" disabled={disabled || pending} type="submit">{pending ? "Guardando..." : isEditing ? "Actualizar factura" : "Registrar compra"}</button>; }
+function PurchaseSubmitButton({ disabled, isEditing }: { disabled: boolean; isEditing: boolean }) { const { pending } = useFormStatus(); return <button className="primary-button" disabled={disabled || pending} type="submit">{pending ? "Guardando..." : isEditing ? "Actualizar compra" : "Guardar compra"}</button>; }
 
 export function PurchaseModal({ items, suppliers, brands, editPurchase }: { items: InventoryItem[]; suppliers: LookupOption[]; brands: LookupOption[]; editPurchase?: EditablePurchase | null }) {
   const [isOpen, setIsOpen] = useState(Boolean(editPurchase)); const [mode, setMode] = useState<"new" | "edit">(editPurchase ? "edit" : "new"); const router = useRouter(); const pathname = usePathname(); const searchParams = useSearchParams(); const activeEditPurchase = mode === "edit" ? editPurchase : null;
